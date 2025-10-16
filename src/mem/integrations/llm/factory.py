@@ -23,14 +23,14 @@ class LlmFactory:
 
     # Provider mappings with their config classes
     provider_to_class = {
-        "ollama": ("mem0.llms.ollama.OllamaLLM", OllamaConfig),
-        "openai": ("mem0.llms.openai.OpenAILLM", OpenAIConfig),
-        "openai_structured": ("mem0.llms.openai_structured.OpenAIStructuredLLM", OpenAIConfig),
-        "anthropic": ("mem0.llms.anthropic.AnthropicLLM", AnthropicConfig),
-        "gemini": ("mem0.llms.gemini.GeminiLLM", BaseLlmConfig),
-        "deepseek": ("mem0.llms.deepseek.DeepSeekLLM", DeepSeekConfig),
-        "vllm": ("mem0.llms.vllm.VllmLLM", VllmConfig),
-        "langchain": ("mem0.llms.langchain.LangchainLLM", BaseLlmConfig),
+        "ollama": ("src.mem.integrations.llm.ollama.OllamaLLM", OllamaConfig),
+        "openai": ("src.mem.integrations.llm.openai.OpenAILLM", OpenAIConfig),
+        "openai_structured": ("src.mem.integrations.llm.openai_structured.OpenAIStructuredLLM", OpenAIConfig),
+        "anthropic": ("src.mem.integrations.llm.anthropic.AnthropicLLM", AnthropicConfig),
+        "gemini": ("src.mem.integrations.llm.gemini.GeminiLLM", BaseLlmConfig),
+        "deepseek": ("src.mem.integrations.llm.deepseek.DeepSeekLLM", DeepSeekConfig),
+        "vllm": ("src.mem.integrations.llm.vllm.VllmLLM", VllmConfig),
+        "langchain": ("src.mem.integrations.llm.langchain.LangchainLLM", BaseLlmConfig),
     }
 
     @classmethod
