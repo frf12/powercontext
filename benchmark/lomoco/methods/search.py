@@ -15,26 +15,26 @@ load_dotenv()
 
 class MemorySearch:
     def __init__(self, output_path, top_k=10, filter_memories=False, is_graph=False):
-        api_base_url = os.getenv("MEM0_BASE_URL")
+        api_base_url = os.getenv("API_BASE_URL")
         if api_base_url:
             self.api_base_url = api_base_url
         else:
-            raise ValueError("mem0 api_base_url is not set")
+            raise ValueError("api_base_url is not set")
         model = os.getenv("MODEL")
         if model:
             self.model = model
         else:
-            raise ValueError("mem0 model is not set")
+            raise ValueError("model is not set")
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if openai_api_key:
             self.openai_api_key = openai_api_key
         else:
-            raise ValueError("mem0 openai_api_key is not set")
+            raise ValueError("openai_api_key is not set")
         openai_base_url = os.getenv("OPENAI_BASE_URL")
         if openai_base_url:
             self.openai_base_url = openai_base_url
         else:
-            print("mem0 openai_base_url is not set, using default base url: https://api.openai.com/v1")
+            print("openai_base_url is not set, using default base url: https://api.openai.com/v1")
             self.openai_base_url = "https://api.openai.com/v1"
         self.openai_client = OpenAI(base_url=self.openai_base_url, api_key=self.openai_api_key)
         self.top_k = top_k

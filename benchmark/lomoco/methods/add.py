@@ -12,11 +12,11 @@ load_dotenv()
 
 class MemoryADD:
     def __init__(self, data_path=None, batch_size=2, is_graph=False):
-        api_base_url = os.getenv("MEM0_BASE_URL")
+        api_base_url = os.getenv("API_BASE_URL")
         if api_base_url:
             self.api_base_url = api_base_url
         else:
-            raise ValueError("mem0 api_base_url is not set")
+            raise ValueError("api_base_url is not set")
         self.batch_size = batch_size
         self.data_path = data_path
         self.data = None
