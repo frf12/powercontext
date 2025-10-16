@@ -4,8 +4,8 @@ from typing import Dict, List, Optional, Any
 
 from openai import OpenAI
 
-from src.mem.integrations.llm import LLMBase
-from src.mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm import LLMBase
+from mem.integrations.llm.config.base import BaseLlmConfig
 
 
 class OpenAIStructuredLLM(LLMBase):

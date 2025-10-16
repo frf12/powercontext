@@ -1,8 +1,8 @@
 from typing import Dict, List, Optional, Union
 
-from src.mem.integrations.llm import LLMBase
-from src.mem.integrations.llm.config.base import BaseLlmConfig
-from src.mem.integrations.llm.config.ollama import OllamaConfig
+from mem.integrations.llm import LLMBase
+from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.ollama import OllamaConfig
 
 try:
     from ollama import Client

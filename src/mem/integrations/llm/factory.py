@@ -1,12 +1,13 @@
 import importlib
 from typing import Dict, Optional, Union
 
-from src.mem.integrations.llm.config.anthropic import AnthropicConfig
-from src.mem.integrations.llm.config.base import BaseLlmConfig
-from src.mem.integrations.llm.config.deepseek import DeepSeekConfig
-from src.mem.integrations.llm.config.ollama import OllamaConfig
-from src.mem.integrations.llm.config.openai import OpenAIConfig
-from src.mem.integrations.llm.config.vllm import VllmConfig
+from mem.integrations.llm.config.anthropic import AnthropicConfig
+from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.deepseek import DeepSeekConfig
+from mem.integrations.llm.config.ollama import OllamaConfig
+from mem.integrations.llm.config.openai import OpenAIConfig
+from mem.integrations.llm.config.qwen import QwenConfig
+from mem.integrations.llm.config.vllm import VllmConfig
 
 
 def load_class(class_type):
@@ -15,7 +16,7 @@ def load_class(class_type):
     return getattr(module, class_name)
 
 
-class LlmFactory:
+class LLMFactory:
     """
     Factory for creating LLM instances with appropriate configurations.
     Supports both old-style BaseLlmConfig and new provider-specific configs.
@@ -23,14 +24,15 @@ class LlmFactory:
 
     # Provider mappings with their config classes
     provider_to_class = {
-        "ollama": ("src.mem.integrations.llm.ollama.OllamaLLM", OllamaConfig),
-        "openai": ("src.mem.integrations.llm.openai.OpenAILLM", OpenAIConfig),
-        "openai_structured": ("src.mem.integrations.llm.openai_structured.OpenAIStructuredLLM", OpenAIConfig),
-        "anthropic": ("src.mem.integrations.llm.anthropic.AnthropicLLM", AnthropicConfig),
-        "gemini": ("src.mem.integrations.llm.gemini.GeminiLLM", BaseLlmConfig),
-        "deepseek": ("src.mem.integrations.llm.deepseek.DeepSeekLLM", DeepSeekConfig),
-        "vllm": ("src.mem.integrations.llm.vllm.VllmLLM", VllmConfig),
-        "langchain": ("src.mem.integrations.llm.langchain.LangchainLLM", BaseLlmConfig),
+        "ollama": ("mem.integrations.llm.ollama.OllamaLLM", OllamaConfig),
+        "openai": ("mem.integrations.llm.openai.OpenAILLM", OpenAIConfig),
+        "openai_structured": ("mem.integrations.llm.openai_structured.OpenAIStructuredLLM", OpenAIConfig),
+        "anthropic": ("mem.integrations.llm.anthropic.AnthropicLLM", AnthropicConfig),
+        "gemini": ("mem.integrations.llm.gemini.GeminiLLM", BaseLlmConfig),
+        "deepseek": ("mem.integrations.llm.deepseek.DeepSeekLLM", DeepSeekConfig),
+        "vllm": ("mem.integrations.llm.vllm.VllmLLM", VllmConfig),
+        "langchain": ("mem.integrations.llm.langchain.LangchainLLM", BaseLlmConfig),
+        "qwen": ("mem.integrations.llm.qwen.QwenLLM", QwenConfig),
     }
 
     @classmethod

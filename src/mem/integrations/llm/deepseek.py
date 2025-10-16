@@ -3,10 +3,10 @@ import os
 from typing import Dict, List, Optional, Union
 
 from openai import OpenAI
-from src.mem.integrations.llm import LLMBase
-from src.mem.integrations.llm.config.base import BaseLlmConfig
-from src.mem.integrations.llm.config.deepseek import DeepSeekConfig
-from src.mem.utils.utils import extract_json
+from mem.integrations.llm import LLMBase
+from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.deepseek import DeepSeekConfig
+from mem.utils.utils import extract_json
 
 
 class DeepSeekLLM(LLMBase):

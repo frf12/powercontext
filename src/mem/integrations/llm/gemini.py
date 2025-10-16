@@ -1,8 +1,8 @@
 import os
 from typing import Dict, List, Optional
 
-from src.mem.integrations.llm import LLMBase
-from src.mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm import LLMBase
+from mem.integrations.llm.config.base import BaseLlmConfig
 
 try:
     from google import genai

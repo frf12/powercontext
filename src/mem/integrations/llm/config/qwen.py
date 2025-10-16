@@ -1,12 +1,12 @@
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from mem.integrations.llm.config.base import BaseLlmConfig
 
 
-class DeepSeekConfig(BaseLlmConfig):
+class QwenConfig(BaseLlmConfig):
     """
-    Configuration class for DeepSeek-specific parameters.
-    Inherits from BaseLlmConfig and adds DeepSeek-specific settings.
+    Configuration class for Qwen-specific parameters.
+    Inherits from BaseLlmConfig and adds Qwen-specific settings.
     """
 
     def __init__(
@@ -21,23 +21,30 @@ class DeepSeekConfig(BaseLlmConfig):
             enable_vision: bool = False,
             vision_details: Optional[str] = "auto",
             http_client_proxies: Optional[dict] = None,
-            # DeepSeek-specific parameters
-            deepseek_base_url: Optional[str] = None,
+            # Qwen-specific parameters
+            dashscope_base_url: Optional[str] = None,
+            enable_search: bool = False,
+            search_params: Optional[dict] = None,
+            # Response monitoring callback
+            response_callback: Optional[Callable[[Any, dict, dict], None]] = None,
     ):
         """
-        Initialize DeepSeek configuration.
+        Initialize Qwen configuration.
 
         Args:
-            model: DeepSeek model to use, defaults to None
+            model: Qwen model to use, defaults to None
             temperature: Controls randomness, defaults to 0.1
-            api_key: DeepSeek API key, defaults to None
+            api_key: DashScope API key, defaults to None
             max_tokens: Maximum tokens to generate, defaults to 2000
             top_p: Nucleus sampling parameter, defaults to 0.1
             top_k: Top-k sampling parameter, defaults to 1
             enable_vision: Enable vision capabilities, defaults to False
             vision_details: Vision detail level, defaults to "auto"
             http_client_proxies: HTTP client proxy settings, defaults to None
-            deepseek_base_url: DeepSeek API base URL, defaults to None
+            dashscope_base_url: DashScope API base URL, defaults to None
+            enable_search: Enable web search capability, defaults to False
+            search_params: Parameters for web search, defaults to None
+            response_callback: Optional callback for monitoring LLM responses.
         """
         # Initialize base parameters
         super().__init__(
@@ -52,5 +59,10 @@ class DeepSeekConfig(BaseLlmConfig):
             http_client_proxies=http_client_proxies,
         )
 
-        # DeepSeek-specific parameters
-        self.deepseek_base_url = deepseek_base_url
+        # Qwen-specific parameters
+        self.dashscope_base_url = dashscope_base_url
+        self.enable_search = enable_search
+        self.search_params = search_params or {}
+
+        # Response monitoring
+        self.response_callback = response_callback

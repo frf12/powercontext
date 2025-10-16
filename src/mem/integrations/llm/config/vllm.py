@@ -1,6 +1,6 @@
 from typing import Optional
 
-from src.mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLlmConfig
 
 
 class VllmConfig(BaseLlmConfig):

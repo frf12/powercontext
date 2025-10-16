@@ -19,6 +19,7 @@ class LlmConfig(BaseModel):
             "deepseek",
             "vllm",
             "langchain",
+            "qwen",
         ):
             return v
         else:

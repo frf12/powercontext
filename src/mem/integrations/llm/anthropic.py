@@ -1,9 +1,9 @@
 import os
 from typing import Dict, List, Optional, Union
 
-from src.mem.integrations.llm import LLMBase
-from src.mem.integrations.llm.config.anthropic import AnthropicConfig
-from src.mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm import LLMBase
+from mem.integrations.llm.config.anthropic import AnthropicConfig
+from mem.integrations.llm.config.base import BaseLlmConfig
 
 try:
     import anthropic

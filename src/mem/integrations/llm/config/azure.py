@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from src.mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLlmConfig
 
 
 class AzureOpenAIConfig(BaseLlmConfig):
