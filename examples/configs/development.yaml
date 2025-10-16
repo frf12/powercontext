@@ -1,0 +1,53 @@
+# Development configuration for smartmem
+database:
+  provider: "sqlite"
+  config:
+    database_path: "./data/smartmem_dev.db"
+    enable_wal: true
+    timeout: 30
+
+# LLM configuration
+llm:
+  provider: "openai"
+  config:
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-3.5-turbo"
+    temperature: 0.7
+    max_tokens: 1000
+
+# Embedding configuration
+embedding:
+  provider: "openai"
+  config:
+    api_key: "${OPENAI_API_KEY}"
+    model: "text-embedding-ada-002"
+
+# Intelligent memory configuration
+intelligent_memory:
+  enabled: true
+  initial_retention: 1.0
+  decay_rate: 0.1
+  reinforcement_factor: 0.3
+  working_threshold: 0.3
+  short_term_threshold: 0.6
+  long_term_threshold: 0.8
+
+# Telemetry configuration
+telemetry:
+  enabled: true
+  endpoint: "https://telemetry.smartmem.ai"
+  batch_size: 100
+  flush_interval: 30
+
+# Audit configuration
+audit:
+  enabled: true
+  log_file: "./logs/audit.log"
+  log_level: "INFO"
+  retention_days: 90
+
+# Logging configuration
+logging:
+  level: "DEBUG"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/smartmem.log"
