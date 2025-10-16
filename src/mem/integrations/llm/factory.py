@@ -1,88 +1,114 @@
-"""
-LLM factory for creating LLM instances
+import importlib
+from typing import Dict, Optional, Union
 
-This module provides a factory for creating different LLM instances.
-"""
-
-import logging
-from typing import Any, Dict, Type
-from .base import LLMBase
-
-logger = logging.getLogger(__name__)
+from src.mem.integrations.llm.config.anthropic import AnthropicConfig
+from src.mem.integrations.llm.config.base import BaseLlmConfig
+from src.mem.integrations.llm.config.deepseek import DeepSeekConfig
+from src.mem.integrations.llm.config.ollama import OllamaConfig
+from src.mem.integrations.llm.config.openai import OpenAIConfig
+from src.mem.integrations.llm.config.vllm import VllmConfig
 
 
-class LLMFactory:
+def load_class(class_type):
+    module_path, class_name = class_type.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
+class LlmFactory:
     """
-    Factory for creating LLM instances.
+    Factory for creating LLM instances with appropriate configurations.
+    Supports both old-style BaseLlmConfig and new provider-specific configs.
     """
-    
-    _llm_registry: Dict[str, Type[LLMBase]] = {}
-    
+
+    # Provider mappings with their config classes
+    provider_to_class = {
+        "ollama": ("mem0.llms.ollama.OllamaLLM", OllamaConfig),
+        "openai": ("mem0.llms.openai.OpenAILLM", OpenAIConfig),
+        "openai_structured": ("mem0.llms.openai_structured.OpenAIStructuredLLM", OpenAIConfig),
+        "anthropic": ("mem0.llms.anthropic.AnthropicLLM", AnthropicConfig),
+        "gemini": ("mem0.llms.gemini.GeminiLLM", BaseLlmConfig),
+        "deepseek": ("mem0.llms.deepseek.DeepSeekLLM", DeepSeekConfig),
+        "vllm": ("mem0.llms.vllm.VllmLLM", VllmConfig),
+        "langchain": ("mem0.llms.langchain.LangchainLLM", BaseLlmConfig),
+    }
+
     @classmethod
-    def register_llm(cls, name: str, llm_class: Type[LLMBase]) -> None:
+    def create(cls, provider_name: str, config: Optional[Union[BaseLlmConfig, Dict]] = None, **kwargs):
         """
-        Register an LLM implementation.
-        
+        Create an LLM instance with the appropriate configuration.
+
         Args:
-            name: LLM name
-            llm_class: LLM implementation class
-        """
-        cls._llm_registry[name] = llm_class
-        logger.info(f"Registered LLM: {name}")
-    
-    @classmethod
-    def create(cls, llm_type: str, config: Dict[str, Any]) -> LLMBase:
-        """
-        Create an LLM instance.
-        
-        Args:
-            llm_type: Type of LLM to create
-            config: LLM configuration
-            
+            provider_name (str): The provider name (e.g., 'openai', 'anthropic')
+            config: Configuration object or dict. If None, will create default config
+            **kwargs: Additional configuration parameters
+
         Returns:
-            LLM instance
-            
+            Configured LLM instance
+
         Raises:
-            ValueError: If LLM type is not supported
+            ValueError: If provider is not supported
         """
-        if llm_type not in cls._llm_registry:
-            raise ValueError(f"Unsupported LLM type: {llm_type}")
-        
-        llm_class = cls._llm_registry[llm_type]
+        if provider_name not in cls.provider_to_class:
+            raise ValueError(f"Unsupported Llm provider: {provider_name}")
+
+        class_type, config_class = cls.provider_to_class[provider_name]
+        llm_class = load_class(class_type)
+
+        # Handle configuration
+        if config is None:
+            # Create default config with kwargs
+            config = config_class(**kwargs)
+        elif isinstance(config, dict):
+            # Merge dict config with kwargs
+            config.update(kwargs)
+            config = config_class(**config)
+        elif isinstance(config, BaseLlmConfig):
+            # Convert base config to provider-specific config if needed
+            if config_class != BaseLlmConfig:
+                # Convert to provider-specific config
+                config_dict = {
+                    "model": config.model,
+                    "temperature": config.temperature,
+                    "api_key": config.api_key,
+                    "max_tokens": config.max_tokens,
+                    "top_p": config.top_p,
+                    "top_k": config.top_k,
+                    "enable_vision": config.enable_vision,
+                    "vision_details": config.vision_details,
+                    "http_client_proxies": config.http_client,
+                }
+                config_dict.update(kwargs)
+                config = config_class(**config_dict)
+            else:
+                # Use base config as-is
+                pass
+        else:
+            # Assume it's already the correct config type
+            pass
+
         return llm_class(config)
-    
+
     @classmethod
-    def get_supported_llms(cls) -> list:
+    def register_provider(cls, name: str, class_path: str, config_class=None):
         """
-        Get list of supported LLM types.
-        
+        Register a new provider.
+
+        Args:
+            name (str): Provider name
+            class_path (str): Full path to LLM class
+            config_class: Configuration class for the provider (defaults to BaseLlmConfig)
+        """
+        if config_class is None:
+            config_class = BaseLlmConfig
+        cls.provider_to_class[name] = (class_path, config_class)
+
+    @classmethod
+    def get_supported_providers(cls) -> list:
+        """
+        Get list of supported providers.
+
         Returns:
-            List of supported LLM types
+            list: List of supported provider names
         """
-        return list(cls._llm_registry.keys())
-
-
-# Register built-in LLM implementations
-def register_builtin_llms():
-    """Register built-in LLM implementations."""
-    try:
-        from .openai import OpenAILLM
-        LLMFactory.register_llm("openai", OpenAILLM)
-    except ImportError:
-        logger.warning("OpenAI LLM not available")
-    
-    try:
-        from .anthropic import AnthropicLLM
-        LLMFactory.register_llm("anthropic", AnthropicLLM)
-    except ImportError:
-        logger.warning("Anthropic LLM not available")
-    
-    try:
-        from .ollama import OllamaLLM
-        LLMFactory.register_llm("ollama", OllamaLLM)
-    except ImportError:
-        logger.warning("Ollama LLM not available")
-
-
-# Auto-register built-in LLMs
-register_builtin_llms()
+        return list(cls.provider_to_class.keys())

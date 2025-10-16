@@ -4,11 +4,12 @@ Utility functions and classes
 This module provides utility functions and helper classes.
 """
 
-import logging
-from typing import Any, Dict, List, Optional
-import json
 import hashlib
+import json
+import logging
+import re
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -205,3 +206,16 @@ def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
     except ValueError:
         logger.error(f"Failed to parse timestamp: {timestamp_str}")
         return None
+
+def extract_json(text):
+    """
+    Extracts JSON content from a string, removing enclosing triple backticks and optional 'json' tag if present.
+    If no code block is found, returns the text as-is.
+    """
+    text = text.strip()
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+    else:
+        json_str = text  # assume it's raw JSON
+    return json_str
