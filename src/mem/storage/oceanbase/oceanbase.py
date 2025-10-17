@@ -28,40 +28,9 @@ except ImportError as e:
         f"Required dependencies not found: {e}. Please install pyobvector and sqlalchemy."
     )
 
+from mem.storage.oceanbase import constants
+
 logger = logging.getLogger(__name__)
-
-DEFAULT_OCEANBASE_CONNECTION = {
-    "host": "localhost",
-    "port": "2881",
-    "user": "root@test",
-    "password": "",
-    "db_name": "test",
-}
-
-# Default parameters for different index types
-DEFAULT_OCEANBASE_HNSW_BUILD_PARAM = {"M": 16, "efConstruction": 200}
-DEFAULT_OCEANBASE_HNSW_SEARCH_PARAM = {"efSearch": 64}
-DEFAULT_OCEANBASE_IVF_BUILD_PARAM = {"nlist": 128}
-DEFAULT_OCEANBASE_IVF_SEARCH_PARAM = {}
-DEFAULT_OCEANBASE_FLAT_BUILD_PARAM = {}
-DEFAULT_OCEANBASE_FLAT_SEARCH_PARAM = {}
-
-# Supported index types mapping
-OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES = {
-    "HNSW": VecIndexType.HNSW,
-    "HNSW_SQ": VecIndexType.HNSW_SQ,
-    "IVF": VecIndexType.IVFFLAT,
-    "IVF_FLAT": VecIndexType.IVFFLAT,
-    "IVF_SQ": VecIndexType.IVFSQ,
-    "IVF_PQ": VecIndexType.IVFPQ,
-    "FLAT": VecIndexType.IVFFLAT,
-}
-
-DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE = "l2"
-DEFAULT_METADATA_FIELD = "metadata"
-
-# Supported fulltext parsers
-OCEANBASE_SUPPORTED_FULLTEXT_PARSERS = ["ik", "ngram", "ngram2", "beng", "space"]
 
 class OceanBaseVectorStore(VectorStoreBase):
     """OceanBase vector store implementation for mem0."""
@@ -70,15 +39,15 @@ class OceanBaseVectorStore(VectorStoreBase):
             self,
             collection_name: str,
             connection_args: Optional[Dict[str, Any]] = None,
-            vidx_metric_type: str = DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE,
+            vidx_metric_type: str = constants.DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE,
             vidx_algo_params: Optional[Dict] = None,
-            index_type: str = "HNSW",
+            index_type: str = constants.DEFAULT_INDEX_TYPE,
             embedding_model_dims: Optional[int] = None,
-            primary_field: str = "id",
-            vector_field: str = "embedding",
-            text_field: str = "document",
-            metadata_field: str = DEFAULT_METADATA_FIELD,
-            vidx_name: str = "vidx",
+            primary_field: str = constants.DEFAULT_PRIMARY_FIELD,
+            vector_field: str = constants.DEFAULT_VECTOR_FIELD,
+            text_field: str = constants.DEFAULT_TEXT_FIELD,
+            metadata_field: str = constants.DEFAULT_METADATA_FIELD,
+            vidx_name: str = constants.DEFAULT_VIDX_NAME,
             normalize: bool = False,
             include_sparse: bool = False,
             auto_configure_vector_index: bool = True,
@@ -89,7 +58,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             password: Optional[str] = None,
             db_name: Optional[str] = None,
             hybrid_search: bool = True,
-            fulltext_parser: str = "ik",
+            fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
             **kwargs,
     ):
         """
@@ -124,8 +93,8 @@ class OceanBaseVectorStore(VectorStoreBase):
         self.fulltext_parser = fulltext_parser
 
         # Validate fulltext parser
-        if self.fulltext_parser not in OCEANBASE_SUPPORTED_FULLTEXT_PARSERS:
-            supported = ', '.join(OCEANBASE_SUPPORTED_FULLTEXT_PARSERS)
+        if self.fulltext_parser not in constants.OCEANBASE_SUPPORTED_FULLTEXT_PARSERS:
+            supported = ', '.join(constants.OCEANBASE_SUPPORTED_FULLTEXT_PARSERS)
             raise ValueError(
                 f"Invalid fulltext parser: {self.fulltext_parser}. "
                 f"Supported parsers are: {supported}"
@@ -137,34 +106,26 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Merge individual connection parameters with connection_args
         final_connection_args = {
-            "host": host or connection_args.get("host", DEFAULT_OCEANBASE_CONNECTION["host"]),
-            "port": port or connection_args.get("port", DEFAULT_OCEANBASE_CONNECTION["port"]),
-            "user": user or connection_args.get("user", DEFAULT_OCEANBASE_CONNECTION["user"]),
-            "password": password or connection_args.get("password", DEFAULT_OCEANBASE_CONNECTION["password"]),
-            "db_name": db_name or connection_args.get("db_name", DEFAULT_OCEANBASE_CONNECTION["db_name"]),
+            "host": host or connection_args.get("host", constants.DEFAULT_OCEANBASE_CONNECTION["host"]),
+            "port": port or connection_args.get("port", constants.DEFAULT_OCEANBASE_CONNECTION["port"]),
+            "user": user or connection_args.get("user", constants.DEFAULT_OCEANBASE_CONNECTION["user"]),
+            "password": password or connection_args.get("password", constants.DEFAULT_OCEANBASE_CONNECTION["password"]),
+            "db_name": db_name or connection_args.get("db_name", constants.DEFAULT_OCEANBASE_CONNECTION["db_name"]),
         }
 
         self.connection_args = final_connection_args
 
         self.index_type = index_type.upper()
-        if self.index_type not in OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES:
+        if self.index_type not in constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES:
             raise ValueError(
                 f"`index_type` should be one of "
-                f"{list(OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES.keys())}. "
+                f"{list(constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES.keys())}. "
                 f"Got {self.index_type}"
             )
 
         # Set default parameters based on index type
         if vidx_algo_params is None:
-            index_param_map = {
-                "HNSW": DEFAULT_OCEANBASE_HNSW_BUILD_PARAM,
-                "HNSW_SQ": DEFAULT_OCEANBASE_HNSW_BUILD_PARAM,
-                "IVF": DEFAULT_OCEANBASE_IVF_BUILD_PARAM,
-                "IVF_FLAT": DEFAULT_OCEANBASE_IVF_BUILD_PARAM,
-                "IVF_SQ": DEFAULT_OCEANBASE_IVF_SEARCH_PARAM,
-                "IVF_PQ": DEFAULT_OCEANBASE_IVF_BUILD_PARAM,
-                "FLAT": DEFAULT_OCEANBASE_FLAT_BUILD_PARAM,
-            }
+            index_param_map = constants.OCEANBASE_BUILD_PARAMS_MAPPING
             self.vidx_algo_params = index_param_map[self.index_type].copy()
 
             if self.index_type == "IVF_PQ" and "m" not in self.vidx_algo_params:
@@ -263,7 +224,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         vidx_params = self.obvector.prepare_index_params()
         vidx_params.add_index(
             field_name=self.vector_field,
-            index_type=OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES[self.index_type],
+            index_type=constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES[self.index_type],
             index_name=self.vidx_name,
             metric_type=self.vidx_metric_type,
             params=self.vidx_algo_params,
@@ -307,17 +268,9 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _get_default_search_params(self) -> dict:
         """Get default search parameters based on index type."""
-        search_param_map = {
-            "HNSW": DEFAULT_OCEANBASE_HNSW_SEARCH_PARAM,
-            "HNSW_SQ": DEFAULT_OCEANBASE_HNSW_SEARCH_PARAM,
-            "IVF": DEFAULT_OCEANBASE_IVF_SEARCH_PARAM,
-            "IVF_FLAT": DEFAULT_OCEANBASE_IVF_SEARCH_PARAM,
-            "IVF_SQ": DEFAULT_OCEANBASE_IVF_SEARCH_PARAM,
-            "IVF_PQ": DEFAULT_OCEANBASE_IVF_SEARCH_PARAM,
-            "FLAT": DEFAULT_OCEANBASE_FLAT_SEARCH_PARAM,
-        }
+        search_param_map = constants.OCEANBASE_SEARCH_PARAMS_MAPPING
         return search_param_map.get(
-            self.index_type, DEFAULT_OCEANBASE_HNSW_SEARCH_PARAM
+            self.index_type, constants.DEFAULT_OCEANBASE_HNSW_SEARCH_PARAM
         )
 
     def create_col(self, name: str, vector_size: Optional[int] = None, distance: str = "l2"):

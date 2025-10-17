@@ -31,30 +31,13 @@ from mem.prompts.graph.graph_tools_prompts import (
 )
 from mem.prompts.graph.graph_prompts import EXTRACT_RELATIONS_PROMPT, get_delete_messages
 
+from mem.storage.oceanbase import constants
+
 logger = logging.getLogger(__name__)
 
 
 class MemoryGraph:
     """OceanBase-based graph memory storage implementation."""
-
-    # Table names.
-    TABLE_ENTITIES = "graph_entities"
-    TABLE_RELATIONSHIPS = "graph_relationships"
-
-    # Default configuration constants.
-    DEFAULT_LLM_PROVIDER = "openai"
-    DEFAULT_SIMILARITY_THRESHOLD = 0.9
-    DEFAULT_PATH_STRING_LENGTH = 500
-    DEFAULT_SEARCH_LIMIT = 100
-    DEFAULT_BM25_TOP_N = 5
-
-    # Structured LLM providers.
-    STRUCTURED_LLM_PROVIDERS = ["openai_structured"]
-
-    # Index type mappings.
-    INDEX_TYPE_HNSW = ("HNSW", "HNSW_SQ")
-    INDEX_TYPE_IVF = ("IVF", "IVF_FLAT", "IVF_SQ")
-    INDEX_TYPE_IVF_PQ = "IVF_PQ"
 
     def __init__(self, config: Any) -> None:
         """Initialize OceanBase graph memory.
@@ -80,9 +63,9 @@ class MemoryGraph:
         self.embedding_dims = ob_config.embedding_model_dims
 
         # Get vidx parameters with defaults.
-        self.index_type = getattr(ob_config, "index_type", "HNSW")
-        self.vidx_metric_type = getattr(ob_config, "vidx_metric_type", "l2")
-        self.vidx_name = getattr(ob_config, "vidx_name", "vidx_embedding")
+        self.index_type = getattr(ob_config, "index_type", constants.DEFAULT_INDEX_TYPE)
+        self.vidx_metric_type = getattr(ob_config, "vidx_metric_type", constants.DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE)
+        self.vidx_name = getattr(ob_config, "vidx_name", constants.DEFAULT_VIDX_NAME)
 
         # Get graph search parameters
         self.max_hops = getattr(ob_config, "max_hops", 3)
@@ -91,14 +74,7 @@ class MemoryGraph:
         self.vidx_algo_params = getattr(ob_config, "vidx_algo_params", None)
         if not self.vidx_algo_params:
             # Set default parameters based on index type.
-            if self.index_type in self.INDEX_TYPE_HNSW:
-                self.vidx_algo_params = {"M": 16, "efConstruction": 200}
-            elif self.index_type in self.INDEX_TYPE_IVF:
-                self.vidx_algo_params = {"nlist": 128}
-            elif self.index_type == self.INDEX_TYPE_IVF_PQ:
-                self.vidx_algo_params = {"nlist": 128, "m": 3}
-            else:
-                self.vidx_algo_params = {}
+            self.vidx_algo_params = constants.get_default_build_params(self.index_type)
 
         # Initialize embedding model
         self.embedding_model = EmbeddingFactory.create(
@@ -142,7 +118,7 @@ class MemoryGraph:
             return self.config.llm.provider
 
         # Default fallback
-        return self.DEFAULT_LLM_PROVIDER
+        return constants.DEFAULT_LLM_PROVIDER
 
     def _get_llm_config(self) -> Optional[Any]:
         """Get LLM config from configuration.
@@ -245,7 +221,7 @@ class MemoryGraph:
             - graph_relationships: Stores relationships between entities
         """
 
-        if not self.client.check_table_exists(self.TABLE_ENTITIES):
+        if not self.client.check_table_exists(constants.TABLE_ENTITIES):
             # Define columns for entities table
             cols = [
                 Column("id", String(64), primary_key=True, autoincrement=False),
@@ -262,15 +238,7 @@ class MemoryGraph:
             ]
 
             # Map index_type string to VecIndexType enum
-            index_type_map = {
-                "HNSW": VecIndexType.HNSW,
-                "HNSW_SQ": VecIndexType.HNSW_SQ,
-                "IVF": VecIndexType.IVFFLAT,
-                "IVF_FLAT": VecIndexType.IVFFLAT,
-                "IVF_SQ": VecIndexType.IVFSQ,
-                "IVF_PQ": VecIndexType.IVFPQ,
-                "FLAT": VecIndexType.IVFFLAT,
-            }
+            index_type_map = constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES
 
             # Create vector index parameters
             vidx_params = self.client.prepare_index_params()
@@ -284,27 +252,27 @@ class MemoryGraph:
 
             # Create table with vector index
             self.client.create_table_with_index_params(
-                table_name=self.TABLE_ENTITIES,
+                table_name=constants.TABLE_ENTITIES,
                 columns=cols,
                 indexes=indexes,
                 vidxs=vidx_params,
                 partitions=None,
             )
 
-            logger.info("%s table created successfully", self.TABLE_ENTITIES)
+            logger.info("%s table created successfully", constants.TABLE_ENTITIES)
         else:
-            logger.info("%s table already exists", self.TABLE_ENTITIES)
+            logger.info("%s table already exists", constants.TABLE_ENTITIES)
             # Check vector dimension consistency
             existing_dim = self._get_existing_vector_dimension_for_entities()
             if existing_dim is not None and existing_dim != self.embedding_dims:
                 raise ValueError(
-                    f"Vector dimension mismatch: existing table '{self.TABLE_ENTITIES}' has "
+                    f"Vector dimension mismatch: existing table '{constants.TABLE_ENTITIES}' has "
                     f"vector dimension {existing_dim}, but requested dimension is {self.embedding_dims}. "
                     f"Please use a different configuration or reset the graph."
                 )
 
         # Create relationships table using pyobvector API
-        if not self.client.check_table_exists(self.TABLE_RELATIONSHIPS):
+        if not self.client.check_table_exists(constants.TABLE_RELATIONSHIPS):
 
             # Define columns for relationships table
             cols = [
@@ -327,16 +295,16 @@ class MemoryGraph:
 
             # Create table without vector index (relationships table has no vectors)
             self.client.create_table_with_index_params(
-                table_name=self.TABLE_RELATIONSHIPS,
+                table_name=constants.TABLE_RELATIONSHIPS,
                 columns=cols,
                 indexes=indexes,
                 vidxs=None,
                 partitions=None,
             )
 
-            logger.info("%s table created successfully", self.TABLE_RELATIONSHIPS)
+            logger.info("%s table created successfully", constants.TABLE_RELATIONSHIPS)
         else:
-            logger.info("%s table already exists", self.TABLE_RELATIONSHIPS)
+            logger.info("%s table already exists", constants.TABLE_RELATIONSHIPS)
 
     def _get_existing_vector_dimension_for_entities(self) -> Optional[int]:
         """Get the dimension of the existing vector field in entities table.
@@ -344,12 +312,12 @@ class MemoryGraph:
         Returns:
             Dimension of the vector field, or None if table doesn't exist or field not found.
         """
-        if not self.client.check_table_exists(self.TABLE_ENTITIES):
+        if not self.client.check_table_exists(constants.TABLE_ENTITIES):
             return None
 
         try:
             with self.engine.connect() as conn:
-                result = conn.execute(text(f"DESCRIBE {self.TABLE_ENTITIES}"))
+                result = conn.execute(text(f"DESCRIBE {constants.TABLE_ENTITIES}"))
                 columns = result.fetchall()
 
             for col in columns:
@@ -362,7 +330,7 @@ class MemoryGraph:
         except Exception as e:
             logger.warning(
                 "Failed to get vector dimension for %s: %s",
-                self.TABLE_ENTITIES,
+                constants.TABLE_ENTITIES,
                 e
             )
             return None
@@ -445,7 +413,7 @@ class MemoryGraph:
         bm25 = BM25Okapi(search_outputs_sequence)
 
         tokenized_query = query.split(" ")
-        reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=self.DEFAULT_BM25_TOP_N)
+        reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=constants.DEFAULT_BM25_TOP_N)
 
         search_results = []
         for item in reranked_results:
@@ -465,7 +433,7 @@ class MemoryGraph:
 
         try:
             relationships_results = self.client.get(
-                table_name=self.TABLE_RELATIONSHIPS,
+                table_name=constants.TABLE_RELATIONSHIPS,
                 ids=None,
                 output_column_name=["id", "source_entity_id", "destination_entity_id"],
                 where_clause=where_clause
@@ -479,7 +447,7 @@ class MemoryGraph:
 
             # Delete the relationships
             self.client.delete(
-                table_name=self.TABLE_RELATIONSHIPS,
+                table_name=constants.TABLE_RELATIONSHIPS,
                 where_clause=where_clause
             )
             logger.info("Deleted relationships for filters: %s", filters)
@@ -487,7 +455,7 @@ class MemoryGraph:
             # Delete entities that were part of these relationships
             if entity_ids:
                 self.client.delete(
-                    table_name=self.TABLE_ENTITIES,
+                    table_name=constants.TABLE_ENTITIES,
                     ids=list(entity_ids),
                 )
                 logger.info("Deleted %d entities for filters: %s", len(entity_ids), filters)
@@ -510,7 +478,7 @@ class MemoryGraph:
         where_clause, params = self._build_where_clause_with_filters(filters)
 
         relationships_results = self.client.get(
-            table_name=self.TABLE_RELATIONSHIPS,
+            table_name=constants.TABLE_RELATIONSHIPS,
             ids=None,
             output_column_name=["id", "source_entity_id", "relationship_type", "destination_entity_id", "updated_at"],
             where_clause=where_clause
@@ -532,7 +500,7 @@ class MemoryGraph:
 
         # Get all entities that are referenced in relationships
         entities_results = self.client.get(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             ids=list(entity_ids),
             output_column_name=["id", "name"]
         )
@@ -576,7 +544,7 @@ class MemoryGraph:
             Dictionary mapping entity names to entity types.
         """
         _tools = [EXTRACT_ENTITIES_TOOL]
-        if self.llm_provider in self.STRUCTURED_LLM_PROVIDERS:
+        if constants.is_structured_llm_provider(self.llm_provider):
             _tools = [EXTRACT_ENTITIES_STRUCT_TOOL]
 
         search_results = self.llm.generate_response(
@@ -658,7 +626,7 @@ class MemoryGraph:
             ]
 
         _tools = [RELATIONS_TOOL]
-        if self.llm_provider in self.STRUCTURED_LLM_PROVIDERS:
+        if constants.is_structured_llm_provider(self.llm_provider):
             _tools = [RELATIONS_STRUCT_TOOL]
 
         extracted_entities = self.llm.generate_response(
@@ -743,9 +711,9 @@ class MemoryGraph:
                     1 as hop_count,
                     CAST(
                         CONCAT(r.source_entity_id, ',', r.destination_entity_id) 
-                        AS CHAR({self.DEFAULT_PATH_STRING_LENGTH})
+                        AS CHAR({constants.DEFAULT_PATH_STRING_LENGTH})
                     ) as path
-                FROM {self.TABLE_RELATIONSHIPS} r
+                FROM {constants.TABLE_RELATIONSHIPS} r
                 WHERE r.source_entity_id IN :entity_ids
                     AND {base_filter}
         """
@@ -760,10 +728,10 @@ class MemoryGraph:
                     p.hop_count + 1,
                     CAST(
                         CONCAT(p.path, ',', r.destination_entity_id) 
-                        AS CHAR({self.DEFAULT_PATH_STRING_LENGTH})
+                        AS CHAR({constants.DEFAULT_PATH_STRING_LENGTH})
                     ) as path
                 FROM path_search p
-                JOIN {self.TABLE_RELATIONSHIPS} r ON p.destination_entity_id = r.source_entity_id
+                JOIN {constants.TABLE_RELATIONSHIPS} r ON p.destination_entity_id = r.source_entity_id
                 WHERE p.hop_count < {self.max_hops}
                     AND {recursive_filter}
                     AND FIND_IN_SET(r.destination_entity_id, p.path) = 0
@@ -788,8 +756,8 @@ class MemoryGraph:
                     hop_count
                 FROM path_search
             ) p
-            JOIN {self.TABLE_ENTITIES} e1 ON p.source_entity_id = e1.id
-            JOIN {self.TABLE_ENTITIES} e2 ON p.destination_entity_id = e2.id
+            JOIN {constants.TABLE_ENTITIES} e1 ON p.source_entity_id = e1.id
+            JOIN {constants.TABLE_ENTITIES} e2 ON p.destination_entity_id = e2.id
             ORDER BY p.hop_count ASC, p.source_entity_id, p.destination_entity_id
             LIMIT :limit
         """
@@ -887,7 +855,7 @@ class MemoryGraph:
         system_prompt, user_prompt = get_delete_messages(search_output_string, data, user_identity)
 
         _tools = [DELETE_MEMORY_TOOL_GRAPH]
-        if self.llm_provider in self.STRUCTURED_LLM_PROVIDERS:
+        if constants.is_structured_llm_provider(self.llm_provider):
             _tools = [DELETE_MEMORY_STRUCT_TOOL_GRAPH]
 
         memory_updates = self.llm.generate_response(
@@ -933,7 +901,7 @@ class MemoryGraph:
 
             # First, find the source and destination entities by name
             source_entities = self.client.get(
-                table_name=self.TABLE_ENTITIES,
+                table_name=constants.TABLE_ENTITIES,
                 ids=None,
                 output_column_name=["id", "name"],
                 where_clause=[text(f"name = :source_name").bindparams(
@@ -942,7 +910,7 @@ class MemoryGraph:
             )
 
             dest_entities = self.client.get(
-                table_name=self.TABLE_ENTITIES,
+                table_name=constants.TABLE_ENTITIES,
                 ids=None,
                 output_column_name=["id", "name"],
                 where_clause=[text(f"name = :dest_name").bindparams(
@@ -1004,7 +972,7 @@ class MemoryGraph:
             # Delete relationships using pyobvector delete method.
             try:
                 delete_result = self.client.delete(
-                    table_name=self.TABLE_RELATIONSHIPS,
+                    table_name=constants.TABLE_RELATIONSHIPS,
                     where_clause=where_clause
                 )
                 deleted_count = (
@@ -1047,9 +1015,9 @@ class MemoryGraph:
 
             # Search for existing similar nodes.
             source_node = self._search_source_node(source_embedding, filters,
-                                                   threshold=self.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
+                                                   threshold=constants.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
             dest_node = self._search_destination_node(dest_embedding, filters,
-                                                      threshold=self.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
+                                                      threshold=constants.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
 
             # Get or create source entity
             if source_node:
@@ -1088,7 +1056,7 @@ class MemoryGraph:
             embedding: Vector embedding to search with.
             filters: Dictionary containing user_id, agent_id, run_id.
             threshold: Distance threshold for filtering results.
-                      Defaults to DEFAULT_SIMILARITY_THRESHOLD if None.
+                      Defaults to constants.DEFAULT_SIMILARITY_THRESHOLD if None.
             limit: Maximum number of results to return. Defaults to 10.
 
         Returns:
@@ -1096,16 +1064,16 @@ class MemoryGraph:
             If limit>1: List of dicts with id, name, distance, or None if no match.
         """
         if threshold is None:
-            threshold = self.DEFAULT_SIMILARITY_THRESHOLD
+            threshold = constants.DEFAULT_SIMILARITY_THRESHOLD
 
         # Create Table object to access columns for WHERE clause.
-        table = Table(self.TABLE_ENTITIES, self.metadata, autoload_with=self.engine)
+        table = Table(constants.TABLE_ENTITIES, self.metadata, autoload_with=self.engine)
         vec_str = "[" + ",".join([str(np.float32(v)) for v in embedding]) + "]"
         distance_expr = l2_distance(table.c.embedding, vec_str)
         where_clause = [distance_expr < threshold]
 
         results = self.client.ann_search(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             vec_data=embedding,
             vec_column_name="embedding",
             distance_func=l2_distance,
@@ -1160,7 +1128,7 @@ class MemoryGraph:
 
         # Use pyobvector upsert method
         self.client.upsert(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             data=[record],
         )
 
@@ -1174,7 +1142,7 @@ class MemoryGraph:
             entity_id: UUID of the entity to update.
         """
         results = self.client.get(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             ids=[entity_id],
             output_column_name=["id", "name", "entity_type", "embedding", "mentions"],
         )
@@ -1198,7 +1166,7 @@ class MemoryGraph:
         }
 
         self.client.upsert(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             data=[updated_record],
         )
 
@@ -1239,7 +1207,7 @@ class MemoryGraph:
 
         # Check if relationship exists
         existing_relationships = self.client.get(
-            table_name=self.TABLE_RELATIONSHIPS,
+            table_name=constants.TABLE_RELATIONSHIPS,
             ids=None,
             output_column_name=["id", "mentions"],
             where_clause=[where_clause_with_params]
@@ -1253,7 +1221,7 @@ class MemoryGraph:
             new_mentions = existing_row[1] + 1
 
             self.client.update(
-                table_name=self.TABLE_RELATIONSHIPS,
+                table_name=constants.TABLE_RELATIONSHIPS,
                 values_clause=[{"mentions": new_mentions}],
                 where_clause=[text(f"id = '{existing_id}'")],
             )
@@ -1271,20 +1239,20 @@ class MemoryGraph:
             }
 
             self.client.insert(
-                table_name=self.TABLE_RELATIONSHIPS,
+                table_name=constants.TABLE_RELATIONSHIPS,
                 data=[new_record],
             )
 
         # Get the names for return value using pyobvector get method
         # First get the entities
         source_entity = self.client.get(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             ids=[source_id],
             output_column_name=["id", "name"]
         ).fetchone()
 
         dest_entity = self.client.get(
-            table_name=self.TABLE_ENTITIES,
+            table_name=constants.TABLE_ENTITIES,
             ids=[dest_id],
             output_column_name=["id", "name"]
         ).fetchone()
@@ -1323,7 +1291,7 @@ class MemoryGraph:
             source_embedding: Vector embedding to search with.
             filters: Dictionary containing user_id, agent_id, run_id.
             threshold: Distance threshold for filtering results.
-                      Defaults to DEFAULT_SIMILARITY_THRESHOLD if None.
+                      Defaults to constants.DEFAULT_SIMILARITY_THRESHOLD if None.
             limit: Maximum number of results to return. Defaults to 10.
 
         Returns:
@@ -1344,7 +1312,7 @@ class MemoryGraph:
             destination_embedding: Vector embedding to search with.
             filters: Dictionary containing user_id, agent_id, run_id.
             threshold: Distance threshold for filtering results.
-                      Defaults to DEFAULT_SIMILARITY_THRESHOLD if None.
+                      Defaults to constants.DEFAULT_SIMILARITY_THRESHOLD if None.
             limit: Maximum number of results to return. Defaults to 10.
 
         Returns:
@@ -1360,13 +1328,13 @@ class MemoryGraph:
         logger.warning("Clearing graph...")
 
         # Use pyobvector API to drop tables
-        if self.client.check_table_exists(self.TABLE_RELATIONSHIPS):
-            self.client.drop_table_if_exist(self.TABLE_RELATIONSHIPS)
-            logger.info("Dropped %s table", self.TABLE_RELATIONSHIPS)
+        if self.client.check_table_exists(constants.TABLE_RELATIONSHIPS):
+            self.client.drop_table_if_exist(constants.TABLE_RELATIONSHIPS)
+            logger.info("Dropped %s table", constants.TABLE_RELATIONSHIPS)
 
-        if self.client.check_table_exists(self.TABLE_ENTITIES):
-            self.client.drop_table_if_exist(self.TABLE_ENTITIES)
-            logger.info("Dropped %s table", self.TABLE_ENTITIES)
+        if self.client.check_table_exists(constants.TABLE_ENTITIES):
+            self.client.drop_table_if_exist(constants.TABLE_ENTITIES)
+            logger.info("Dropped %s table", constants.TABLE_ENTITIES)
 
         # Recreate tables
         self._create_tables()
