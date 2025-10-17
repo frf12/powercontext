@@ -1,12 +1,12 @@
 from typing import Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class AnthropicConfig(BaseLlmConfig):
+class AnthropicConfig(BaseLLMConfig):
     """
     Configuration class for Anthropic-specific parameters.
-    Inherits from BaseLlmConfig and adds Anthropic-specific settings.
+    Inherits from BaseLLMConfig and adds Anthropic-specific settings.
     """
 
     def __init__(

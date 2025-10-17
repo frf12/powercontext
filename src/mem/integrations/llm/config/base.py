@@ -4,7 +4,7 @@ from typing import Dict, Optional, Union
 import httpx
 
 
-class BaseLlmConfig(ABC):
+class BaseLLMConfig(ABC):
     """
     Base configuration for LLMs with only common parameters.
     Provider-specific configurations should be handled by separate config classes.

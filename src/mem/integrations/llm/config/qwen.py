@@ -1,12 +1,12 @@
 from typing import Any, Callable, Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class QwenConfig(BaseLlmConfig):
+class QwenConfig(BaseLLMConfig):
     """
     Configuration class for Qwen-specific parameters.
-    Inherits from BaseLlmConfig and adds Qwen-specific settings.
+    Inherits from BaseLLMConfig and adds Qwen-specific settings.
     """
 
     def __init__(

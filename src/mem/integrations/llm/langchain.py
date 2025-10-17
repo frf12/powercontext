@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 try:
     from langchain.chat_models.base import BaseChatModel
@@ -10,7 +10,7 @@ except ImportError:
 
 
 class LangchainLLM(LLMBase):
-    def __init__(self, config: Optional[BaseLlmConfig] = None):
+    def __init__(self, config: Optional[BaseLLMConfig] = None):
         super().__init__(config)
 
         if self.config.model is None:

@@ -11,14 +11,14 @@ except ImportError:
     DashScopeAPIResponse = None
 
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 from mem.integrations.llm.config.qwen import QwenConfig
 from mem.utils.utils import extract_json
 import dashscope
 
 
 class QwenLLM(LLMBase):
-    def __init__(self, config: Optional[Union[BaseLlmConfig, QwenConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, QwenConfig, Dict]] = None):
         # Check if dashscope is available first
         try:
             from dashscope import Generation
@@ -33,8 +33,8 @@ class QwenLLM(LLMBase):
             config = QwenConfig()
         elif isinstance(config, dict):
             config = QwenConfig(**config)
-        elif isinstance(config, BaseLlmConfig) and not isinstance(config, QwenConfig):
-            # Convert BaseLlmConfig to QwenConfig
+        elif isinstance(config, BaseLLMConfig) and not isinstance(config, QwenConfig):
+            # Convert BaseLLMConfig to QwenConfig
             config = QwenConfig(
                 model=config.model,
                 temperature=config.temperature,

@@ -2,7 +2,7 @@ import importlib
 from typing import Dict, Optional, Union
 
 from mem.integrations.llm.config.anthropic import AnthropicConfig
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 from mem.integrations.llm.config.deepseek import DeepSeekConfig
 from mem.integrations.llm.config.ollama import OllamaConfig
 from mem.integrations.llm.config.openai import OpenAIConfig
@@ -19,7 +19,7 @@ def load_class(class_type):
 class LLMFactory:
     """
     Factory for creating LLM instances with appropriate configurations.
-    Supports both old-style BaseLlmConfig and new provider-specific configs.
+    Supports both old-style BaseLLMConfig and new provider-specific configs.
     """
 
     # Provider mappings with their config classes
@@ -28,15 +28,15 @@ class LLMFactory:
         "openai": ("mem.integrations.llm.openai.OpenAILLM", OpenAIConfig),
         "openai_structured": ("mem.integrations.llm.openai_structured.OpenAIStructuredLLM", OpenAIConfig),
         "anthropic": ("mem.integrations.llm.anthropic.AnthropicLLM", AnthropicConfig),
-        "gemini": ("mem.integrations.llm.gemini.GeminiLLM", BaseLlmConfig),
+        "gemini": ("mem.integrations.llm.gemini.GeminiLLM", BaseLLMConfig),
         "deepseek": ("mem.integrations.llm.deepseek.DeepSeekLLM", DeepSeekConfig),
         "vllm": ("mem.integrations.llm.vllm.VllmLLM", VllmConfig),
-        "langchain": ("mem.integrations.llm.langchain.LangchainLLM", BaseLlmConfig),
+        "langchain": ("mem.integrations.llm.langchain.LangchainLLM", BaseLLMConfig),
         "qwen": ("mem.integrations.llm.qwen.QwenLLM", QwenConfig),
     }
 
     @classmethod
-    def create(cls, provider_name: str, config: Optional[Union[BaseLlmConfig, Dict]] = None, **kwargs):
+    def create(cls, provider_name: str, config: Optional[Union[BaseLLMConfig, Dict]] = None, **kwargs):
         """
         Create an LLM instance with the appropriate configuration.
 
@@ -65,9 +65,9 @@ class LLMFactory:
             # Merge dict config with kwargs
             config.update(kwargs)
             config = config_class(**config)
-        elif isinstance(config, BaseLlmConfig):
+        elif isinstance(config, BaseLLMConfig):
             # Convert base config to provider-specific config if needed
-            if config_class != BaseLlmConfig:
+            if config_class != BaseLLMConfig:
                 # Convert to provider-specific config
                 config_dict = {
                     "model": config.model,
@@ -99,10 +99,10 @@ class LLMFactory:
         Args:
             name (str): Provider name
             class_path (str): Full path to LLM class
-            config_class: Configuration class for the provider (defaults to BaseLlmConfig)
+            config_class: Configuration class for the provider (defaults to BaseLLMConfig)
         """
         if config_class is None:
-            config_class = BaseLlmConfig
+            config_class = BaseLLMConfig
         cls.provider_to_class[name] = (class_path, config_class)
 
     @classmethod

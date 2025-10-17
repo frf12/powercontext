@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
 class LLMBase(ABC):
@@ -10,17 +10,17 @@ class LLMBase(ABC):
     Handles common functionality and delegates provider-specific logic to subclasses.
     """
 
-    def __init__(self, config: Optional[Union[BaseLlmConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, Dict]] = None):
         """Initialize a base LLM class
 
         :param config: LLM configuration option class or dict, defaults to None
-        :type config: Optional[Union[BaseLlmConfig, Dict]], optional
+        :type config: Optional[Union[BaseLLMConfig, Dict]], optional
         """
         if config is None:
-            self.config = BaseLlmConfig()
+            self.config = BaseLLMConfig()
         elif isinstance(config, dict):
             # Handle dict-based configuration (backward compatibility)
-            self.config = BaseLlmConfig(**config)
+            self.config = BaseLLMConfig(**config)
         else:
             self.config = config
 

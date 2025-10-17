@@ -4,20 +4,20 @@ from typing import Dict, List, Optional, Union
 
 from openai import OpenAI
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 from mem.integrations.llm.config.deepseek import DeepSeekConfig
 from mem.utils.utils import extract_json
 
 
 class DeepSeekLLM(LLMBase):
-    def __init__(self, config: Optional[Union[BaseLlmConfig, DeepSeekConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, DeepSeekConfig, Dict]] = None):
         # Convert to DeepSeekConfig if needed
         if config is None:
             config = DeepSeekConfig()
         elif isinstance(config, dict):
             config = DeepSeekConfig(**config)
-        elif isinstance(config, BaseLlmConfig) and not isinstance(config, DeepSeekConfig):
-            # Convert BaseLlmConfig to DeepSeekConfig
+        elif isinstance(config, BaseLLMConfig) and not isinstance(config, DeepSeekConfig):
+            # Convert BaseLLMConfig to DeepSeekConfig
             config = DeepSeekConfig(
                 model=config.model,
                 temperature=config.temperature,

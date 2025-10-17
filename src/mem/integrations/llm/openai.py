@@ -5,20 +5,20 @@ from typing import Dict, List, Optional, Union
 
 from openai import OpenAI
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 from mem.integrations.llm.config.openai import OpenAIConfig
 from mem.utils.utils import extract_json
 
 
 class OpenAILLM(LLMBase):
-    def __init__(self, config: Optional[Union[BaseLlmConfig, OpenAIConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, OpenAIConfig, Dict]] = None):
         # Convert to OpenAIConfig if needed
         if config is None:
             config = OpenAIConfig()
         elif isinstance(config, dict):
             config = OpenAIConfig(**config)
-        elif isinstance(config, BaseLlmConfig) and not isinstance(config, OpenAIConfig):
-            # Convert BaseLlmConfig to OpenAIConfig
+        elif isinstance(config, BaseLLMConfig) and not isinstance(config, OpenAIConfig):
+            # Convert BaseLLMConfig to OpenAIConfig
             config = OpenAIConfig(
                 model=config.model,
                 temperature=config.temperature,

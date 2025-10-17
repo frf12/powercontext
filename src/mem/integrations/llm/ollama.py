@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Union
 
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 from mem.integrations.llm.config.ollama import OllamaConfig
 
 try:
@@ -11,14 +11,14 @@ except ImportError:
 
 
 class OllamaLLM(LLMBase):
-    def __init__(self, config: Optional[Union[BaseLlmConfig, OllamaConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, OllamaConfig, Dict]] = None):
         # Convert to OllamaConfig if needed
         if config is None:
             config = OllamaConfig()
         elif isinstance(config, dict):
             config = OllamaConfig(**config)
-        elif isinstance(config, BaseLlmConfig) and not isinstance(config, OllamaConfig):
-            # Convert BaseLlmConfig to OllamaConfig
+        elif isinstance(config, BaseLLMConfig) and not isinstance(config, OllamaConfig):
+            # Convert BaseLLMConfig to OllamaConfig
             config = OllamaConfig(
                 model=config.model,
                 temperature=config.temperature,

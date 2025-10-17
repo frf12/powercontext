@@ -1,12 +1,12 @@
 from typing import Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class VllmConfig(BaseLlmConfig):
+class VllmConfig(BaseLLMConfig):
     """
     Configuration class for vLLM-specific parameters.
-    Inherits from BaseLlmConfig and adds vLLM-specific settings.
+    Inherits from BaseLLMConfig and adds vLLM-specific settings.
     """
 
     def __init__(

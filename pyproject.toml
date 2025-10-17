@@ -33,6 +33,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
+    "pyobvector>=0.2.0,<0.3.0",
 ]
 
 [project.optional-dependencies]
@@ -44,9 +45,6 @@ dev = [
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
-]
-oceanbase = [
-    "pyobvector>=1.0.0",
 ]
 postgres = [
     "psycopg2-binary>=2.9.0",

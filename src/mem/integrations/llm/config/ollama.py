@@ -1,12 +1,12 @@
 from typing import Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class OllamaConfig(BaseLlmConfig):
+class OllamaConfig(BaseLLMConfig):
     """
     Configuration class for Ollama-specific parameters.
-    Inherits from BaseLlmConfig and adds Ollama-specific settings.
+    Inherits from BaseLLMConfig and adds Ollama-specific settings.
     """
 
     def __init__(

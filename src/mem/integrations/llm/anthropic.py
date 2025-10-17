@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Union
 
 from mem.integrations.llm import LLMBase
 from mem.integrations.llm.config.anthropic import AnthropicConfig
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 try:
     import anthropic
@@ -12,14 +12,14 @@ except ImportError:
 
 
 class AnthropicLLM(LLMBase):
-    def __init__(self, config: Optional[Union[BaseLlmConfig, AnthropicConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, AnthropicConfig, Dict]] = None):
         # Convert to AnthropicConfig if needed
         if config is None:
             config = AnthropicConfig()
         elif isinstance(config, dict):
             config = AnthropicConfig(**config)
-        elif isinstance(config, BaseLlmConfig) and not isinstance(config, AnthropicConfig):
-            # Convert BaseLlmConfig to AnthropicConfig
+        elif isinstance(config, BaseLLMConfig) and not isinstance(config, AnthropicConfig):
+            # Convert BaseLLMConfig to AnthropicConfig
             config = AnthropicConfig(
                 model=config.model,
                 temperature=config.temperature,

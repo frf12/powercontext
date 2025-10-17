@@ -5,11 +5,11 @@ from typing import Dict, List, Optional, Any
 from openai import OpenAI
 
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
 class OpenAIStructuredLLM(LLMBase):
-    def __init__(self, config: Optional[BaseLlmConfig] = None):
+    def __init__(self, config: Optional[BaseLLMConfig] = None):
         super().__init__(config)
 
         if not self.config.model:

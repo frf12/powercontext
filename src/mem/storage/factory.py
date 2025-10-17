@@ -4,86 +4,54 @@ Storage factory for creating storage instances
 This module provides a factory for creating different storage backends.
 """
 
-import logging
-from typing import Any, Dict, Type
-from .base import StorageBase
-from .config import StorageConfig
-
-logger = logging.getLogger(__name__)
+import importlib
 
 
-class StorageFactory:
+def load_class(class_type):
+    module_path, class_name = class_type.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+class VectorStoreFactory:
+    provider_to_class = {
+        "oceanbase": "mem.storage.oceanbase.oceanbase.OceanBaseVectorStore",
+        "postgres": "mem.storage.postgres.postgres.PostgresVectorStore",
+    }
+
+    @classmethod
+    def create(cls, provider_name, config):
+        class_type = cls.provider_to_class.get(provider_name)
+        if class_type:
+            if not isinstance(config, dict):
+                config = config.model_dump()
+            vector_store_instance = load_class(class_type)
+            return vector_store_instance(**config)
+        else:
+            raise ValueError(f"Unsupported VectorStore provider: {provider_name}")
+
+    @classmethod
+    def reset(cls, instance):
+        instance.reset()
+        return instance
+
+
+class GraphStoreFactory:
     """
-    Factory for creating storage instances.
+    Factory for creating MemoryGraph instances for different graph store providers.
+    Usage: GraphStoreFactory.create(provider_name, config)
     """
-    
-    _storage_registry: Dict[str, Type[StorageBase]] = {}
-    
+
+    provider_to_class = {
+        "oceanbase": "mem.storage.oceanbase.oceanbase_graph.MemoryGraph",
+        "default": "mem.storage.oceanbase.oceanbase_graph.MemoryGraph",
+    }
+
     @classmethod
-    def register_storage(cls, name: str, storage_class: Type[StorageBase]) -> None:
-        """
-        Register a storage implementation.
-        
-        Args:
-            name: Storage name
-            storage_class: Storage implementation class
-        """
-        cls._storage_registry[name] = storage_class
-        logger.info(f"Registered storage: {name}")
-    
-    @classmethod
-    def create(cls, storage_type: str, config: Dict[str, Any]) -> StorageBase:
-        """
-        Create a storage instance.
-        
-        Args:
-            storage_type: Type of storage to create
-            config: Storage configuration
-            
-        Returns:
-            Storage instance
-            
-        Raises:
-            ValueError: If storage type is not supported
-        """
-        if storage_type not in cls._storage_registry:
-            raise ValueError(f"Unsupported storage type: {storage_type}")
-        
-        storage_class = cls._storage_registry[storage_type]
-        return storage_class(config)
-    
-    @classmethod
-    def get_supported_storages(cls) -> list:
-        """
-        Get list of supported storage types.
-        
-        Returns:
-            List of supported storage types
-        """
-        return list(cls._storage_registry.keys())
+    def create(cls, provider_name, config):
+        class_type = cls.provider_to_class.get(provider_name, cls.provider_to_class["default"])
+        try:
+            GraphClass = load_class(class_type)
+        except (ImportError, AttributeError) as e:
+            raise ImportError(f"Could not import MemoryGraph for provider '{provider_name}': {e}")
+        return GraphClass(config)
 
-
-# Register built-in storage implementations
-def register_builtin_storages():
-    """Register built-in storage implementations."""
-    try:
-        from .sqlite import SQLiteStorage
-        StorageFactory.register_storage("sqlite", SQLiteStorage)
-    except ImportError:
-        logger.warning("SQLite storage not available")
-    
-    try:
-        from .postgres.postgres import PostgreSQLStorage
-        StorageFactory.register_storage("postgres", PostgreSQLStorage)
-    except ImportError:
-        logger.warning("PostgreSQL storage not available")
-    
-    try:
-        from .oceanbase.oceanbase import OceanBaseStorage
-        StorageFactory.register_storage("oceanbase", OceanBaseStorage)
-    except ImportError:
-        logger.warning("OceanBase storage not available")
-
-
-# Auto-register built-in storages
-register_builtin_storages()

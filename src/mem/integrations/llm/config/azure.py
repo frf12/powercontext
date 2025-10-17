@@ -1,12 +1,12 @@
 from typing import Any, Dict, Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class AzureOpenAIConfig(BaseLlmConfig):
+class AzureOpenAIConfig(BaseLLMConfig):
     """
     Configuration class for Azure OpenAI-specific parameters.
-    Inherits from BaseLlmConfig and adds Azure OpenAI-specific settings.
+    Inherits from BaseLLMConfig and adds Azure OpenAI-specific settings.
     """
 
     def __init__(

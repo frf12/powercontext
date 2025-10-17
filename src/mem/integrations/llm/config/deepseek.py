@@ -1,12 +1,12 @@
 from typing import Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class DeepSeekConfig(BaseLlmConfig):
+class DeepSeekConfig(BaseLLMConfig):
     """
     Configuration class for DeepSeek-specific parameters.
-    Inherits from BaseLlmConfig and adds DeepSeek-specific settings.
+    Inherits from BaseLLMConfig and adds DeepSeek-specific settings.
     """
 
     def __init__(

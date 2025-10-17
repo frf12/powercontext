@@ -2,7 +2,7 @@ import os
 from typing import Dict, List, Optional
 
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 try:
     from google import genai
@@ -12,7 +12,7 @@ except ImportError:
 
 
 class GeminiLLM(LLMBase):
-    def __init__(self, config: Optional[BaseLlmConfig] = None):
+    def __init__(self, config: Optional[BaseLLMConfig] = None):
         super().__init__(config)
 
         if not self.config.model:

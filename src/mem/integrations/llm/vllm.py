@@ -4,20 +4,20 @@ from typing import Dict, List, Optional, Union
 
 from openai import OpenAI
 from mem.integrations.llm import LLMBase
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 from mem.integrations.llm.config.vllm import VllmConfig
 from mem.utils.utils import extract_json
 
 
 class VllmLLM(LLMBase):
-    def __init__(self, config: Optional[Union[BaseLlmConfig, VllmConfig, Dict]] = None):
+    def __init__(self, config: Optional[Union[BaseLLMConfig, VllmConfig, Dict]] = None):
         # Convert to VllmConfig if needed
         if config is None:
             config = VllmConfig()
         elif isinstance(config, dict):
             config = VllmConfig(**config)
-        elif isinstance(config, BaseLlmConfig) and not isinstance(config, VllmConfig):
-            # Convert BaseLlmConfig to VllmConfig
+        elif isinstance(config, BaseLLMConfig) and not isinstance(config, VllmConfig):
+            # Convert BaseLLMConfig to VllmConfig
             config = VllmConfig(
                 model=config.model,
                 temperature=config.temperature,

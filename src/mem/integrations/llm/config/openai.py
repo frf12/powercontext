@@ -1,12 +1,12 @@
 from typing import Any, Callable, List, Optional
 
-from mem.integrations.llm.config.base import BaseLlmConfig
+from mem.integrations.llm.config.base import BaseLLMConfig
 
 
-class OpenAIConfig(BaseLlmConfig):
+class OpenAIConfig(BaseLLMConfig):
     """
     Configuration class for OpenAI and OpenRouter-specific parameters.
-    Inherits from BaseLlmConfig and adds OpenAI-specific settings.
+    Inherits from BaseLLMConfig and adds OpenAI-specific settings.
     """
 
     def __init__(
