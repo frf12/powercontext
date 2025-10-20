@@ -1,3 +1,16 @@
+"""
+Graph tools prompts for memory operations
+
+This module provides tool definitions for graph-based memory operations.
+"""
+
+import logging
+from typing import Dict, Any, Optional, List
+from ..templates import PromptTemplates
+
+logger = logging.getLogger(__name__)
+
+# Tool definitions constants
 UPDATE_MEMORY_TOOL_GRAPH = {
     "type": "function",
     "function": {
@@ -66,6 +79,36 @@ ADD_MEMORY_TOOL_GRAPH = {
     },
 }
 
+DELETE_MEMORY_TOOL_GRAPH = {
+    "type": "function",
+    "function": {
+        "name": "delete_graph_memory",
+        "description": "Delete the relationship between two nodes. This function deletes the existing relationship.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "The identifier of the source node in the relationship.",
+                },
+                "relationship": {
+                    "type": "string",
+                    "description": "The existing relationship between the source and destination nodes that needs to be deleted.",
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "The identifier of the destination node in the relationship.",
+                },
+            },
+            "required": [
+                "source",
+                "relationship",
+                "destination",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
 
 NOOP_TOOL = {
     "type": "function",
@@ -149,6 +192,7 @@ EXTRACT_ENTITIES_TOOL = {
     },
 }
 
+# Structured versions (with strict=True)
 UPDATE_MEMORY_STRUCT_TOOL_GRAPH = {
     "type": "function",
     "function": {
@@ -219,6 +263,37 @@ ADD_MEMORY_STRUCT_TOOL_GRAPH = {
     },
 }
 
+DELETE_MEMORY_STRUCT_TOOL_GRAPH = {
+    "type": "function",
+    "function": {
+        "name": "delete_graph_memory",
+        "description": "Delete the relationship between two nodes. This function deletes the existing relationship.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "The identifier of the source node in the relationship.",
+                },
+                "relationship": {
+                    "type": "string",
+                    "description": "The existing relationship between the source and destination nodes that needs to be deleted.",
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "The identifier of the destination node in the relationship.",
+                },
+            },
+            "required": [
+                "source",
+                "relationship",
+                "destination",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
 
 NOOP_STRUCT_TOOL = {
     "type": "function",
@@ -307,65 +382,88 @@ EXTRACT_ENTITIES_STRUCT_TOOL = {
     },
 }
 
-DELETE_MEMORY_STRUCT_TOOL_GRAPH = {
-    "type": "function",
-    "function": {
-        "name": "delete_graph_memory",
-        "description": "Delete the relationship between two nodes. This function deletes the existing relationship.",
-        "strict": True,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string",
-                    "description": "The identifier of the source node in the relationship.",
-                },
-                "relationship": {
-                    "type": "string",
-                    "description": "The existing relationship between the source and destination nodes that needs to be deleted.",
-                },
-                "destination": {
-                    "type": "string",
-                    "description": "The identifier of the destination node in the relationship.",
-                },
-            },
-            "required": [
-                "source",
-                "relationship",
-                "destination",
-            ],
-            "additionalProperties": False,
-        },
-    },
-}
 
-DELETE_MEMORY_TOOL_GRAPH = {
-    "type": "function",
-    "function": {
-        "name": "delete_graph_memory",
-        "description": "Delete the relationship between two nodes. This function deletes the existing relationship.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string",
-                    "description": "The identifier of the source node in the relationship.",
-                },
-                "relationship": {
-                    "type": "string",
-                    "description": "The existing relationship between the source and destination nodes that needs to be deleted.",
-                },
-                "destination": {
-                    "type": "string",
-                    "description": "The identifier of the destination node in the relationship.",
-                },
-            },
-            "required": [
-                "source",
-                "relationship",
-                "destination",
-            ],
-            "additionalProperties": False,
-        },
-    },
-}
+class GraphToolsPrompts(PromptTemplates):
+    """
+    Tool definitions for graph-based memory operations.
+    """
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize graph tools prompts.
+        
+        Args:
+            config: Configuration dictionary
+        """
+        super().__init__(config)
+    
+    def get_tool(self, tool_name: str, structured: bool = False) -> Dict[str, Any]:
+        """
+        Get a specific tool definition.
+        
+        Args:
+            tool_name: Name of the tool
+            structured: Whether to return structured version (with strict=True)
+            
+        Returns:
+            Tool definition dictionary
+        """
+        tool_map = {
+            "update_memory": UPDATE_MEMORY_STRUCT_TOOL_GRAPH if structured else UPDATE_MEMORY_TOOL_GRAPH,
+            "add_memory": ADD_MEMORY_STRUCT_TOOL_GRAPH if structured else ADD_MEMORY_TOOL_GRAPH,
+            "delete_memory": DELETE_MEMORY_STRUCT_TOOL_GRAPH if structured else DELETE_MEMORY_TOOL_GRAPH,
+            "noop": NOOP_STRUCT_TOOL if structured else NOOP_TOOL,
+            "establish_relationships": RELATIONS_STRUCT_TOOL if structured else RELATIONS_TOOL,
+            "extract_entities": EXTRACT_ENTITIES_STRUCT_TOOL if structured else EXTRACT_ENTITIES_TOOL,
+        }
+        return tool_map.get(tool_name, {})
+    
+    def get_tools(self, tool_names: List[str], structured: bool = False) -> List[Dict[str, Any]]:
+        """
+        Get multiple tool definitions.
+        
+        Args:
+            tool_names: List of tool names
+            structured: Whether to return structured versions
+            
+        Returns:
+            List of tool definition dictionaries
+        """
+        return [self.get_tool(name, structured) for name in tool_names if self.get_tool(name, structured)]
+    
+    def get_all_tools(self, structured: bool = False) -> List[Dict[str, Any]]:
+        """
+        Get all tool definitions.
+        
+        Args:
+            structured: Whether to return structured versions
+            
+        Returns:
+            List of all tool definition dictionaries
+        """
+        tool_names = ["update_memory", "add_memory", "delete_memory", "noop", "establish_relationships", "extract_entities"]
+        return self.get_tools(tool_names, structured)
+    
+    def get_update_tool(self, structured: bool = False) -> Dict[str, Any]:
+        """Get update memory tool."""
+        return UPDATE_MEMORY_STRUCT_TOOL_GRAPH if structured else UPDATE_MEMORY_TOOL_GRAPH
+    
+    def get_add_tool(self, structured: bool = False) -> Dict[str, Any]:
+        """Get add memory tool."""
+        return ADD_MEMORY_STRUCT_TOOL_GRAPH if structured else ADD_MEMORY_TOOL_GRAPH
+    
+    def get_delete_tool(self, structured: bool = False) -> Dict[str, Any]:
+        """Get delete memory tool."""
+        return DELETE_MEMORY_STRUCT_TOOL_GRAPH if structured else DELETE_MEMORY_TOOL_GRAPH
+    
+    def get_noop_tool(self, structured: bool = False) -> Dict[str, Any]:
+        """Get noop tool."""
+        return NOOP_STRUCT_TOOL if structured else NOOP_TOOL
+    
+    def get_relations_tool(self, structured: bool = False) -> Dict[str, Any]:
+        """Get establish relationships tool."""
+        return RELATIONS_STRUCT_TOOL if structured else RELATIONS_TOOL
+    
+    def get_extract_entities_tool(self, structured: bool = False) -> Dict[str, Any]:
+        """Get extract entities tool."""
+        return EXTRACT_ENTITIES_STRUCT_TOOL if structured else EXTRACT_ENTITIES_TOOL

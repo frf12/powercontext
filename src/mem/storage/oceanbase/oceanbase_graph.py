@@ -21,15 +21,7 @@ try:
 except ImportError:
     raise ImportError("rank_bm25 is not installed. Please install it using pip install rank-bm25")
 
-from mem.prompts.graph.graph_tools_prompts import (
-    DELETE_MEMORY_STRUCT_TOOL_GRAPH,
-    DELETE_MEMORY_TOOL_GRAPH,
-    EXTRACT_ENTITIES_STRUCT_TOOL,
-    EXTRACT_ENTITIES_TOOL,
-    RELATIONS_STRUCT_TOOL,
-    RELATIONS_TOOL,
-)
-from mem.prompts.graph.graph_prompts import EXTRACT_RELATIONS_PROMPT, get_delete_messages
+from mem.prompts import GraphPrompts, GraphToolsPrompts
 
 from mem.storage.oceanbase import constants
 
@@ -100,6 +92,10 @@ class MemoryGraph:
         self.llm_provider = self._get_llm_provider()
         llm_config = self._get_llm_config()
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
+
+        # Initialize graph prompts and tools
+        self.graph_prompts = GraphPrompts()
+        self.graph_tools_prompts = GraphToolsPrompts()
 
     def _get_llm_provider(self) -> str:
         """Get LLM provider from configuration with fallback.
@@ -543,9 +539,9 @@ class MemoryGraph:
         Returns:
             Dictionary mapping entity names to entity types.
         """
-        _tools = [EXTRACT_ENTITIES_TOOL]
+        _tools = [self.graph_tools_prompts.get_extract_entities_tool()]
         if constants.is_structured_llm_provider(self.llm_provider):
-            _tools = [EXTRACT_ENTITIES_STRUCT_TOOL]
+            _tools = [self.graph_tools_prompts.get_extract_entities_tool(structured=True)]
 
         search_results = self.llm.generate_response(
             messages=[
@@ -609,14 +605,16 @@ class MemoryGraph:
         user_identity = self._build_user_identity(filters)
 
         if self.config.graph_store.custom_prompt:
-            system_content = EXTRACT_RELATIONS_PROMPT.replace("USER_ID", user_identity)
+            system_content = self.graph_prompts.get_system_prompt("extract_relations")
+            system_content = system_content.replace("USER_ID", user_identity)
             system_content = system_content.replace("CUSTOM_PROMPT", f"4. {self.config.graph_store.custom_prompt}")
             messages = [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": data},
             ]
         else:
-            system_content = EXTRACT_RELATIONS_PROMPT.replace("USER_ID", user_identity)
+            system_content = self.graph_prompts.get_system_prompt("extract_relations")
+            system_content = system_content.replace("USER_ID", user_identity)
             messages = [
                 {"role": "system", "content": system_content},
                 {
@@ -625,9 +623,9 @@ class MemoryGraph:
                 },
             ]
 
-        _tools = [RELATIONS_TOOL]
+        _tools = [self.graph_tools_prompts.get_relations_tool()]
         if constants.is_structured_llm_provider(self.llm_provider):
-            _tools = [RELATIONS_STRUCT_TOOL]
+            _tools = [self.graph_tools_prompts.get_relations_tool(structured=True)]
 
         extracted_entities = self.llm.generate_response(
             messages=messages,
@@ -852,11 +850,11 @@ class MemoryGraph:
         """
         search_output_string = format_entities(search_output)
         user_identity = self._build_user_identity(filters)
-        system_prompt, user_prompt = get_delete_messages(search_output_string, data, user_identity)
+        system_prompt, user_prompt = self.graph_prompts.get_delete_relations_prompt(search_output_string, data, user_identity)
 
-        _tools = [DELETE_MEMORY_TOOL_GRAPH]
+        _tools = [self.graph_tools_prompts.get_delete_tool()]
         if constants.is_structured_llm_provider(self.llm_provider):
-            _tools = [DELETE_MEMORY_STRUCT_TOOL_GRAPH]
+            _tools = [self.graph_tools_prompts.get_delete_tool(structured=True)]
 
         memory_updates = self.llm.generate_response(
             messages=[

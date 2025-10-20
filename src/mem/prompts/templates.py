@@ -4,6 +4,7 @@ Prompt templates for memory operations
 This module provides prompt templates for different memory operations.
 """
 
+import logging
 from typing import Dict, Any, Optional
 import json
 

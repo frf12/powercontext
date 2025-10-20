@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 from .base import MemoryBase
-from ..storage.factory import StorageFactory
+from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbeddingFactory
@@ -48,7 +48,7 @@ class Memory(MemoryBase):
         self.embedding_provider = embedding_provider
         
         # Initialize components
-        self.storage = StorageFactory.create(storage_type, self.config)
+        self.storage = VectorStoreFactory.create(storage_type, self.config)
         self.llm = LLMFactory.create(llm_provider, self.config)
         self.embedding = EmbeddingFactory.create(embedding_provider, self.config)
         self.intelligence = IntelligenceManager(self.config)

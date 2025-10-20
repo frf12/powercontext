@@ -4,12 +4,11 @@ Storage layer for memory management
 This module provides the storage abstraction and implementations.
 """
 
-from .base import StorageBase
-from .factory import StorageFactory
-from .config import StorageConfig
+from .base import VectorStoreBase
+from .factory import VectorStoreFactory, GraphStoreFactory
 
 __all__ = [
-    "StorageBase",
-    "StorageFactory", 
-    "StorageConfig",
+    "VectorStoreBase",
+    "VectorStoreFactory",
+    "GraphStoreFactory", 
 ]
