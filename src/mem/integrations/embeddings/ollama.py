@@ -6,7 +6,7 @@ from mem.integrations.embeddings.base import EmbeddingBase
 from mem.integrations.embeddings.config.base import BaseEmbedderConfig
 
 try:
-    from mem.integrations.embeddings.ollama import Client
+    from ollama import Client
 except ImportError:
     user_input = input("The 'ollama' library is required. Install it now? [y/N]: ")
     if user_input.lower() == "y":
