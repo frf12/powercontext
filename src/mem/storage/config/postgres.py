@@ -26,6 +26,7 @@ class PostgresConfig(BaseVectorStoreConfig):
                                            description="psycopg connection pool object (overrides connection string and individual parameters)")
 
     @model_validator(mode="before")
+    @classmethod
     def check_auth_and_connection(cls, values):
         # If connection_pool is provided, skip validation of individual connection parameters
         if values.get("connection_pool") is not None:
@@ -38,8 +39,14 @@ class PostgresConfig(BaseVectorStoreConfig):
         # Otherwise, validate individual connection parameters
         user, password = values.get("user"), values.get("password")
         host, port = values.get("host"), values.get("port")
-        if not user and not password:
-            raise ValueError("Both 'user' and 'password' must be provided when not using connection_string.")
-        if not host and not port:
-            raise ValueError("Both 'host' and 'port' must be provided when not using connection_string.")
+        
+        # Only validate if user explicitly provided values (not using defaults)
+        if user is not None or password is not None:
+            if not user or not password:
+                raise ValueError("Both 'user' and 'password' must be provided when not using connection_string.")
+        
+        if host is not None or port is not None:
+            if not host or not port:
+                raise ValueError("Both 'host' and 'port' must be provided when not using connection_string.")
+        
         return values

@@ -2,7 +2,7 @@
 OceanBase storage module initialization
 """
 
-from .oceanbase import OceanBaseStorage
-from .oceanbase_graph import OceanBaseGraphStorage
+from .oceanbase import OceanBaseVectorStore
+from .oceanbase_graph import MemoryGraph
 
-__all__ = ["OceanBaseStorage", "OceanBaseGraphStorage"]
+__all__ = ["OceanBaseVectorStore", "MemoryGraph"]

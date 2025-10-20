@@ -8,8 +8,8 @@ class LLMConfig(BaseModel):
     config: Optional[dict] = Field(description="Configuration for the specific LLM", default={})
 
     @field_validator("config")
-    def validate_config(self, v, values):
-        provider = values.data.get("provider")
+    def validate_config(cls, v, info):
+        provider = info.data.get("provider")
         if provider in (
             "openai",
             "ollama",

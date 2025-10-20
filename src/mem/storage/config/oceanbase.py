@@ -48,17 +48,6 @@ class OceanBaseConfig(BaseVectorStoreConfig):
         "arbitrary_types_allowed": True,
     }
 
-    @model_validator(mode="before")
-    def check_required_fields(self, values):
-        host, port, user, db_name = (
-            values.get("host"),
-            values.get("port"),
-            values.get("user"),
-            values.get("db_name"),
-        )
-        if not all([host, port, user, db_name]):
-            raise ValueError("Please provide 'host', 'port', 'user' and 'db_name'.")
-        return values
 
 
 class OceanBaseGraphConfig(OceanBaseConfig):

@@ -68,6 +68,56 @@ class QwenLLM(LLMBase):
         if base_url:
             os.environ["DASHSCOPE_BASE_URL"] = base_url
 
+    def _get_attr(self, obj, key, default=None):
+        """Unified handling of attribute access for both dicts and objects"""
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+    
+    def _extract_message(self, output):
+        """Extract message object from response output"""
+        # Get default text content
+        text = self._get_attr(output, 'text', '')
+        
+        # Extract message from choices
+        choices = self._get_attr(output, 'choices', [])
+        if choices:
+            choice = choices[0]
+            message = self._get_attr(choice, 'message')
+            return message, text
+        
+        return None, text
+    
+    def _extract_content(self, output):
+        """Extract response content"""
+        message, default_text = self._extract_message(output)
+        if message:
+            return self._get_attr(message, 'content', default_text)
+        return default_text
+    
+    def _extract_tool_calls(self, output):
+        """Extract tool calls from response"""
+        message, _ = self._extract_message(output)
+        if not message:
+            return []
+        
+        tool_calls = self._get_attr(message, 'tool_calls')
+        if not tool_calls:
+            return []
+        
+        processed_calls = []
+        for tool_call in tool_calls:
+            function = self._get_attr(tool_call, 'function', {})
+            name = self._get_attr(function, 'name')
+            arguments = self._get_attr(function, 'arguments', '{}')
+            
+            processed_calls.append({
+                "name": name,
+                "arguments": json.loads(extract_json(arguments)),
+            })
+        
+        return processed_calls
+
     def _parse_response(self, response: DashScopeAPIResponse, tools: Optional[List[Dict]] = None):
         """
         Process the response based on whether tools are used or not.
@@ -82,38 +132,15 @@ class QwenLLM(LLMBase):
         if response.status_code != 200:
             raise Exception(f"API request failed with status {response.status_code}: {response.message}")
 
-        # response.output is a dict, not an object with attributes
-        if isinstance(response.output, dict):
-            content = response.output.get('text', '')
-        else:
-            content = getattr(response.output, 'text', '')
-
+        content = self._extract_content(response.output)
+        
         if tools:
-            processed_response = {
+            return {
                 "content": content,
-                "tool_calls": [],
+                "tool_calls": self._extract_tool_calls(response.output),
             }
-
-            # Qwen models may return tool calls in the content
-            # This is a simplified implementation - you may need to enhance based on actual response format
-            try:
-                # Ensure content is not None before processing
-                if content and isinstance(content, str):
-                    # Try to parse JSON from content if it contains tool calls
-                    if "tool_calls" in content or "function_call" in content:
-                        # Extract JSON from content
-                        json_str = extract_json(content)
-                        if json_str:
-                            tool_data = json.loads(json_str)
-                            if isinstance(tool_data, dict) and "tool_calls" in tool_data:
-                                processed_response["tool_calls"] = tool_data["tool_calls"]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                # If parsing fails, just return the content
-                pass
-
-            return processed_response
-        else:
-            return content
+        
+        return content
 
     def generate_response(
             self,

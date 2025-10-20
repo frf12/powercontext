@@ -2,6 +2,6 @@
 PostgreSQL storage module initialization
 """
 
-from .postgres import PostgreSQLStorage
+from .postgres import PostgresVectorStore
 
-__all__ = ["PostgreSQLStorage"]
+__all__ = ["PostgresVectorStore"]

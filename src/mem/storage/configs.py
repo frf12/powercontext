@@ -67,7 +67,7 @@ class GraphStoreConfig(BaseModel):
     )
 
     @field_validator("config")
-    def validate_config(self, v, values):
+    def validate_config(cls, v, values):
         provider = values.data.get("provider")
         if provider == "oceanbase":
             return OceanBaseGraphConfig(**v.model_dump())
