@@ -1,5 +1,5 @@
 """
-Basic usage example for smartmem
+Basic usage example for powermem
 
 This example demonstrates basic memory operations.
 """

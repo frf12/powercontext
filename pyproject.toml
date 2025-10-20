@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "smartmem"
+name = "powermem"
 version = "0.1.0"
 description = "Intelligent Memory System - Persistent memory layer for LLM applications"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "smartmem Team", email = "team@smartmem.ai"}
+    {name = "powermem Team", email = "team@powermem.ai"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -74,10 +74,10 @@ extras = [
 
 
 [project.urls]
-Homepage = "https://github.com/smartmem/smartmem"
-Documentation = "https://smartmem.readthedocs.io"
-Repository = "https://github.com/smartmem/smartmem.git"
-Issues = "https://github.com/smartmem/smartmem/issues"
+Homepage = "https://github.com/powermem/powermem"
+Documentation = "https://powermem.readthedocs.io"
+Repository = "https://github.com/powermem/powermem.git"
+Issues = "https://github.com/powermem/powermem/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

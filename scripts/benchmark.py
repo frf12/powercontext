@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Benchmark script for smartmem
+Benchmark script for powermem
 
-This script runs performance benchmarks for smartmem.
+This script runs performance benchmarks for powermem.
 """
 
 import time
@@ -84,7 +84,7 @@ def print_results(results: Dict[str, float]):
 
 def main():
     """Main benchmark function."""
-    print("smartmem Performance Benchmark")
+    print("powermem Performance Benchmark")
     print("=" * 50)
     
     # Run sync benchmarks

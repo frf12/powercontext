@@ -1,6 +1,6 @@
-# smartmem - Intelligent Memory System
+# powermem - Intelligent Memory System
 
-smartmem is an AI-powered intelligent memory management system that provides a persistent memory layer for LLM applications.
+powermem is an AI-powered intelligent memory management system that provides a persistent memory layer for LLM applications.
 
 ## Features
 
@@ -29,7 +29,7 @@ memories = memory.search("user preferences", user_id="user123")
 ## Installation
 
 ```bash
-pip install smartmem
+pip install powermem
 ```
 
 ## Documentation

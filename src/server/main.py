@@ -1,7 +1,7 @@
 """
 FastAPI server implementation
 
-This module provides the FastAPI server for smartmem.
+This module provides the FastAPI server for powermem.
 """
 
 import logging
@@ -39,7 +39,7 @@ class MemorySearch(BaseModel):
 
 # Create FastAPI app
 app = FastAPI(
-    title="smartmem API",
+    title="powermem API",
     description="Intelligent Memory Management System API",
     version="0.1.0"
 )
@@ -152,4 +152,4 @@ async def health_check():
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "smartmem API", "version": "0.1.0"}
+    return {"message": "powermem API", "version": "0.1.0"}

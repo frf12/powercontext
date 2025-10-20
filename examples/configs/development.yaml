@@ -1,8 +1,8 @@
-# Development configuration for smartmem
+# Development configuration for powermem
 database:
   provider: "sqlite"
   config:
-    database_path: "./data/smartmem_dev.db"
+    database_path: "./data/powermem_dev.db"
     enable_wal: true
     timeout: 30
 
@@ -35,7 +35,7 @@ intelligent_memory:
 # Telemetry configuration
 telemetry:
   enabled: true
-  endpoint: "https://telemetry.smartmem.ai"
+  endpoint: "https://telemetry.powermem.ai"
   batch_size: 100
   flush_interval: 30
 
@@ -50,4 +50,4 @@ audit:
 logging:
   level: "DEBUG"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "./logs/smartmem.log"
+  file: "./logs/powermem.log"

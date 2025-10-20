@@ -1,5 +1,5 @@
 """
-Basic tests for smartmem
+Basic tests for powermem
 
 This module contains basic unit tests for the memory system.
 """

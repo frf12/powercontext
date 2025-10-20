@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Setup script for smartmem development environment
+Setup script for powermem development environment
 
-This script sets up the development environment for smartmem.
+This script sets up the development environment for powermem.
 """
 
 import os
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def setup_environment():
     """Setup development environment."""
-    print("Setting up smartmem development environment...")
+    print("Setting up powermem development environment...")
     
     # Create necessary directories
     directories = [

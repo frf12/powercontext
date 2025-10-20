@@ -1,9 +1,9 @@
 #!/bin/bash
-# Deploy script for smartmem
+# Deploy script for powermem
 
 set -e
 
-echo "Deploying smartmem..."
+echo "Deploying powermem..."
 
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
@@ -19,7 +19,7 @@ fi
 
 # Build Docker image
 echo "Building Docker image..."
-docker build -t smartmem:latest .
+docker build -t powermem:latest .
 
 # Stop existing containers
 echo "Stopping existing containers..."

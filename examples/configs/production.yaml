@@ -1,4 +1,4 @@
-# Production configuration for smartmem
+# Production configuration for powermem
 database:
   provider: "postgres"
   config:
@@ -40,7 +40,7 @@ intelligent_memory:
 # Telemetry configuration
 telemetry:
   enabled: true
-  endpoint: "https://telemetry.smartmem.ai"
+  endpoint: "https://telemetry.powermem.ai"
   api_key: "${TELEMETRY_API_KEY}"
   batch_size: 500
   flush_interval: 60
@@ -48,7 +48,7 @@ telemetry:
 # Audit configuration
 audit:
   enabled: true
-  log_file: "/var/log/smartmem/audit.log"
+  log_file: "/var/log/powermem/audit.log"
   log_level: "WARNING"
   retention_days: 365
 
@@ -69,4 +69,4 @@ performance:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "/var/log/smartmem/smartmem.log"
+  file: "/var/log/powermem/powermem.log"

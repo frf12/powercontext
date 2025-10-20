@@ -1,7 +1,7 @@
 .PHONY: help install install-dev test test-unit test-integration test-e2e lint format clean build upload docs
 
 help: ## Show help information
-	@echo "smartmem Project Build Tools"
+	@echo "powermem Project Build Tools"
 	@echo ""
 	@echo "Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -68,7 +68,7 @@ deploy: ## Deploy to production
 	bash scripts/deploy.sh
 
 docker-build: ## Build Docker image
-	docker build -t smartmem:latest .
+	docker build -t powermem:latest .
 
 docker-run: ## Run Docker container
-	docker run -p 8000:8000 smartmem:latest
+	docker run -p 8000:8000 powermem:latest

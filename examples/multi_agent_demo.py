@@ -1,5 +1,5 @@
 """
-Multi-agent demo for smartmem
+Multi-agent demo for powermem
 
 This example demonstrates multi-agent memory management.
 """

@@ -1,12 +1,12 @@
 """
-smartmem - Intelligent Memory System
+powermem - Intelligent Memory System
 
 An AI-powered intelligent memory management system that provides a persistent memory layer for LLM applications.
 """
 
 import importlib.metadata
 
-__version__ = importlib.metadata.version("smartmem")
+__version__ = importlib.metadata.version("powermem")
 
 # Import core classes
 from .core.memory import Memory
