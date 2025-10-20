@@ -15,6 +15,8 @@ from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbeddingFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
+from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
+from ..agent.plugin import AgentPlugin, FactoryBackedAgentPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,29 @@ class Memory(MemoryBase):
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
+
+        # Intelligent memory plugin (pluggable)
+        intelligence_cfg = (self.config or {}).get("intelligence", {})
+        plugin_type = intelligence_cfg.get("plugin", "ebbinghaus")
+        self._intelligence_plugin: Optional[IntelligentMemoryPlugin] = None
+        if intelligence_cfg.get("enabled", False):
+            try:
+                if plugin_type == "ebbinghaus":
+                    self._intelligence_plugin = EbbinghausIntelligencePlugin(intelligence_cfg)
+                else:
+                    logger.warning(f"Unknown intelligence plugin: {plugin_type}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize intelligence plugin: {e}")
+                self._intelligence_plugin = None
+
+        # Agent orchestration plugin
+        agent_cfg = (self.config or {}).get("agent", {})
+        self._agent_plugin: Optional[AgentPlugin] = None
+        if agent_cfg.get("enabled", False):
+            try:
+                self._agent_plugin = FactoryBackedAgentPlugin(agent_cfg)
+            except Exception:
+                self._agent_plugin = AgentPlugin(agent_cfg)
         
         # Initialize storage
         self.storage.initialize()
@@ -77,7 +102,18 @@ class Memory(MemoryBase):
             
             # Process with intelligence manager
             processed_content = self.intelligence.process_content(content, metadata)
+
+            # Intelligent plugin annotations
+            extra_fields = {}
+            if self._intelligence_plugin and self._intelligence_plugin.enabled:
+                extra_fields = self._intelligence_plugin.on_add(content=content, metadata=metadata)
             
+            # Agent plugin can massage routing identifiers/filters
+            if self._agent_plugin and self._agent_plugin.enabled:
+                user_id, agent_id, run_id, metadata, filters = self._agent_plugin.before_add(
+                    user_id=user_id, agent_id=agent_id, run_id=run_id, metadata=metadata, filters=filters
+                )
+
             # Store in database
             memory_data = {
                 "content": processed_content,
@@ -90,6 +126,9 @@ class Memory(MemoryBase):
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
             }
+
+            if extra_fields:
+                memory_data.update(extra_fields)
             
             memory_id = self.storage.add_memory(memory_data)
             
@@ -137,6 +176,12 @@ class Memory(MemoryBase):
             # Generate query embedding
             query_embedding = self.embedding.embed(query)
             
+            # Agent plugin can adjust query scoping
+            if self._agent_plugin and self._agent_plugin.enabled:
+                user_id, agent_id, run_id, filters = self._agent_plugin.before_search(
+                    user_id=user_id, agent_id=agent_id, run_id=run_id, filters=filters
+                )
+
             # Search in storage
             results = self.storage.search_memories(
                 query_embedding=query_embedding,
@@ -149,6 +194,20 @@ class Memory(MemoryBase):
             
             # Process results with intelligence manager
             processed_results = self.intelligence.process_search_results(results, query)
+
+            # Intelligent plugin lifecycle management on search
+            if self._intelligence_plugin and self._intelligence_plugin.enabled:
+                updates, deletes = self._intelligence_plugin.on_search(processed_results)
+                for mem_id, upd in updates:
+                    try:
+                        self.storage.update_memory(mem_id, {**upd}, user_id, agent_id)
+                    except Exception:
+                        continue
+                for mem_id in deletes:
+                    try:
+                        self.storage.delete_memory(mem_id, user_id, agent_id)
+                    except Exception:
+                        continue
             
             # Log audit event
             self.audit.log_event("memory.search", {
@@ -180,9 +239,24 @@ class Memory(MemoryBase):
     ) -> Optional[Dict[str, Any]]:
         """Get a specific memory by ID."""
         try:
+            # Agent plugin can enforce access scope
+            if self._agent_plugin and self._agent_plugin.enabled:
+                user_id, agent_id = self._agent_plugin.before_get(user_id=user_id, agent_id=agent_id)
+
             result = self.storage.get_memory(memory_id, user_id, agent_id)
             
             if result:
+                # Intelligent plugin lifecycle on get
+                if self._intelligence_plugin and self._intelligence_plugin.enabled:
+                    updates, delete_flag = self._intelligence_plugin.on_get(result)
+                    try:
+                        if delete_flag:
+                            self.storage.delete_memory(memory_id, user_id, agent_id)
+                            return None
+                        if updates:
+                            self.storage.update_memory(memory_id, {**updates}, user_id, agent_id)
+                    except Exception:
+                        pass
                 self.audit.log_event("memory.get", {
                     "memory_id": memory_id,
                     "user_id": user_id,
@@ -211,6 +285,12 @@ class Memory(MemoryBase):
             # Process with intelligence manager
             processed_content = self.intelligence.process_content(content, metadata)
             
+            # Agent plugin can adjust scope/metadata
+            if self._agent_plugin and self._agent_plugin.enabled:
+                user_id, agent_id, metadata = self._agent_plugin.before_update(
+                    user_id=user_id, agent_id=agent_id, metadata=metadata
+                )
+
             # Update in storage
             update_data = {
                 "content": processed_content,
@@ -242,6 +322,9 @@ class Memory(MemoryBase):
     ) -> bool:
         """Delete a memory."""
         try:
+            if self._agent_plugin and self._agent_plugin.enabled:
+                user_id, agent_id = self._agent_plugin.before_delete(user_id=user_id, agent_id=agent_id)
+
             result = self.storage.delete_memory(memory_id, user_id, agent_id)
             
             if result:

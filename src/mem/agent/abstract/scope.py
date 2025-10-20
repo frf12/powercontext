@@ -8,7 +8,7 @@ in the agent memory system.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.enums import MemoryScope
+from mem.agent.types import MemoryScope
 
 
 class AgentScopeManagerBase(ABC):

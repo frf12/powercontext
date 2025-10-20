@@ -9,9 +9,9 @@ import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-from mem0.configs.base import MemoryConfig
-from mem0.agent.abstract.manager import AgentMemoryManagerBase
-from mem0.agent.factories.memory_factory import MemoryFactory
+from typing import Any, Dict
+from mem.agent.abstract.manager import AgentMemoryManagerBase
+from mem.agent.factories.memory_factory import MemoryFactory
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class AgentMemoryWrapper:
     a consistent interface for all agent memory operations.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the agent memory wrapper.
         

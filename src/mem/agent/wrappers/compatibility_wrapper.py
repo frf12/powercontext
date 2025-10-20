@@ -8,8 +8,8 @@ implementation, ensuring existing code continues to work without changes.
 import logging
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.base import MemoryConfig
-from mem0.agent.wrappers.agent_memory_wrapper import AgentMemoryWrapper
+from typing import Any, Dict
+from mem.agent.wrappers.agent_memory_wrapper import AgentMemoryWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class CompatibilityWrapper:
     while providing access to the new agent memory management features.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the compatibility wrapper.
         

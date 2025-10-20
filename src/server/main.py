@@ -10,6 +10,13 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Initialize a default Memory instance for demo/server use
+try:
+    from mem.core.memory import Memory
+    memory_instance = Memory()
+except Exception:  # If initialization fails due to missing deps, keep None
+    memory_instance = None
+
 logger = logging.getLogger(__name__)
 
 # Pydantic models
@@ -47,7 +54,6 @@ app.add_middleware(
 )
 
 # Global memory instance (would be injected in real implementation)
-memory_instance = None
 
 def get_memory():
     """Get memory instance."""
@@ -56,15 +62,15 @@ def get_memory():
     return memory_instance
 
 @app.post("/api/v1/memories")
-async def create_memory(memory: MemoryCreate, memory=Depends(get_memory)):
+async def create_memory(req: MemoryCreate, memory=Depends(get_memory)):
     """Create a new memory."""
     try:
         result = memory.add(
-            content=memory.content,
-            user_id=memory.user_id,
-            agent_id=memory.agent_id,
-            run_id=memory.run_id,
-            metadata=memory.metadata
+            content=req.content,
+            user_id=req.user_id,
+            agent_id=req.agent_id,
+            run_id=req.run_id,
+            metadata=req.metadata
         )
         return result
     except Exception as e:

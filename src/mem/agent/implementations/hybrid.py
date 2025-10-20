@@ -9,11 +9,11 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.base import MemoryConfig
-from mem0.memory.intelligent_memory_manager import IntelligentMemoryManager
-from mem0.agent.abstract.manager import AgentMemoryManagerBase
-from mem0.agent.implementations.multi_agent import MultiAgentMemoryManager
-from mem0.agent.implementations.multi_user import MultiUserMemoryManager
+from typing import Any, Dict
+from mem.intelligence.intelligent_memory_manager import IntelligentMemoryManager
+from mem.agent.abstract.manager import AgentMemoryManagerBase
+from mem.agent.implementations.multi_agent import MultiAgentMemoryManager
+from mem.agent.implementations.multi_user import MultiUserMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class HybridMemoryManager(AgentMemoryManagerBase):
     providing intelligent mode selection and seamless transitions.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the hybrid memory manager.
         

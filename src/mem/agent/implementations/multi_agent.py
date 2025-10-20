@@ -10,20 +10,20 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import uuid
 
-from mem0.configs.base import MemoryConfig
-from mem0.configs.enums import (
+from typing import Any, Dict
+from mem.agent.types import (
     AccessPermission,
     MemoryScope,
     MemoryType,
     PrivacyLevel,
     CollaborationLevel,
 )
-from mem0.memory.intelligent_memory_manager import IntelligentMemoryManager
-from mem0.agent.abstract.manager import AgentMemoryManagerBase
-from mem0.agent.components.scope_controller import ScopeController
-from mem0.agent.components.permission_controller import PermissionController
-from mem0.agent.components.collaboration_coordinator import CollaborationCoordinator
-from mem0.agent.components.privacy_protector import PrivacyProtector
+from mem.intelligence.intelligent_memory_manager import IntelligentMemoryManager
+from mem.agent.abstract.manager import AgentMemoryManagerBase
+from mem.agent.components.scope_controller import ScopeController
+from mem.agent.components.permission_controller import PermissionController
+from mem.agent.components.collaboration_coordinator import CollaborationCoordinator
+from mem.agent.components.privacy_protector import PrivacyProtector
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
     handles scope-based memory storage, permissions, and collaboration.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the multi-agent memory manager.
         
@@ -231,7 +231,6 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             # Set up permissions - grant owner permissions to the memory creator
             owner_permissions = self.multi_agent_config.default_permissions.get("owner", [])
             # Convert string permissions to AccessPermission enum
-            from mem0.configs.enums import AccessPermission
             owner_permissions_enum = []
             for perm in owner_permissions:
                 try:

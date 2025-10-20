@@ -10,12 +10,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import uuid
 
-from mem0.configs.base import MemoryConfig
-from mem0.configs.enums import (
-    CollaborationType, 
-    CollaborationStatus
-)
-from mem0.agent.abstract.collaboration import AgentCollaborationManagerBase
+from typing import Any, Dict
+from mem.agent.types import CollaborationType, CollaborationStatus
+from mem.agent.abstract.collaboration import AgentCollaborationManagerBase
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +25,7 @@ class CollaborationCoordinator(AgentCollaborationManagerBase):
     collaborative memory creation, conflict resolution, and consensus.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the collaboration coordinator.
         

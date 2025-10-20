@@ -8,7 +8,7 @@ providing a unified API for memory operations across different scenarios.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.base import MemoryConfig
+from typing import Any, Dict
 
 
 class AgentMemoryManagerBase(ABC):
@@ -19,7 +19,7 @@ class AgentMemoryManagerBase(ABC):
     providing a unified API for memory operations across different scenarios.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the agent memory manager.
         
@@ -222,7 +222,7 @@ class AgentMemoryManagerBase(ABC):
         """
         return self.initialized
     
-    def get_config(self) -> MemoryConfig:
+    def get_config(self) -> Dict[str, Any]:
         """
         Get the configuration object.
         

@@ -8,7 +8,7 @@ types of configurations for the agent memory system.
 from typing import Dict, Any
 import logging
 
-from mem0.configs.base import (
+from mem.configs import (
     MemoryConfig, 
     AgentMemoryConfig, 
     MultiAgentMemoryConfig,
@@ -78,7 +78,7 @@ class ConfigFactory:
         Returns:
             MultiAgentMemoryConfig instance
         """
-        from mem0.configs.enums import MemoryScope, CollaborationLevel
+        from mem.configs import MemoryScope, CollaborationLevel
         
         config = MultiAgentMemoryConfig(
             enabled=enabled,

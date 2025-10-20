@@ -8,11 +8,11 @@ such as context managers, scope managers, etc.
 from typing import Dict, Any, Type
 import logging
 
-from mem0.agent.abstract.context import AgentContextManagerBase
-from mem0.agent.abstract.scope import AgentScopeManagerBase
-from mem0.agent.abstract.permission import AgentPermissionManagerBase
-from mem0.agent.abstract.collaboration import AgentCollaborationManagerBase
-from mem0.agent.abstract.privacy import AgentPrivacyManagerBase
+from mem.agent.abstract.context import AgentContextManagerBase
+from mem.agent.abstract.scope import AgentScopeManagerBase
+from mem.agent.abstract.permission import AgentPermissionManagerBase
+from mem.agent.abstract.collaboration import AgentCollaborationManagerBase
+from mem.agent.abstract.privacy import AgentPrivacyManagerBase
 
 logger = logging.getLogger(__name__)
 

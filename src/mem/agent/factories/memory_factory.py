@@ -8,11 +8,11 @@ of agent memory managers based on configuration.
 from typing import Dict
 import logging
 
-from mem0.configs.base import MemoryConfig
-from mem0.agent.abstract.manager import AgentMemoryManagerBase
-from mem0.agent.implementations.multi_agent import MultiAgentMemoryManager
-from mem0.agent.implementations.multi_user import MultiUserMemoryManager
-from mem0.agent.implementations.hybrid import HybridMemoryManager
+from typing import Any, Dict
+from mem.agent.abstract.manager import AgentMemoryManagerBase
+from mem.agent.implementations.multi_agent import MultiAgentMemoryManager
+from mem.agent.implementations.multi_user import MultiUserMemoryManager
+from mem.agent.implementations.hybrid import HybridMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class MemoryFactory:
     }
     
     @classmethod
-    def create_from_config(cls, config: MemoryConfig) -> AgentMemoryManagerBase:
+    def create_from_config(cls, config: Dict[str, Any]) -> AgentMemoryManagerBase:
         """
         Create a memory manager from configuration.
         
@@ -69,7 +69,7 @@ class MemoryFactory:
     def create_manager(
         cls,
         manager_type: str,
-        config: MemoryConfig
+        config: Dict[str, Any]
     ) -> AgentMemoryManagerBase:
         """
         Create a specific type of memory manager.

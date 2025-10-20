@@ -8,7 +8,7 @@ in the agent memory system.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.enums import PrivacyLevel
+from mem.agent.types import PrivacyLevel
 
 
 class AgentPrivacyManagerBase(ABC):

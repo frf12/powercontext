@@ -11,9 +11,9 @@ from typing import Any, Dict, List, Optional
 import hashlib
 import json
 
-from mem0.configs.base import MemoryConfig
-from mem0.configs.enums import PrivacyLevel
-from mem0.agent.abstract.privacy import AgentPrivacyManagerBase
+from typing import Any, Dict
+from mem.agent.types import PrivacyLevel
+from mem.agent.abstract.privacy import AgentPrivacyManagerBase
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class PrivacyProtector(AgentPrivacyManagerBase):
     access logging, and GDPR compliance.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the privacy protector.
         

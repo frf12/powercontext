@@ -8,7 +8,7 @@ between agents in the memory system.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.enums import CollaborationType, CollaborationStatus
+from mem.agent.types import CollaborationType, CollaborationStatus
 
 
 class AgentCollaborationManagerBase(ABC):

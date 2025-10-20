@@ -10,10 +10,10 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from mem0.configs.base import MemoryConfig
-from mem0.configs.enums import MemoryScope, MemoryType
-from mem0.agent.abstract.scope import AgentScopeManagerBase
-from mem0.utils.factory import LlmFactory
+from typing import Any, Dict
+from mem.agent.types import MemoryScope, MemoryType
+from mem.agent.abstract.scope import AgentScopeManagerBase
+from mem.utils.utils import LlmFactory
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class ScopeController(AgentScopeManagerBase):
     manages scope-specific storage and retrieval.
     """
     
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the scope controller.
         
