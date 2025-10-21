@@ -13,6 +13,7 @@ from mem.agent.abstract.manager import AgentMemoryManagerBase
 from mem.agent.implementations.multi_agent import MultiAgentMemoryManager
 from mem.agent.implementations.multi_user import MultiUserMemoryManager
 from mem.agent.implementations.hybrid import HybridMemoryManager
+from mem.configs import MemoryConfig
 
 logger = logging.getLogger(__name__)
 

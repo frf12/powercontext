@@ -73,17 +73,28 @@ class EbbinghausAlgorithm:
             logger.error(f"Failed to process memory: {e}")
             return content
     
-    def calculate_decay(self, created_at: datetime) -> float:
+    def calculate_decay(self, created_at) -> float:
         """
         Calculate decay factor based on time elapsed.
         
         Args:
-            created_at: When the memory was created
+            created_at: When the memory was created (datetime object or ISO string)
             
         Returns:
             Decay factor between 0 and 1
         """
         try:
+            # Handle both datetime objects and ISO string formats
+            if isinstance(created_at, str):
+                if created_at:
+                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                else:
+                    # If empty string, use current time
+                    created_at = datetime.utcnow()
+            elif created_at is None:
+                # If None, use current time
+                created_at = datetime.utcnow()
+            
             time_elapsed = datetime.utcnow() - created_at
             hours_elapsed = time_elapsed.total_seconds() / 3600
             

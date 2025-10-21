@@ -70,6 +70,10 @@ class QwenEmbedding(EmbeddingBase):
                 "input": text,
             }
 
+            # Add dimension parameter if specified
+            if hasattr(self.config, 'embedding_dims') and self.config.embedding_dims:
+                params["dimension"] = self.config.embedding_dims
+
             # Add embedding type if specified
             if embedding_type:
                 params["text_type"] = embedding_type

@@ -10,6 +10,7 @@ from datetime import datetime
 
 from .base import MemoryBase
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
+from ..storage.adapter import StorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
@@ -50,9 +51,20 @@ class Memory(MemoryBase):
         self.embedding_provider = embedding_provider
         
         # Initialize components
-        self.storage = VectorStoreFactory.create(storage_type, self.config)
-        self.llm = LLMFactory.create(llm_provider, self.config)
-        self.embedding = EmbedderFactory.create(embedding_provider, self.config)
+        # Extract database config
+        db_config = self.config.get('database', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        vector_store = VectorStoreFactory.create(storage_type, db_config)
+        
+        # Extract LLM config
+        llm_config = self.config.get('llm', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        self.llm = LLMFactory.create(llm_provider, llm_config)
+        
+        # Extract embedding config
+        embedding_config = self.config.get('embedding', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        self.embedding = EmbedderFactory.create(embedding_provider, embedding_config, None)
+        
+        # Initialize storage adapter with embedding service
+        self.storage = StorageAdapter(vector_store, self.embedding)
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
@@ -79,9 +91,6 @@ class Memory(MemoryBase):
                 self._agent_plugin = FactoryBackedAgentPlugin(agent_cfg)
             except Exception:
                 self._agent_plugin = AgentPlugin(agent_cfg)
-        
-        # Initialize storage
-        self.storage.initialize()
         
         logger.info(f"Memory initialized with storage: {storage_type}, LLM: {llm_provider}")
         self.telemetry.capture_event("memory.init", {"storage_type": storage_type, "llm_provider": llm_provider})
