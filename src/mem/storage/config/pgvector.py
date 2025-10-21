@@ -5,7 +5,7 @@ from pydantic import Field, model_validator
 from mem.storage.config.base import BaseVectorStoreConfig
 
 
-class PostgresConfig(BaseVectorStoreConfig):
+class PGVectorConfig(BaseVectorStoreConfig):
     dbname: str = Field("postgres", description="Default name for the database")
     collection_name: str = Field("power_mem", description="Default name for the collection")
     embedding_model_dims: Optional[int] = Field(1536, description="Dimensions of the embedding model")

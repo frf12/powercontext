@@ -14,14 +14,14 @@ from mem.storage.config.oceanbase import OceanBaseGraphConfig
 
 class VectorStorageConfig(BaseModel):
     provider: str = Field(
-        description="Provider of the vector store (e.g., 'oceanbase', 'postgres')",
+        description="Provider of the vector store (e.g., 'oceanbase', 'pgvector')",
         default="oceanbase",
     )
     config: Optional[Dict] = Field(description="Configuration for the specific vector store", default=None)
 
     _provider_configs: Dict[str, str] = {
         "oceanbase": "OceanBaseConfig",
-        "postgres": "PostgresConfig",
+        "pgvector": "PGVectorConfig",
     }
 
     @model_validator(mode="after")

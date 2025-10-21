@@ -12,7 +12,7 @@ from .base import MemoryBase
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
-from ..integrations.embeddings.factory import EmbeddingFactory
+from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
@@ -52,7 +52,7 @@ class Memory(MemoryBase):
         # Initialize components
         self.storage = VectorStoreFactory.create(storage_type, self.config)
         self.llm = LLMFactory.create(llm_provider, self.config)
-        self.embedding = EmbeddingFactory.create(embedding_provider, self.config)
+        self.embedding = EmbedderFactory.create(embedding_provider, self.config)
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)

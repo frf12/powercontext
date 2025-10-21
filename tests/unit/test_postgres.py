@@ -31,9 +31,9 @@ sys.modules['psycopg2.pool'] = mock_psycopg2_pool
 sys.modules['psycopg2.sql'] = mock_psycopg2_sql
 
 # Import and reload the module to pick up our mocks
-import mem.storage.postgres.postgres
-importlib.reload(mem.storage.postgres.postgres)
-from mem.storage.postgres.postgres import PostgresVectorStore
+import mem.storage.pgvector.pgvector
+importlib.reload(mem.storage.pgvector.pgvector)
+from mem.storage.pgvector.pgvector import PGVectorStore
 
 
 class TestPGVector(unittest.TestCase):
@@ -61,15 +61,15 @@ class TestPGVector(unittest.TestCase):
         self.test_payloads = [{"key": "value1"}, {"key": "value2"}]
         self.test_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
     def test_init_with_individual_params_psycopg3(self, mock_psycopg_pool):
         """Test initialization with individual parameters using psycopg3."""
         # Mock psycopg3 to be available
         mock_psycopg_pool.return_value = self.mock_pool_psycopg
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -92,14 +92,14 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(pgvector.collection_name, "test_collection")
         self.assertEqual(pgvector.embedding_model_dims, 3)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
     def test_init_with_individual_params_psycopg2(self, mock_pcycopg2_pool):
         """Test initialization with individual parameters using psycopg2."""
         mock_pcycopg2_pool.return_value = self.mock_pool_psycopg2
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -122,9 +122,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(pgvector.collection_name, "test_collection")
         self.assertEqual(pgvector.embedding_model_dims, 3)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_create_col_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test collection creation with psycopg3."""
         # Set up mock pool and cursor
@@ -137,7 +137,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -164,9 +164,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(pgvector.collection_name, "test_collection")
         self.assertEqual(pgvector.embedding_model_dims, 3)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_create_col_psycopg3_with_explicit_pool(self, mock_get_cursor, mock_connection_pool):
         """
         Test collection creation with psycopg3 when an explicit psycopg_pool.ConnectionPool is provided.
@@ -185,7 +185,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []
 
         # Pass the explicit pool to PostgresVectorStore
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -218,9 +218,9 @@ class TestPGVector(unittest.TestCase):
         # Ensure the pool used is the explicit one
         self.assertIs(pgvector.connection_pool, explicit_pool)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_create_col_psycopg2_with_explicit_pool(self, mock_get_cursor, mock_connection_pool):
         """
         Test collection creation with psycopg2 when an explicit psycopg2 ThreadedConnectionPool is provided.
@@ -239,7 +239,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []
 
         # Pass the explicit pool to PostgresVectorStore
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -271,9 +271,9 @@ class TestPGVector(unittest.TestCase):
         # Ensure the pool used is the explicit one
         self.assertIs(pgvector.connection_pool, explicit_pool)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_create_col_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test collection creation with psycopg2."""
         # Set up mock pool and cursor
@@ -286,7 +286,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -313,9 +313,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(pgvector.collection_name, "test_collection")
         self.assertEqual(pgvector.embedding_model_dims, 3)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_insert_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test vector insertion with psycopg3."""
         # Set up mock pool and cursor
@@ -327,7 +327,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -358,9 +358,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(data_arg[0][0], self.test_ids[0])
         self.assertEqual(data_arg[1][0], self.test_ids[1])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_insert_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """
         Test vector insertion with psycopg2.
@@ -397,15 +397,15 @@ class TestPGVector(unittest.TestCase):
             'psycopg2.sql': mock_psycopg2_sql
         }):
             # Force reload of PostgresVectorStore to pick up the mocked modules
-            if 'mem.storage.postgres' in sys.modules:
-                importlib.reload(sys.modules['mem.storage.postgres'])
+            if 'mem.storage.pgvector' in sys.modules:
+                importlib.reload(sys.modules['mem.storage.pgvector'])
 
             mock_connection_pool.return_value = self.mock_pool_psycopg
             mock_get_cursor.return_value.__enter__.return_value = self.mock_cursor
             mock_get_cursor.return_value.__exit__.return_value = None
             self.mock_cursor.fetchall.return_value = []
 
-            pgvector = PostgresVectorStore(
+            pgvector = PGVectorStore(
                 dbname="test_db",
                 collection_name="test_collection",
                 embedding_model_dims=3,
@@ -433,9 +433,9 @@ class TestPGVector(unittest.TestCase):
             self.assertEqual(data_arg[0][0], self.test_ids[0])
             self.assertEqual(data_arg[1][0], self.test_ids[1])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test search with psycopg3."""
         # Set up mock pool and cursor
@@ -451,7 +451,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], 0.2, {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -482,9 +482,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[1].id, self.test_ids[1])
         self.assertEqual(results[1].score, 0.2)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test search with psycopg2."""
         # Set up mock pool and cursor
@@ -500,7 +500,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], 0.2, {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -531,9 +531,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[1].id, self.test_ids[1])
         self.assertEqual(results[1].score, 0.2)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_delete_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test delete with psycopg3."""
         # Set up mock pool and cursor
@@ -546,7 +546,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -570,9 +570,9 @@ class TestPGVector(unittest.TestCase):
                        if "DELETE FROM test_collection" in str(call)]
         self.assertTrue(len(delete_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_delete_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test delete with psycopg2."""
         # Set up mock pool and cursor
@@ -585,7 +585,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -609,9 +609,9 @@ class TestPGVector(unittest.TestCase):
                        if "DELETE FROM test_collection" in str(call)]
         self.assertTrue(len(delete_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_update_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test update with psycopg3."""
         # Set up mock pool and cursor
@@ -624,7 +624,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -651,9 +651,9 @@ class TestPGVector(unittest.TestCase):
                        if "UPDATE test_collection" in str(call)]
         self.assertTrue(len(update_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_update_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test update with psycopg2."""
         # Set up mock pool and cursor
@@ -666,7 +666,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -693,9 +693,9 @@ class TestPGVector(unittest.TestCase):
                        if "UPDATE test_collection" in str(call)]
         self.assertTrue(len(update_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_get_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test get with psycopg3."""
         # Set up mock pool and cursor
@@ -709,7 +709,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         self.mock_cursor.fetchone.return_value = (self.test_ids[0], [0.1, 0.2, 0.3], {"key": "value1"})
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -738,9 +738,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(result.id, self.test_ids[0])
         self.assertEqual(result.payload, {"key": "value1"})
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_get_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test get with psycopg2."""
         # Set up mock pool and cursor
@@ -754,7 +754,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         self.mock_cursor.fetchone.return_value = (self.test_ids[0], [0.1, 0.2, 0.3], {"key": "value1"})
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -783,9 +783,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(result.id, self.test_ids[0])
         self.assertEqual(result.payload, {"key": "value1"})
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_cols_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test list_cols with psycopg3."""
         # Set up mock pool and cursor
@@ -798,7 +798,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = [("test_collection",), ("other_table",)]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -822,9 +822,9 @@ class TestPGVector(unittest.TestCase):
         # Verify result
         self.assertEqual(collections, ["test_collection", "other_table"])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_cols_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test list_cols with psycopg2."""
         # Set up mock pool and cursor
@@ -837,7 +837,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = [("test_collection",), ("other_table",)]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -864,9 +864,9 @@ class TestPGVector(unittest.TestCase):
         # Verify result
         self.assertEqual(collections, ["test_collection", "other_table"])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_delete_col_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test delete_col with psycopg3."""
         # Set up mock pool and cursor
@@ -879,7 +879,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -903,9 +903,9 @@ class TestPGVector(unittest.TestCase):
                        if "DROP TABLE IF EXISTS test_collection" in str(call)]
         self.assertTrue(len(delete_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_delete_col_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test delete_col with psycopg2."""
         # Set up mock pool and cursor
@@ -918,7 +918,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -942,9 +942,9 @@ class TestPGVector(unittest.TestCase):
                        if "DROP TABLE IF EXISTS test_collection" in str(call)]
         self.assertTrue(len(delete_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_col_info_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test col_info with psycopg3."""
         # Set up mock pool and cursor
@@ -958,7 +958,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         self.mock_cursor.fetchone.return_value = ("test_collection", 100, "1 MB")
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -987,9 +987,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(info["count"], 100)
         self.assertEqual(info["size"], "1 MB")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_col_info_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test col_info with psycopg2."""
         # Set up mock pool and cursor
@@ -1003,7 +1003,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         self.mock_cursor.fetchone.return_value = ("test_collection", 100, "1 MB")
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1032,9 +1032,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(info["count"], 100)
         self.assertEqual(info["size"], "1 MB")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test list with psycopg3."""
         # Set up mock pool and cursor
@@ -1050,7 +1050,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], [0.4, 0.5, 0.6], {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1079,9 +1079,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].id, self.test_ids[0])
         self.assertEqual(results[1].id, self.test_ids[1])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test list with psycopg2."""
         # Set up mock pool and cursor
@@ -1097,7 +1097,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], [0.4, 0.5, 0.6], {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1126,9 +1126,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].id, self.test_ids[0])
         self.assertEqual(results[1].id, self.test_ids[1])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_with_filters_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test search with filters using psycopg3."""
         # Set up mock pool and cursor
@@ -1143,7 +1143,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], 0.1, {"user_id": "alice", "agent_id": "agent1", "run_id": "run1"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1176,9 +1176,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].payload["agent_id"], "agent1")
         self.assertEqual(results[0].payload["run_id"], "run1")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_with_filters_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test search with filters using psycopg2."""
         # Set up mock pool and cursor
@@ -1193,7 +1193,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], 0.1, {"user_id": "alice", "agent_id": "agent1", "run_id": "run1"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1226,9 +1226,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].payload["agent_id"], "agent1")
         self.assertEqual(results[0].payload["run_id"], "run1")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_with_single_filter_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test search with single filter using psycopg3."""
         # Set up mock pool and cursor
@@ -1243,7 +1243,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], 0.1, {"user_id": "alice"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1274,9 +1274,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].score, 0.1)
         self.assertEqual(results[0].payload["user_id"], "alice")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_with_single_filter_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test search with single filter using psycopg2."""
         # Set up mock pool and cursor
@@ -1291,7 +1291,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], 0.1, {"user_id": "alice"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1322,9 +1322,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].score, 0.1)
         self.assertEqual(results[0].payload["user_id"], "alice")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_with_no_filters_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test search with no filters using psycopg3."""
         # Set up mock pool and cursor
@@ -1340,7 +1340,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], 0.2, {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1371,9 +1371,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[1].id, self.test_ids[1])
         self.assertEqual(results[1].score, 0.2)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_search_with_no_filters_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test search with no filters using psycopg2."""
         # Set up mock pool and cursor
@@ -1389,7 +1389,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], 0.2, {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1420,9 +1420,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[1].id, self.test_ids[1])
         self.assertEqual(results[1].score, 0.2)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_with_filters_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test list with filters using psycopg3."""
         # Set up mock pool and cursor
@@ -1437,7 +1437,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], [0.1, 0.2, 0.3], {"user_id": "alice", "agent_id": "agent1"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1468,9 +1468,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].payload["user_id"], "alice")
         self.assertEqual(results[0].payload["agent_id"], "agent1")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_with_filters_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test list with filters using psycopg2."""
         # Set up mock pool and cursor
@@ -1485,7 +1485,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], [0.1, 0.2, 0.3], {"user_id": "alice", "agent_id": "agent1"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1516,9 +1516,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].payload["user_id"], "alice")
         self.assertEqual(results[0].payload["agent_id"], "agent1")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_with_single_filter_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test list with single filter using psycopg3."""
         # Set up mock pool and cursor
@@ -1533,7 +1533,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], [0.1, 0.2, 0.3], {"user_id": "alice"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1563,9 +1563,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].id, self.test_ids[0])
         self.assertEqual(results[0].payload["user_id"], "alice")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_with_single_filter_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test list with single filter using psycopg2."""
         # Set up mock pool and cursor
@@ -1580,7 +1580,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[0], [0.1, 0.2, 0.3], {"user_id": "alice"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1610,9 +1610,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].id, self.test_ids[0])
         self.assertEqual(results[0].payload["user_id"], "alice")
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_with_no_filters_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test list with no filters using psycopg3."""
         # Set up mock pool and cursor
@@ -1628,7 +1628,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], [0.4, 0.5, 0.6], {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1657,9 +1657,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].id, self.test_ids[0])
         self.assertEqual(results[1].id, self.test_ids[1])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_list_with_no_filters_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test list with no filters using psycopg2."""
         # Set up mock pool and cursor
@@ -1675,7 +1675,7 @@ class TestPGVector(unittest.TestCase):
             (self.test_ids[1], [0.4, 0.5, 0.6], {"key": "value2"}),
         ]
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1704,9 +1704,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(results[0].id, self.test_ids[0])
         self.assertEqual(results[1].id, self.test_ids[1])
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_reset_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test reset with psycopg3."""
         # Set up mock pool and cursor
@@ -1719,7 +1719,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1746,9 +1746,9 @@ class TestPGVector(unittest.TestCase):
         self.assertTrue(len(drop_calls) > 0)
         self.assertTrue(len(create_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_reset_psycopg2(self, mock_get_cursor, mock_connection_pool):
         """Test reset with psycopg2."""
         # Set up mock pool and cursor
@@ -1761,7 +1761,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1789,10 +1789,10 @@ class TestPGVector(unittest.TestCase):
         self.assertTrue(len(create_calls) > 0)
 
     # Enhanced Tests for JSON Serialization
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
-    @patch('mem.storage.postgres.postgres.Json')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.Json')
     def test_update_payload_psycopg3_json_handling(self, mock_json, mock_get_cursor, mock_connection_pool):
         """Test that psycopg3 update uses Json() wrapper for payload serialization."""
         # Set up mock pool and cursor
@@ -1805,7 +1805,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1830,10 +1830,10 @@ class TestPGVector(unittest.TestCase):
                        if "UPDATE test_collection SET payload" in str(call)]
         self.assertTrue(len(update_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
-    @patch('mem.storage.postgres.postgres.Json')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.Json')
     def test_update_payload_psycopg2_json_handling(self, mock_json, mock_get_cursor, mock_connection_pool):
         """Test that psycopg2 update uses psycopg2.extras.Json() wrapper for payload serialization."""
         # Set up mock pool and cursor
@@ -1846,7 +1846,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1871,8 +1871,8 @@ class TestPGVector(unittest.TestCase):
                        if "UPDATE test_collection SET payload" in str(call)]
         self.assertTrue(len(update_calls) > 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
     def test_transaction_rollback_on_error_psycopg2(self, mock_connection_pool):
         """Test that psycopg2 properly rolls back transactions on errors."""
         mock_pool = MagicMock()
@@ -1892,7 +1892,7 @@ class TestPGVector(unittest.TestCase):
         mock_cursor.execute.side_effect = execute_side_effect
         self.mock_cursor.fetchall.return_value = []  # No existing collections initially
 
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1916,8 +1916,8 @@ class TestPGVector(unittest.TestCase):
         # Verify connection was returned to pool
         mock_pool.putconn.assert_called_with(mock_conn)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
     def test_commit_on_success_psycopg2(self, mock_connection_pool):
         """Test that psycopg2 properly commits transactions on success."""
         mock_pool = MagicMock()
@@ -1931,7 +1931,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections initially
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1954,9 +1954,9 @@ class TestPGVector(unittest.TestCase):
         mock_pool.putconn.assert_called_with(mock_conn)
 
     # Enhanced Tests for Error Handling
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_pool_connection_error_handling(self, mock_get_cursor, mock_connection_pool):
         """Test handling of connection pool errors."""
         mock_pool = MagicMock()
@@ -1972,7 +1972,7 @@ class TestPGVector(unittest.TestCase):
         mock_get_cursor.side_effect = get_cursor_side_effect
         self.mock_cursor.fetchall.return_value = []
 
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -1994,9 +1994,9 @@ class TestPGVector(unittest.TestCase):
         self.assertIn("Connection pool exhausted", str(context.exception))
 
     # Enhanced Tests for Vector and Payload Update Combinations
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_update_vector_only_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test updating only vector without payload."""
         # Set up mock pool and cursor
@@ -2009,7 +2009,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -2035,9 +2035,9 @@ class TestPGVector(unittest.TestCase):
         self.assertTrue(len(vector_update_calls) > 0)
         self.assertEqual(len(payload_update_calls), 0)
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_update_both_vector_and_payload_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test updating both vector and payload."""
         # Set up mock pool and cursor
@@ -2050,7 +2050,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -2078,8 +2078,8 @@ class TestPGVector(unittest.TestCase):
         self.assertTrue(len(payload_update_calls) > 0)
 
     # Enhanced Tests for Connection String Handling
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
     def test_connection_string_with_sslmode_psycopg3(self, mock_connection_pool):
         """Test connection string handling with SSL mode."""
         mock_pool = MagicMock()
@@ -2088,7 +2088,7 @@ class TestPGVector(unittest.TestCase):
         
         connection_string = "postgresql://user:pass@localhost:5432/db"
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",  # Will be overridden by connection_string
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -2116,9 +2116,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(pgvector.embedding_model_dims, 3)
 
     # Enhanced Test for Index Creation with DiskANN
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_create_col_with_diskann_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test collection creation with DiskANN index."""
         # Set up mock pool and cursor
@@ -2133,7 +2133,7 @@ class TestPGVector(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         self.mock_cursor.fetchone.return_value = ("vectorscale",)  # Extension exists
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -2155,9 +2155,9 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(pgvector.embedding_model_dims, 3)
         
 
-    @patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3)
-    @patch('mem.storage.postgres.postgres.ConnectionPool')
-    @patch.object(PostgresVectorStore, '_get_cursor')
+    @patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
+    @patch('mem.storage.pgvector.pgvector.ConnectionPool')
+    @patch.object(PGVectorStore, '_get_cursor')
     def test_create_col_with_hnsw_psycopg3(self, mock_get_cursor, mock_connection_pool):
         """Test collection creation with HNSW index."""
         # Set up mock pool and cursor
@@ -2170,7 +2170,7 @@ class TestPGVector(unittest.TestCase):
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
         
-        pgvector = PostgresVectorStore(
+        pgvector = PGVectorStore(
             dbname="test_db",
             collection_name="test_collection",
             embedding_model_dims=3,
@@ -2194,14 +2194,14 @@ class TestPGVector(unittest.TestCase):
     # Enhanced Test for Pool Cleanup
     def test_pool_cleanup_psycopg3(self):
         """Test that psycopg3 pool is properly closed on object deletion."""
-        with patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 3), \
-             patch('mem.storage.postgres.postgres.ConnectionPool') as mock_connection_pool:
+        with patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3), \
+             patch('mem.storage.pgvector.pgvector.ConnectionPool') as mock_connection_pool:
             
             mock_pool = MagicMock()
             mock_connection_pool.return_value = mock_pool
             self.mock_cursor.fetchall.return_value = []  # No existing collections
             
-            pgvector = PostgresVectorStore(
+            pgvector = PGVectorStore(
                 dbname="test_db",
                 collection_name="test_collection",
                 embedding_model_dims=3,
@@ -2223,14 +2223,14 @@ class TestPGVector(unittest.TestCase):
 
     def test_pool_cleanup_psycopg2(self):
         """Test that psycopg2 pool is properly closed on object deletion."""
-        with patch('mem.storage.postgres.postgres.PSYCOPG_VERSION', 2), \
-             patch('mem.storage.postgres.postgres.ConnectionPool') as mock_connection_pool:
+        with patch('mem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2), \
+             patch('mem.storage.pgvector.pgvector.ConnectionPool') as mock_connection_pool:
             
             mock_pool = MagicMock()
             mock_connection_pool.return_value = mock_pool
             self.mock_cursor.fetchall.return_value = []  # No existing collections
             
-            pgvector = PostgresVectorStore(
+            pgvector = PGVectorStore(
                 dbname="test_db",
                 collection_name="test_collection",
                 embedding_model_dims=3,

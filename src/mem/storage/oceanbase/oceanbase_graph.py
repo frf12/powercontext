@@ -13,7 +13,7 @@ from pyobvector import ObVecClient, l2_distance, VECTOR, VecIndexType
 from sqlalchemy import bindparam, text, MetaData, Column, String, Integer, Index, Table
 from sqlalchemy.dialects.mysql import TIMESTAMP
 
-from mem.integrations import EmbeddingFactory, LLMFactory
+from mem.integrations import EmbedderFactory, LLMFactory
 from mem.utils.utils import format_entities, remove_code_blocks
 
 try:
@@ -69,7 +69,7 @@ class MemoryGraph:
             self.vidx_algo_params = constants.get_default_build_params(self.index_type)
 
         # Initialize embedding model
-        self.embedding_model = EmbeddingFactory.create(
+        self.embedding_model = EmbedderFactory.create(
             self.config.embedder.provider,
             self.config.embedder.config,
             self.config.vector_store.config,

@@ -15,7 +15,7 @@ def load_class(class_type):
 class VectorStoreFactory:
     provider_to_class = {
         "oceanbase": "mem.storage.oceanbase.oceanbase.OceanBaseVectorStore",
-        "postgres": "mem.storage.postgres.postgres.PostgresVectorStore",
+        "pgvector": "mem.storage.pgvector.pgvector.PGVectorStore",
     }
 
     @classmethod

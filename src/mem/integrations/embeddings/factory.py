@@ -17,7 +17,7 @@ def load_class(class_type):
     return getattr(module, class_name)
 
 
-class EmbeddingFactory:
+class EmbedderFactory:
     provider_to_class = {
         "openai": "mem.integrations.embeddings.openai.OpenAIEmbedding",
         "ollama": "mem.integrations.embeddings.ollama.OllamaEmbedding",

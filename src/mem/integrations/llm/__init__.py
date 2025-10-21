@@ -3,11 +3,14 @@ LLM integration module
 
 This module provides LLM integrations and factory.
 """
-
+from .configs import LLMConfig
 from .factory import LLMFactory
-from .base import LLMBase
+
+# provider alias name 
+LlmFactory = LLMFactory
+LlmConfig = LLMConfig
 
 __all__ = [
-    "LLMFactory",
-    "LLMBase",
+    "LlmFactory",
+    "LlmConfig"
 ]

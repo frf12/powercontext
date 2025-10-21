@@ -27,7 +27,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-class PostgresVectorStore(VectorStoreBase):
+class PGVectorStore(VectorStoreBase):
     def __init__(
         self,
         dbname,
