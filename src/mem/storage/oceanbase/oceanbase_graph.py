@@ -916,18 +916,24 @@ class MemoryGraph:
                 )]
             )
 
-            if not source_entities or not dest_entities:
+            # Get entity IDs
+            source_rows = source_entities.fetchall() if source_entities else []
+            dest_rows = dest_entities.fetchall() if dest_entities else []
+
+            source_ids = [e[0] for e in source_rows]
+            dest_ids = [e[0] for e in dest_rows]
+
+            # Check if we found any entities
+            if not source_ids or not dest_ids:
                 logger.warning(
-                    "Could not find entities: source='%s', destination='%s'",
+                    "Could not find entities: source='%s' (found %d), destination='%s' (found %d)",
                     source,
-                    destination
+                    len(source_ids),
+                    destination,
+                    len(dest_ids)
                 )
                 results.append({"deleted_count": 0})
                 continue
-
-            # Get entity IDs
-            source_ids = [e[0] for e in source_entities]
-            dest_ids = [e[0] for e in dest_entities]
 
             # Build where clause for relationship deletion
             where_clauses = [
