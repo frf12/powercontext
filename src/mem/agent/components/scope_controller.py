@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from typing import Any, Dict
 from mem.agent.types import MemoryScope, MemoryType
 from mem.agent.abstract.scope import AgentScopeManagerBase
-from mem.utils.utils import LlmFactory
+from mem.integrations import LLMFactory
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class ScopeController(AgentScopeManagerBase):
         super().__init__(config.agent_memory.multi_agent_config.__dict__)
         self.config = config
         self.multi_agent_config = config.agent_memory.multi_agent_config
-        self.llm = LlmFactory.create(config.llm.provider, config.llm.config)
+        self.llm = LLMFactory.create(config.llm.provider, config.llm.config)
         
         # Scope-specific storage areas
         self.scope_storage = {
