@@ -971,7 +971,7 @@ class MemoryGraph:
             try:
                 delete_result = self.client.delete(
                     table_name=constants.TABLE_RELATIONSHIPS,
-                    where_clause=where_clause
+                    where_clause=[where_clause]
                 )
                 deleted_count = (
                     delete_result.rowcount
