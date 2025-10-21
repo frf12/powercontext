@@ -34,7 +34,7 @@ from mem.agent.components.scope_controller import ScopeController
 
 def load_oceanbase_config():
     """Load OceanBase configuration from environment variables."""
-    config_path = os.path.join(os.path.dirname(__file__), 'configs', '.env')
+    config_path = os.path.join(os.path.dirname(__file__), 'configs', 'oceanbase.env')
     load_dotenv(config_path)
     
     # Build connection args
@@ -118,12 +118,7 @@ def load_oceanbase_config():
 
 def create_agent_memory(config: Dict[str, Any], agent_id: str, agent_name: str) -> Memory:
     """Create a memory instance for a specific agent."""
-    return Memory(
-        config=config,
-        storage_type=config['database']['provider'],
-        llm_provider=config['llm']['provider'],
-        embedding_provider=config['embedding']['provider']
-    )
+    return Memory(config=config, agent_id=agent_id)
 
 
 def demonstrate_basic_multi_agent():

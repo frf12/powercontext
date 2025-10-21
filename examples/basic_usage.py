@@ -84,12 +84,7 @@ def main():
     config = load_config()
     
     # Initialize memory with configuration
-    memory = Memory(
-        config=config,
-        storage_type=config['database']['provider'],
-        llm_provider=config['llm']['provider'],
-        embedding_provider=config['embedding']['provider']
-    )
+    memory = Memory(config=config)
     
     # Add some memories
     memory.add("User likes coffee", user_id="user123")

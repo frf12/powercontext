@@ -9,12 +9,14 @@ This directory contains various examples demonstrating how to use powermem with 
 - **Purpose**: Simple memory operations demonstration
 - **Configuration**: `configs/.env`
 - **Run**: `python examples/basic_usage.py`
+- **✨ Simplified**: Now uses `Memory(config=config)` for easy setup
 
 ### 2. Multi-Agent Demo (`multi_agent.py`)
-- **Database**: SQLite (default)
+- **Database**: OceanBase (configurable)
 - **Purpose**: Multi-agent memory management
-- **Features**: Agent isolation, cross-agent search
+- **Features**: Agent isolation, cross-agent search, collaboration
 - **Run**: `python examples/multi_agent.py`
+- **✨ Simplified**: Agent memories created with `Memory(config=config, agent_id="agent_name")`
 
 ## Configuration Files
 

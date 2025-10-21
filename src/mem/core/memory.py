@@ -32,36 +32,41 @@ class Memory(MemoryBase):
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
-        storage_type: str = "sqlite",
-        llm_provider: str = "openai",
-        embedding_provider: str = "openai",
+        storage_type: Optional[str] = None,
+        llm_provider: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """
         Initialize the memory manager.
         
         Args:
-            config: Configuration dictionary
-            storage_type: Type of storage backend to use
-            llm_provider: LLM provider to use
-            embedding_provider: Embedding provider to use
+            config: Configuration dictionary containing all settings
+            storage_type: Type of storage backend to use (overrides config)
+            llm_provider: LLM provider to use (overrides config)
+            embedding_provider: Embedding provider to use (overrides config)
+            agent_id: Agent identifier for multi-agent scenarios
         """
         self.config = config or {}
-        self.storage_type = storage_type
-        self.llm_provider = llm_provider
-        self.embedding_provider = embedding_provider
+        self.agent_id = agent_id
+        
+        # Extract providers from config with fallbacks
+        self.storage_type = storage_type or self.config.get('database', {}).get('provider', 'sqlite')
+        self.llm_provider = llm_provider or self.config.get('llm', {}).get('provider', 'openai')
+        self.embedding_provider = embedding_provider or self.config.get('embedding', {}).get('provider', 'openai')
         
         # Initialize components
         # Extract database config
         db_config = self.config.get('database', {}).get('config', {}) if isinstance(self.config, dict) else {}
-        vector_store = VectorStoreFactory.create(storage_type, db_config)
+        vector_store = VectorStoreFactory.create(self.storage_type, db_config)
         
         # Extract LLM config
         llm_config = self.config.get('llm', {}).get('config', {}) if isinstance(self.config, dict) else {}
-        self.llm = LLMFactory.create(llm_provider, llm_config)
+        self.llm = LLMFactory.create(self.llm_provider, llm_config)
         
         # Extract embedding config
         embedding_config = self.config.get('embedding', {}).get('config', {}) if isinstance(self.config, dict) else {}
-        self.embedding = EmbedderFactory.create(embedding_provider, embedding_config, None)
+        self.embedding = EmbedderFactory.create(self.embedding_provider, embedding_config, None)
         
         # Initialize storage adapter with embedding service
         self.storage = StorageAdapter(vector_store, self.embedding)
@@ -92,8 +97,8 @@ class Memory(MemoryBase):
             except Exception:
                 self._agent_plugin = AgentPlugin(agent_cfg)
         
-        logger.info(f"Memory initialized with storage: {storage_type}, LLM: {llm_provider}")
-        self.telemetry.capture_event("memory.init", {"storage_type": storage_type, "llm_provider": llm_provider})
+        logger.info(f"Memory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
+        self.telemetry.capture_event("memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
     
     def add(
         self,
