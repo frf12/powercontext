@@ -15,6 +15,7 @@ def load_class(class_type):
 class VectorStoreFactory:
     provider_to_class = {
         "oceanbase": "mem.storage.oceanbase.oceanbase.OceanBaseVectorStore",
+        "sqlite": "mem.storage.sqlite.sqlite_vector_store.SQLiteVectorStore",
         "pgvector": "mem.storage.pgvector.pgvector.PGVectorStore",
     }
 
