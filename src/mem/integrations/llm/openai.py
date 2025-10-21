@@ -68,10 +68,30 @@ class OpenAILLM(LLMBase):
 
             if response.choices[0].message.tool_calls:
                 for tool_call in response.choices[0].message.tool_calls:
+                    # Extract and validate arguments
+                    arguments_str = extract_json(tool_call.function.arguments)
+
+                    # Check if arguments are empty or whitespace only
+                    if not arguments_str or arguments_str.strip() == "":
+                        logging.warning(
+                            f"Tool call '{tool_call.function.name}' has empty arguments. Skipping this tool call."
+                        )
+                        continue
+
+                    # Try to parse JSON with error handling
+                    try:
+                        arguments = json.loads(arguments_str)
+                    except json.JSONDecodeError as e:
+                        logging.error(
+                            f"Failed to parse tool call arguments for '{tool_call.function.name}': "
+                            f"{arguments_str[:100]}... Error: {e}"
+                        )
+                        continue
+
                     processed_response["tool_calls"].append(
                         {
                             "name": tool_call.function.name,
-                            "arguments": json.loads(extract_json(tool_call.function.arguments)),
+                            "arguments": arguments,
                         }
                     )
 
