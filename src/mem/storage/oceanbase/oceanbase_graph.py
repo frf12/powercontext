@@ -286,7 +286,7 @@ class MemoryGraph:
 
             # Define regular indexes
             indexes = [
-                Index("idx_source_dest", "source_entity_id", "destination_entity_id"),
+                Index("idx_r_covering", "user_id","source_entity_id", "destination_entity_id","relationship_type"),
             ]
 
             # Create table without vector index (relationships table has no vectors)
@@ -677,102 +677,124 @@ class MemoryGraph:
             if not entities:
                 continue
 
+            # Ensure entities is always a list
+            if isinstance(entities, dict):
+                entities = [entities]
+
             entity_ids = [e.get("id") for e in entities]
 
-            # Use recursive CTE for multi-hop traversal
+            # Use multi-hop search with early stopping
             multi_hop_results = self._multi_hop_search(entity_ids, filters, limit)
             result_relations.extend(multi_hop_results)
 
         return result_relations
 
-    def _build_multi_hop_cte_query(
+    def _execute_single_hop_query(
             self,
-            base_filter: str,
-            recursive_filter: str
-    ) -> Any:
-        """Build recursive CTE query for multi-hop graph traversal.
+            source_entity_ids: List[str],
+            filters: Dict[str, Any],
+            hop_number: int,
+            visited_edges: set = None,
+            conn=None,
+            max_edges_per_hop: int = 1000
+    ) -> List[Dict[str, Any]]:
+        """Execute a single hop query from given source entities.
 
         Args:
-            base_filter: SQL filter conditions for base query.
-            recursive_filter: SQL filter conditions for recursive query.
+            source_entity_ids: List of source entity IDs to start from.
+            filters: Dictionary containing user_id, agent_id, run_id.
+            hop_number: Current hop number (for result annotation).
+            visited_edges: Set of visited edges (source_id, dest_id) to avoid cycles.
+            conn: Optional database connection to use. If None, creates a new connection.
+            max_edges_per_hop: Maximum number of edges to retrieve per hop. Defaults to 1000.
 
         Returns:
-            SQLAlchemy text query object.
-        """
-        # Base CTE query: Select direct relationships.
-        base_cte = f"""
-                SELECT
-                    r.source_entity_id,
-                    r.destination_entity_id,
-                    r.relationship_type,
-                    r.id as relation_id,
-                    1 as hop_count,
-                    CAST(
-                        CONCAT(r.source_entity_id, ',', r.destination_entity_id) 
-                        AS CHAR({constants.DEFAULT_PATH_STRING_LENGTH})
-                    ) as path
-                FROM {constants.TABLE_RELATIONSHIPS} r
-                WHERE r.source_entity_id IN :entity_ids
-                    AND {base_filter}
-        """
+            List of relationship dictionaries with hop_count.
 
-        # Recursive CTE query: Join with previous paths.
-        recursive_cte = f"""
-                SELECT
-                    p.source_entity_id,
-                    r.destination_entity_id,
-                    r.relationship_type,
-                    r.id as relation_id,
-                    p.hop_count + 1,
-                    CAST(
-                        CONCAT(p.path, ',', r.destination_entity_id) 
-                        AS CHAR({constants.DEFAULT_PATH_STRING_LENGTH})
-                    ) as path
-                FROM path_search p
-                JOIN {constants.TABLE_RELATIONSHIPS} r ON p.destination_entity_id = r.source_entity_id
-                WHERE p.hop_count < {self.max_hops}
-                    AND {recursive_filter}
-                    AND FIND_IN_SET(r.destination_entity_id, p.path) = 0
+        Note:
+            - Prevents memory explosion from high-degree nodes
+            - Results are sorted by mentions DESC, created_at DESC before limiting
+            - This ensures most relevant edges are retrieved first
         """
+        if not source_entity_ids:
+            return []
 
-        # Final SELECT with entity name joins.
-        final_select = f"""
+        if visited_edges is None:
+            visited_edges = set()
+
+        # Build filter conditions
+        filter_parts, params = self._build_filter_conditions(filters, prefix="")
+        filter_conditions = " AND ".join(filter_parts)
+
+        # Build query with LIMIT to prevent memory explosion from high-degree nodes
+        query = f"""
             SELECT
-                e1.name as source,
-                p.source_entity_id as source_id,
-                p.relationship_type as relationship,
-                p.relation_id,
-                e2.name as destination,
-                p.destination_entity_id as destination_id,
-                p.hop_count
-            FROM (
-                SELECT DISTINCT
+                e1.name AS source,
+                r.source_entity_id,
+                r.relationship_type,
+                r.id AS relation_id,
+                e2.name AS destination,
+                r.destination_entity_id
+            FROM
+                (
+                SELECT
+                    id,
                     source_entity_id,
                     destination_entity_id,
                     relationship_type,
-                    relation_id,
-                    hop_count
-                FROM path_search
-            ) p
-            JOIN {constants.TABLE_ENTITIES} e1 ON p.source_entity_id = e1.id
-            JOIN {constants.TABLE_ENTITIES} e2 ON p.destination_entity_id = e2.id
-            ORDER BY p.hop_count ASC, p.source_entity_id, p.destination_entity_id
-            LIMIT :limit
+                    mentions,
+                    created_at,
+                    user_id
+                FROM {constants.TABLE_RELATIONSHIPS}
+                WHERE
+                    source_entity_id IN :entity_ids
+                    AND {filter_conditions}
+                ORDER BY mentions DESC, created_at DESC
+                LIMIT :max_edges_per_hop
+            ) AS r
+            JOIN {constants.TABLE_ENTITIES} e1 ON r.source_entity_id = e1.id
+            JOIN {constants.TABLE_ENTITIES} e2 ON r.destination_entity_id = e2.id;
         """
 
-        # Combine all parts into full CTE query.
-        full_query = f"""
-            WITH RECURSIVE path_search AS (
-                {base_cte}
+        # Add parameters
+        params["entity_ids"] = tuple(source_entity_ids)
+        params["max_edges_per_hop"] = max_edges_per_hop
+        logger.debug("Executing hop %d with max_edges_per_hop=%d\n query: %s\n params: %s",
+                     hop_number, max_edges_per_hop, query, params)
 
-                UNION ALL
+        # Execute query - use provided connection or create new one
+        if conn is not None:
+            # Reuse existing connection (transactional)
+            result = conn.execute(text(query), params)
+            rows = result.fetchall()
+        else:
+            # Create new connection (backward compatibility)
+            with self.engine.connect() as new_conn:
+                result = new_conn.execute(text(query), params)
+                rows = result.fetchall()
 
-                {recursive_cte}
-            )
-            {final_select}
-        """
+        # Format results and filter out cycles
+        formatted_results = []
+        for row in rows:
+            source_id = row[1]
+            dest_id = row[5]
+            edge_key = (source_id, dest_id)
 
-        return text(full_query)
+            # Skip if this edge was already visited (cycle detection)
+            if edge_key in visited_edges:
+                continue
+
+            formatted_results.append({
+                "source": row[0],
+                "source_id": source_id,
+                "relationship": row[2],
+                "relation_id": row[3],
+                "destination": row[4],
+                "destination_id": dest_id,
+                "hop_count": hop_number,
+            })
+
+        return formatted_results
 
     def _multi_hop_search(
             self,
@@ -780,7 +802,7 @@ class MemoryGraph:
             filters: Dict[str, Any],
             limit: int
     ) -> List[Dict[str, Any]]:
-        """Perform multi-hop graph search using recursive CTE.
+        """Perform multi-hop graph search with application-level early stopping.
 
         Args:
             entity_ids: List of seed entity IDs to start traversal from.
@@ -791,46 +813,75 @@ class MemoryGraph:
             List of dictionaries containing source, relationship, destination and their IDs.
 
         Note:
-            Optimizations:
-            - Prevents circular paths by tracking visited nodes with path string
-            - Uses DISTINCT in final subquery (OceanBase doesn't support DISTINCT in recursive CTE)
-            - Must use UNION ALL (OceanBase doesn't support UNION in recursive CTE)
-            - Joins entity names only once at the end
-            - Applies limit to final results
+            Application-level optimization strategy:
+            1. Execute 1-hop query first
+            2. Check if results satisfy limit - if yes, return immediately
+            3. If not, execute 2-hop query with cycle prevention
+            4. Accumulate results and check limit again
+            5. Continue until limit is satisfied or max_hops is reached
         """
         if not entity_ids:
             return []
 
-        # Build dynamic filter conditions using helper method.
-        filter_parts, params = self._build_filter_conditions(filters, prefix="r.")
-        base_filter = " AND ".join(filter_parts)
-        recursive_filter = base_filter  # Same filter for both base and recursive parts
+        # Use a transaction to ensure consistent reads across all hops
+        # This prevents phantom reads and non-repeatable reads during multi-hop traversal
+        with self.engine.begin() as conn:
+            logger.debug("Started transaction for multi-hop search")
 
-        # Add additional params.
-        params["entity_ids"] = tuple(entity_ids)
-        params["limit"] = limit
+            all_results = []
+            visited_edges = set()  # Track visited edges to prevent cycles
+            visited_nodes = set(entity_ids)  # Track all visited nodes (start with seed entities)
+            current_source_ids = entity_ids  # Start from seed entities
 
-        # Build optimized recursive CTE query.
-        cte_query = self._build_multi_hop_cte_query(base_filter, recursive_filter)
+            # Iteratively execute each hop until limit is satisfied or max_hops reached
+            for hop in range(1, self.max_hops + 1):
+                # Execute single hop query within the same transaction
+                hop_results = self._execute_single_hop_query(
+                    source_entity_ids=current_source_ids,
+                    filters=filters,
+                    hop_number=hop,
+                    visited_edges=visited_edges,
+                    conn=conn
+                )
 
-        # Execute query
-        with self.engine.connect() as conn:
-            result = conn.execute(cte_query, params)
-            rows = result.fetchall()
+                # If no results at this hop, stop early
+                if not hop_results:
+                    logger.info("STOP early: No results at hop %s", hop)
+                    break
 
-        # Format results to match graph_memory.py format
-        formatted_results = []
-        for row in rows:
-            formatted_results.append({
-                "source": row[0],  # source name
-                "source_id": row[1],  # source_entity_id
-                "relationship": row[2],  # relationship_type
-                "relation_id": row[3],  # relation_id
-                "destination": row[4],  # destination name
-                "destination_id": row[5],  # destination_entity_id
-            })
+                # Add results to accumulator
+                all_results.extend(hop_results)
 
-        return formatted_results
+                # Update visited edges to prevent cycles in next hop
+                for result in hop_results:
+                    edge_key = (result["source_id"], result["destination_id"])
+                    visited_edges.add(edge_key)
+
+                # Check if we've satisfied the limit (early stopping)
+                if len(all_results) >= limit:
+                    logger.info("STOP early: Limit satisfied at hop %s", hop)
+                    # Truncate to exact limit and return
+                    return all_results[:limit]
+
+                # Prepare source IDs for next hop (destination entities become new sources)
+                next_source_ids = set([r["destination_id"] for r in hop_results])
+
+                # Check if we have any new nodes that haven't been visited
+                new_nodes = next_source_ids - visited_nodes
+
+                # If no new nodes, all destinations are already visited - stop early
+                # This means we've exhausted all reachable nodes in the graph
+                if not new_nodes:
+                    logger.info("STOP early: All destinations are already visited at hop %s", hop)
+                    break
+
+                # Update visited nodes and prepare for next hop
+                visited_nodes.update(next_source_ids)
+                current_source_ids = list(next_source_ids)
+
+            # Return all accumulated results
+            logger.debug("Transaction completed for multi-hop search, returning %d results", len(all_results))
+            return all_results
 
     def _get_delete_entities_from_search_output(
             self,
