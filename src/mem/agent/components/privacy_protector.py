@@ -97,10 +97,10 @@ class PrivacyProtector(AgentPrivacyManagerBase):
             self.memory_privacy_levels[memory_id] = privacy_level
             
             # Apply privacy measures based on level
-            if privacy_level == PrivacyLevel.MAXIMUM:
+            if privacy_level == PrivacyLevel.CONFIDENTIAL:
                 # Apply maximum privacy measures
                 self._apply_maximum_privacy(memory_id)
-            elif privacy_level == PrivacyLevel.ENHANCED:
+            elif privacy_level == PrivacyLevel.SENSITIVE:
                 # Apply enhanced privacy measures
                 self._apply_enhanced_privacy(memory_id)
             
@@ -490,7 +490,7 @@ class PrivacyProtector(AgentPrivacyManagerBase):
             
             # Check privacy level
             privacy_level = self.get_privacy_level(memory_id)
-            if privacy_level in [PrivacyLevel.ENHANCED, PrivacyLevel.MAXIMUM]:
+            if privacy_level in [PrivacyLevel.SENSITIVE, PrivacyLevel.CONFIDENTIAL]:
                 compliance_checks['integrity_confidentiality'] = True
             
             # Overall compliance

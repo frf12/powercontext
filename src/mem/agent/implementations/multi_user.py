@@ -7,11 +7,17 @@ designed for single-agent scenarios with multiple users.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import uuid
 
 from typing import Any, Dict
-from mem.agent.types import CollaborationLevel
+from mem.agent.types import (
+    CollaborationLevel,
+    MemoryType,
+    MemoryScope,
+    PrivacyLevel,
+    AccessPermission
+)
 from mem.intelligence.intelligent_memory_manager import IntelligentMemoryManager
 from mem.agent.abstract.manager import AgentMemoryManagerBase
 
@@ -76,7 +82,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
         default_context = {
             'max_memories': self.multi_user_config.user_context_config.get('max_user_memories', 10000),
             'session_timeout': self.multi_user_config.user_context_config.get('user_session_timeout', 3600),
-            'privacy_level': CollaborationLevel.STANDARD,
+            'privacy_level': PrivacyLevel.STANDARD,
             'sharing_enabled': self.multi_user_config.cross_user_sharing,
             'created_at': datetime.now().isoformat(),
         }
@@ -112,7 +118,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 self._ensure_user_isolation(user_id)
             
             # Process with intelligent memory manager
-            memory_result = self.intelligent_manager.process_new_memory(
+            memory_result = self.intelligent_manager.process_content(
                 content=content,
                 metadata=metadata or {},
                 context=context or {}
@@ -141,8 +147,8 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 'updated_at': datetime.now().isoformat(),
                 'access_count': 0,
                 'last_accessed': None,
-                'retention_score': memory_result.get('retention_score', 1.0),
-                'importance_level': memory_result.get('importance_level'),
+                'retention_score': memory_result.get('retention_score', 1.0) if isinstance(memory_result, dict) else 1.0,
+                'importance_level': memory_result.get('importance_level') if isinstance(memory_result, dict) else None,
                 'privacy_level': self._determine_privacy_level(metadata),
                 'shared_with': metadata.get('share_with', []) if metadata else [],
             }
@@ -150,16 +156,16 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             # Store in user-specific storage
             if user_id not in self.user_memories:
                 self.user_memories[user_id] = {
-                    CollaborationLevel.WORKING: {},
-                    CollaborationLevel.SHORT_TERM: {},
-                    CollaborationLevel.LONG_TERM: {},
-                    CollaborationLevel.SEMANTIC: {},
-                    CollaborationLevel.EPISODIC: {},
-                    CollaborationLevel.PROCEDURAL: {},
-                    CollaborationLevel.PUBLIC_SHARED: {},
-                    CollaborationLevel.PRIVATE_AGENT: {},
-                    CollaborationLevel.COLLABORATIVE: {},
-                    CollaborationLevel.GROUP_CONSENSUS: {},
+                    MemoryType.WORKING: {},
+                    MemoryType.SHORT_TERM: {},
+                    MemoryType.LONG_TERM: {},
+                    MemoryType.SEMANTIC: {},
+                    MemoryType.EPISODIC: {},
+                    MemoryType.PROCEDURAL: {},
+                    MemoryType.PUBLIC_SHARED: {},
+                    MemoryType.PRIVATE_AGENT: {},
+                    MemoryType.COLLABORATIVE: {},
+                    MemoryType.GROUP_CONSENSUS: {},
                 }
             
             self.user_memories[user_id][memory_type][memory_id] = memory_data
@@ -202,48 +208,26 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             memory_data: Memory data dictionary
         """
         try:
-            # Get the original Memory instance to access its storage components
-            if hasattr(self, '_memory_instance'):
-                memory_instance = self._memory_instance
-            else:
-                # Create a temporary Memory instance for storage operations
-                from mem0 import Memory
-                memory_instance = Memory(self.config)
-                self._memory_instance = memory_instance
+            # Use existing Memory infrastructure instead of mem0
+            if not hasattr(self, '_memory_instance'):
+                from mem.core.memory import Memory
+                # Convert ConfigObject back to dict for Memory class
+                config_dict = self.config._data if hasattr(self.config, '_data') else self.config
+                self._memory_instance = Memory(config_dict)
             
-            # Prepare metadata for storage
-            storage_metadata = {
-                'data': memory_data['content'],
-                'user_id': memory_data['user_id'],
-                'agent_id': memory_data['agent_id'],
-                'scope': memory_data['scope'].value if hasattr(memory_data['scope'], 'value') else str(memory_data['scope']),
-                'memory_type': memory_data['memory_type'].value if hasattr(memory_data['memory_type'], 'value') else str(memory_data['memory_type']),
-                'retention_score': memory_data['retention_score'],
-                'importance_level': memory_data['importance_level'],
-                'privacy_level': memory_data['privacy_level'].value if hasattr(memory_data['privacy_level'], 'value') else str(memory_data['privacy_level']),
-                'created_at': memory_data['created_at'],
-                **memory_data['metadata']
-            }
-            
-            # Generate embeddings
-            embeddings = memory_instance.embedding_model.embed(memory_data['content'], memory_action="add")
-            
-            # Store in vector store
-            memory_instance.vector_store.insert(
-                vectors=[embeddings],
-                ids=[memory_data['id']],
-                payloads=[storage_metadata],
-            )
-            
-            # Store in database
-            memory_instance.db.add_history(
-                memory_data['id'],
-                None,
-                memory_data['content'],
-                "ADD",
-                created_at=memory_data['created_at'],
-                actor_id=memory_data['user_id'],  # Use user_id as actor_id in multi-user mode
-                role=memory_data['metadata'].get('role'),
+            # Use the existing Memory.add() method
+            self._memory_instance.add(
+                content=memory_data['content'],
+                user_id=memory_data.get('user_id'),
+                agent_id=memory_data.get('agent_id'),
+                metadata={
+                    'scope': memory_data.get('scope').value if memory_data.get('scope') else None,
+                    'memory_type': memory_data.get('memory_type').value if memory_data.get('memory_type') else None,
+                    'retention_score': memory_data.get('retention_score'),
+                    'importance_level': memory_data.get('importance_level'),
+                    'privacy_level': memory_data.get('privacy_level').value if memory_data.get('privacy_level') else None,
+                    **memory_data.get('metadata', {})
+                }
             )
             
             logger.info(f"Persisted memory {memory_data['id']} to storage")
@@ -282,40 +266,44 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
         user_id: str,
         context: Optional[Dict[str, Any]],
         metadata: Optional[Dict[str, Any]]
-    ) -> CollaborationLevel:
+    ) -> MemoryScope:
         """Determine the appropriate scope for a user memory."""
         # Check if memory is meant to be shared
         if metadata and metadata.get('share_with'):
-            return CollaborationLevel.USER_GROUP
+            return MemoryScope.USER_GROUP
         elif context and context.get('collaboration_level') == 'high':
-            return CollaborationLevel.USER_GROUP
+            return MemoryScope.USER_GROUP
         else:
-            return CollaborationLevel.PRIVATE
+            return MemoryScope.PRIVATE
     
-    def _determine_memory_type(self, memory_result: Dict[str, Any]) -> CollaborationLevel:
+    def _determine_memory_type(self, memory_result: Union[str, Dict[str, Any]]) -> MemoryType:
         """Determine the memory type based on intelligent memory manager result."""
+        if isinstance(memory_result, str):
+            # If it's a string, default to working memory
+            return MemoryType.WORKING
+        
         memory_type_str = memory_result.get('memory_type', 'working_memory')
         
         # Map string to enum
         type_mapping = {
-            'working_memory': CollaborationLevel.WORKING,
-            'short_term_memory': CollaborationLevel.SHORT_TERM,
-            'long_term_memory': CollaborationLevel.LONG_TERM,
-            'semantic_memory': CollaborationLevel.SEMANTIC,
-            'episodic_memory': CollaborationLevel.EPISODIC,
-            'procedural_memory': CollaborationLevel.PROCEDURAL,
+            'working_memory': MemoryType.WORKING,
+            'short_term_memory': MemoryType.SHORT_TERM,
+            'long_term_memory': MemoryType.LONG_TERM,
+            'semantic_memory': MemoryType.SEMANTIC,
+            'episodic_memory': MemoryType.EPISODIC,
+            'procedural_memory': MemoryType.PROCEDURAL,
         }
         
-        return type_mapping.get(memory_type_str, CollaborationLevel.WORKING)
+        return type_mapping.get(memory_type_str, MemoryType.WORKING)
     
-    def _determine_privacy_level(self, metadata: Optional[Dict[str, Any]]) -> CollaborationLevel:
+    def _determine_privacy_level(self, metadata: Optional[Dict[str, Any]]) -> PrivacyLevel:
         """Determine privacy level for the memory."""
         if metadata and 'privacy_level' in metadata:
             try:
-                return CollaborationLevel(metadata['privacy_level'])
+                return PrivacyLevel(metadata['privacy_level'])
             except ValueError:
                 pass
-        return CollaborationLevel.STANDARD
+        return PrivacyLevel.STANDARD
     
     def _handle_cross_user_sharing(
         self,
@@ -392,14 +380,14 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
         memory_data: Dict[str, Any]
     ) -> None:
         """Apply privacy protection to memory."""
-        privacy_level = memory_data.get('privacy_level', CollaborationLevel.STANDARD)
+        privacy_level = memory_data.get('privacy_level', PrivacyLevel.STANDARD)
         
         # Apply privacy settings based on level
-        if privacy_level == CollaborationLevel.MAXIMUM:
+        if privacy_level == PrivacyLevel.CONFIDENTIAL:
             # Maximum privacy - encrypt content
             memory_data['encrypted'] = True
             memory_data['encryption_key'] = f"user_{user_id}_key"
-        elif privacy_level == CollaborationLevel.ENHANCED:
+        elif privacy_level == PrivacyLevel.SENSITIVE:
             # Enhanced privacy - anonymize sensitive data
             memory_data['anonymized'] = True
     
@@ -426,7 +414,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             
             # Get user's own memories
             if user_id in self.user_memories:
-                for memory_type in CollaborationLevel:
+                for memory_type in MemoryType:
                     for memory_data in self.user_memories[user_id][memory_type].values():
                         accessible_memories.append(memory_data)
             
@@ -666,7 +654,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 'memory_count': self._get_user_memory_count(user_id),
                 'shared_memories_count': self._get_shared_memories_count(user_id),
                 'active_sessions': len(self.user_sessions.get(user_id, {})),
-                'privacy_level': self.user_contexts.get(user_id, {}).get('privacy_level', CollaborationLevel.STANDARD),
+                'privacy_level': self.user_contexts.get(user_id, {}).get('privacy_level', PrivacyLevel.STANDARD),
                 'sharing_enabled': self.multi_user_config.cross_user_sharing,
                 'isolation_enabled': self.multi_user_config.user_isolation,
             }
@@ -703,7 +691,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             
             # Update decay for all user memories
             for user_id, user_memory_types in self.user_memories.items():
-                for memory_type in CollaborationLevel:
+                for memory_type in MemoryType:
                     for memory_id, memory_data in user_memory_types[memory_type].items():
                         # Update decay using intelligent memory manager
                         # Note: IntelligentMemoryManager.update_memory_decay() updates all memories
@@ -774,7 +762,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             
             # Clean up forgotten memories for all users
             for user_id, user_memory_types in self.user_memories.items():
-                for memory_type in CollaborationLevel:
+                for memory_type in MemoryType:
                     memories_to_remove = []
                     
                     for memory_id, memory_data in user_memory_types[memory_type].items():
@@ -828,7 +816,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             # Count memories by user and type
             for user_id, user_memory_types in self.user_memories.items():
                 user_count = 0
-                for memory_type in CollaborationLevel:
+                for memory_type in MemoryType:
                     type_count = len(user_memory_types[memory_type])
                     user_count += type_count
                     stats['total_memories'] += type_count
@@ -894,7 +882,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             return 0
         
         count = 0
-        for memory_type in CollaborationLevel:
+        for memory_type in MemoryType:
             count += len(self.user_memories[user_id][memory_type])
         return count
     
@@ -912,7 +900,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
         all_memories = []
         
         if user_id in self.user_memories:
-            for memory_type in CollaborationLevel:
+            for memory_type in MemoryType:
                 for memory_id, memory_data in self.user_memories[user_id][memory_type].items():
                     all_memories.append((memory_id, memory_type, memory_data))
         
@@ -927,7 +915,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
     def _find_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
         """Find a memory by ID across all users and types."""
         for user_id, user_memory_types in self.user_memories.items():
-            for memory_type in CollaborationLevel:
+            for memory_type in MemoryType:
                 if memory_id in user_memory_types[memory_type]:
                     return user_memory_types[memory_type][memory_id]
         return None

@@ -66,13 +66,15 @@ class StorageAdapter:
             "fulltext_content": content,  # For full-text search
         }
         
-        # Add metadata as a separate field
-        metadata = memory_data.get("metadata", {})
-        payload["metadata"] = metadata
+        # Add only user-defined metadata (not system fields)
+        user_metadata = memory_data.get("metadata", {})
+        payload["metadata"] = user_metadata
         
-        # Add any extra fields
+        # Add any extra fields (excluding system fields and embedding)
+        excluded_fields = ["id", "content", "data", "user_id", "agent_id", "run_id", "metadata", "filters", 
+                          "created_at", "updated_at", "actor_id", "hash", "category", "embedding"]
         for key, value in memory_data.items():
-            if key not in ["id", "content", "data", "user_id", "agent_id", "run_id", "metadata", "filters", "created_at", "updated_at", "actor_id", "hash", "category"]:
+            if key not in excluded_fields:
                 payload[key] = value
         
         self.vector_store.insert([vector], [payload], [memory_id])

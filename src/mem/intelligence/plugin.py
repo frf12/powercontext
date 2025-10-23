@@ -84,13 +84,26 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
         if not self.enabled or not self._importance or not self._algo:
             return {}
         try:
+            # Evaluate importance
             score = self._importance.evaluate_importance(content, metadata)
+            
+            # Classify memory type
+            memory_type = self._classify(score)
+            
+            # Get processed content for metadata (internal use only)
+            processed_content = self._algo.get_processed_content(content, score, memory_type)
+            
+            # Return enhanced metadata
             return {
                 "importance_score": score,
-                "memory_type": self._classify(score),
+                "memory_type": memory_type,
                 "access_count": 0,
+                "processed_content": processed_content,
+                "original_content": content,
+                "processing_applied": True,
             }
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to process memory in on_add: {e}")
             return {"access_count": 0}
 
     def on_get(self, memory: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], bool]:
@@ -101,20 +114,42 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
                 "access_count": (memory.get("access_count") or 0) + 1,
                 "updated_at": datetime.utcnow(),
             }
+            
+            # Check if memory should be forgotten
             if self._algo.should_forget(memory):
                 return None, True
+            
+            # Check if memory should be promoted
             if self._algo.should_promote(memory):
                 current = memory.get("memory_type")
                 if current == "working":
                     updates["memory_type"] = "short_term"
                 elif current == "short_term":
                     updates["memory_type"] = "long_term"
+            
+            # Check if memory should be archived
             if self._algo.should_archive(memory):
                 meta = memory.get("metadata") or {}
                 meta["archived"] = True
                 updates["metadata"] = meta
+            
+            # Re-process content if memory type changed or if it's been accessed multiple times
+            access_count = memory.get("access_count", 0) + 1
+            if (updates.get("memory_type") != memory.get("memory_type") or 
+                access_count % 5 == 0):  # Re-process every 5 accesses
+                
+                original_content = memory.get("original_content") or memory.get("content", "")
+                importance_score = memory.get("importance_score", 0.5)
+                memory_type = updates.get("memory_type") or memory.get("memory_type", "working")
+                
+                # Re-process content with updated parameters
+                processed_content = self._algo.get_processed_content(original_content, importance_score, memory_type)
+                updates["processed_content"] = processed_content
+                updates["last_reprocessed_at"] = datetime.utcnow()
+            
             return updates, False
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to process memory in on_get: {e}")
             return None, False
 
     def on_search(self, results: List[Dict[str, Any]]) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[str]]:
@@ -122,18 +157,62 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
             return [], []
         updates: List[Tuple[str, Dict[str, Any]]] = []
         deletes: List[str] = []
+        
         for item in results:
             try:
                 mem_id = item.get("id") or item.get("memory_id")
                 if not mem_id:
                     continue
+                
+                # Process individual memory
                 upd, delete_flag = self.on_get(item)
+                
                 if delete_flag:
                     deletes.append(mem_id)
                 elif upd:
-                    updates.append((mem_id, upd))
-            except Exception:
+                    # Add search-specific enhancements
+                    search_updates = self._enhance_for_search(item, upd)
+                    updates.append((mem_id, search_updates))
+                    
+            except Exception as e:
+                logger.warning(f"Failed to process memory {mem_id} in on_search: {e}")
                 continue
+                
         return updates, deletes
+    
+    def _enhance_for_search(self, memory: Dict[str, Any], base_updates: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enhance memory for search context.
+        
+        Args:
+            memory: Memory data
+            base_updates: Base updates from on_get
+            
+        Returns:
+            Enhanced updates for search context
+        """
+        try:
+            # Add search-specific metadata
+            search_metadata = memory.get("metadata", {})
+            search_metadata["last_searched_at"] = datetime.utcnow()
+            search_metadata["search_count"] = search_metadata.get("search_count", 0) + 1
+            
+            # Update base updates with search metadata
+            enhanced_updates = base_updates.copy()
+            enhanced_updates["metadata"] = search_metadata
+            
+            # Add search relevance score if not present
+            if "search_relevance_score" not in memory:
+                # Simple relevance calculation based on access patterns
+                access_count = memory.get("access_count", 0)
+                importance_score = memory.get("importance_score", 0.5)
+                search_relevance = min(1.0, (access_count * 0.1) + (importance_score * 0.5))
+                enhanced_updates["search_relevance_score"] = search_relevance
+            
+            return enhanced_updates
+            
+        except Exception as e:
+            logger.warning(f"Failed to enhance memory for search: {e}")
+            return base_updates
 
 

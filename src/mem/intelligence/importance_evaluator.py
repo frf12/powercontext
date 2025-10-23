@@ -7,6 +7,7 @@ This module evaluates the importance of memory content using LLM.
 import logging
 from typing import Any, Dict, Optional
 import json
+from ..prompts.importance_evaluation import ImportanceEvaluationPrompts
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ class ImportanceEvaluator:
         self.llm_config = llm_config
         self.llm = None  # Will be initialized by the parent manager
         
+        # Initialize prompts
+        self.prompts = ImportanceEvaluationPrompts(config)
+        
         # Importance criteria weights
         self.criteria_weights = {
             "relevance": 0.3,
@@ -39,6 +43,16 @@ class ImportanceEvaluator:
         }
         
         logger.info("ImportanceEvaluator initialized")
+    
+    def set_llm(self, llm):
+        """
+        Set the LLM instance for evaluation.
+        
+        Args:
+            llm: LLM instance
+        """
+        self.llm = llm
+        logger.info("LLM instance set for importance evaluation")
     
     def evaluate_importance(
         self,
@@ -58,9 +72,11 @@ class ImportanceEvaluator:
             Importance score between 0 and 1
         """
         try:
-            # Use rule-based evaluation for now
-            # In a real implementation, this would use LLM
-            importance_score = self._rule_based_evaluation(content, metadata, context)
+            # Use LLM-based evaluation if available, otherwise fall back to rule-based
+            if self.llm:
+                importance_score = self._llm_based_evaluation(content, metadata, context)
+            else:
+                importance_score = self._rule_based_evaluation(content, metadata, context)
             
             logger.debug(f"Evaluated importance: {importance_score}")
             
@@ -152,9 +168,33 @@ class ImportanceEvaluator:
         Returns:
             Importance score between 0 and 1
         """
-        # This would use an LLM to evaluate importance
-        # For now, return a placeholder
-        return 0.5
+        if not self.llm:
+            logger.warning("LLM not initialized, falling back to rule-based evaluation")
+            return self._rule_based_evaluation(content, metadata, context)
+        
+        try:
+            # Prepare evaluation prompt
+            prompt = self.prompts.get_importance_evaluation_prompt(content, metadata, context)
+            
+            # Format prompt as messages for LLM
+            messages = [
+                {"role": "system", "content": self.prompts.get_system_prompt()},
+                {"role": "user", "content": prompt}
+            ]
+            
+            # Call LLM for evaluation
+            response = self.llm.generate_response(messages)
+            
+            # Parse the response to extract importance score
+            importance_score = self._parse_importance_response(response)
+            
+            logger.debug(f"LLM evaluated importance: {importance_score}")
+            
+            return importance_score
+            
+        except Exception as e:
+            logger.error(f"LLM-based evaluation failed: {e}, falling back to rule-based")
+            return self._rule_based_evaluation(content, metadata, context)
     
     def get_importance_breakdown(
         self,
@@ -265,6 +305,44 @@ class ImportanceEvaluator:
                 score += 0.15
         
         return min(score, 1.0)
+    
+    def _parse_importance_response(self, response: str) -> float:
+        """
+        Parse LLM response to extract importance score.
+        
+        Args:
+            response: LLM response string
+            
+        Returns:
+            Importance score between 0 and 1
+        """
+        try:
+            # Try to extract JSON from response
+            if "{" in response and "}" in response:
+                start = response.find("{")
+                end = response.rfind("}") + 1
+                json_str = response[start:end]
+                
+                result = json.loads(json_str)
+                
+                if "importance_score" in result:
+                    score = float(result["importance_score"])
+                    # Ensure score is within valid range
+                    return max(0.0, min(1.0, score))
+            
+            # Fallback: try to extract number from response
+            import re
+            numbers = re.findall(r'\d+\.?\d*', response)
+            if numbers:
+                score = float(numbers[0])
+                return max(0.0, min(1.0, score))
+            
+            logger.warning(f"Could not parse importance score from response: {response}")
+            return 0.5  # Default medium importance
+            
+        except Exception as e:
+            logger.error(f"Failed to parse importance response: {e}")
+            return 0.5  # Default medium importance
     
     def _evaluate_personal(self, content: str, metadata: Optional[Dict[str, Any]]) -> float:
         """Evaluate if content is personal."""

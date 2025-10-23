@@ -84,14 +84,57 @@ class HybridMemoryManager(AgentMemoryManagerBase):
     def _initialize_mode_managers(self) -> None:
         """Initialize mode-specific managers."""
         # Create multi-agent manager
-        multi_agent_config = self.config.model_copy()
+        multi_agent_config = self.config.copy()
+        # Ensure multi_agent_config exists
+        if 'multi_agent_config' not in multi_agent_config.agent_memory._data:
+            multi_agent_config.agent_memory._data['multi_agent_config'] = {
+                'enabled': True,
+                'default_permissions': {
+                    'owner': ['read', 'write', 'delete', 'admin'],
+                    'collaborator': ['read', 'write'],
+                    'viewer': ['read']
+                },
+                'collaborative_memory_config': {
+                    'enabled': True,
+                    'auto_collaboration': True,
+                    'collaboration_threshold': 0.7,
+                    'max_collaborators': 5,
+                    'collaboration_timeout': 3600
+                },
+                'privacy_config': {
+                    'enabled': True,
+                    'default_privacy_level': 'standard',
+                    'encryption_enabled': False,
+                    'anonymization_enabled': True
+                },
+                'default_scope': 'private'
+            }
         multi_agent_config.agent_memory.mode = "multi_agent"
         multi_agent_config.agent_memory.enabled = True
         self.multi_agent_manager = MultiAgentMemoryManager(multi_agent_config)
         self.multi_agent_manager.initialize()
         
         # Create multi-user manager
-        multi_user_config = self.config.model_copy()
+        multi_user_config = self.config.copy()
+        # Ensure multi_user_config exists
+        if 'multi_user_config' not in multi_user_config.agent_memory._data:
+            multi_user_config.agent_memory._data['multi_user_config'] = {
+                'enabled': True,
+                'user_isolation': True,
+                'cross_user_sharing': True,
+                'privacy_protection': True,
+                'default_permissions': {
+                    'owner': ['read', 'write', 'delete', 'admin'],
+                    'collaborator': ['read', 'write'],
+                    'viewer': ['read']
+                },
+                'user_context_config': {
+                    'max_user_memories': 10000,
+                    'context_retention_days': 30,
+                    'auto_cleanup': True,
+                    'context_sharing_enabled': True
+                }
+            }
         multi_user_config.agent_memory.mode = "multi_user"
         multi_user_config.agent_memory.enabled = True
         self.multi_user_manager = MultiUserMemoryManager(multi_user_config)

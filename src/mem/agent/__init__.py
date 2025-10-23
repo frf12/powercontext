@@ -16,6 +16,7 @@ from .abstract.manager import AgentMemoryManagerBase
 from .implementations.multi_agent import MultiAgentMemoryManager
 from .implementations.multi_user import MultiUserMemoryManager
 from .implementations.hybrid import HybridMemoryManager
+from .agent import AgentMemory
 
 # Manager types for factory
 class ManagerType:
@@ -29,5 +30,6 @@ __all__ = [
     "AgentMemoryManagerBase",
     "MultiAgentMemoryManager",
     "MultiUserMemoryManager", 
-    "HybridMemoryManager"
+    "HybridMemoryManager",
+    "AgentMemory"
 ]

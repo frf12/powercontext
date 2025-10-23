@@ -13,10 +13,17 @@ This directory contains various examples demonstrating how to use powermem with 
 
 ### 2. Multi-Agent Demo (`multi_agent.py`)
 - **Database**: OceanBase (configurable)
-- **Purpose**: Multi-agent memory management
+- **Purpose**: Multi-agent memory management (COMPLEX approach)
 - **Features**: Agent isolation, cross-agent search, collaboration
 - **Run**: `python examples/multi_agent.py`
-- **✨ Simplified**: Agent memories created with `Memory(config=config, agent_id="agent_name")`
+- **⚠️ Complex**: Shows the full complexity of multi-agent features
+
+### 3. Agent Memory Demo (`agent_memory.py`) ⭐ NEW!
+- **Database**: OceanBase (configurable)
+- **Purpose**: Unified interface for all agent memory scenarios
+- **Features**: Auto mode detection, multi-agent, multi-user, hybrid modes
+- **Run**: `python examples/agent_memory.py`
+- **✨ Unified**: Single API for all scenarios, automatic mode detection
 
 ## Configuration Files
 
@@ -45,7 +52,10 @@ This directory contains various examples demonstrating how to use powermem with 
    # Basic SQLite example
    python examples/basic_usage.py
    
-   # Multi-agent demo
+   # Unified agent memory demo (RECOMMENDED)
+   python examples/agent_memory.py
+   
+   # Complex multi-agent demo (for advanced users)
    python examples/multi_agent.py
    ```
 
@@ -60,6 +70,72 @@ This directory contains various examples demonstrating how to use powermem with 
 - **Pros**: High performance, scalable, enterprise features, multi-user support
 - **Cons**: Requires OceanBase installation, more complex setup
 - **Use Case**: Production applications, large-scale deployments
+
+## Unified Agent Memory Interface
+
+The new unified interface provides a single, consistent API for all agent memory scenarios:
+
+### Auto Mode (Recommended)
+```python
+from mem.agent import AgentMemory
+
+# Automatic mode detection
+agent_memory = AgentMemory(config)
+
+# Same API regardless of detected mode
+agent_memory.add("Memory content", user_id="user123", agent_id="agent456")
+results = agent_memory.search("query", user_id="user123")
+```
+
+### Multi-Agent Mode
+```python
+# Explicit multi-agent mode
+agent_memory = AgentMemory(config, mode='multi_agent')
+
+# Create agents
+support_agent = agent_memory.create_agent("support_agent", "Customer Support")
+sales_agent = agent_memory.create_agent("sales_agent", "Sales Agent")
+
+# Agent-specific operations
+support_agent.add("Customer prefers email support", user_id="customer_123")
+sales_agent.add("Customer budget is $1000/month", user_id="customer_123")
+
+# Group management
+agent_memory.create_group("customer_team", ["support_agent", "sales_agent"])
+```
+
+### Multi-User Mode
+```python
+# Multi-user mode
+agent_memory = AgentMemory(config, mode='multi_user')
+
+# User-specific memories
+agent_memory.add("Alice likes Python", user_id="alice")
+agent_memory.add("Bob prefers Java", user_id="bob")
+
+# User-specific search
+alice_memories = agent_memory.search("Python", user_id="alice")
+```
+
+### Hybrid Mode
+```python
+# Hybrid mode with dynamic switching
+agent_memory = AgentMemory(config, mode='hybrid')
+
+# Automatic context detection
+agent_memory.add("Support agent handled complaint", agent_id="support_agent")
+agent_memory.add("User Alice requested features", user_id="alice")
+
+# Mode switching
+agent_memory.switch_mode('multi_agent')
+```
+
+### Key Benefits
+- **Single API** - Consistent interface across all modes
+- **Automatic Detection** - Intelligent mode selection
+- **No mem0 Dependencies** - Uses existing Memory infrastructure
+- **Easy Migration** - Simple upgrade from existing code
+- **Mode Flexibility** - Switch between modes as needed
 
 ## Configuration Examples
 

@@ -518,7 +518,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 vector if not self.normalize else self._normalize(vector)
             ),
             self.text_field: payload.get("data", ""),
-            self.metadata_field: json.dumps(payload),
+            self.metadata_field: json.dumps(payload.get("metadata", {})),  # Only store user metadata
             # mem0 standard fields
             "user_id": payload.get("user_id", ""),
             "agent_id": payload.get("agent_id", ""),

@@ -7,7 +7,7 @@ refactored to conform to the new AgentMemoryManagerBase interface.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import uuid
 
 from typing import Any, Dict
@@ -189,7 +189,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             scope = self.scope_controller.determine_scope(agent_id, context, metadata)
             
             # Process with intelligent memory manager
-            memory_result = self.intelligent_manager.process_new_memory(
+            memory_result = self.intelligent_manager.process_content(
                 content=content,
                 metadata=metadata or {},
                 context=context or {}
@@ -214,8 +214,8 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
                 'updated_at': datetime.now().isoformat(),
                 'access_count': 0,
                 'last_accessed': None,
-                'retention_score': memory_result.get('retention_score', 1.0),
-                'importance_level': memory_result.get('importance_level'),
+                'retention_score': memory_result.get('retention_score', 1.0) if isinstance(memory_result, dict) else 1.0,
+                'importance_level': memory_result.get('importance_level') if isinstance(memory_result, dict) else None,
             }
             
             # Store in appropriate scope and type
@@ -287,47 +287,25 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             memory_data: Memory data dictionary
         """
         try:
-            # Get the original Memory instance to access its storage components
-            # This is a bit of a hack, but allows us to reuse the existing storage logic
-            if hasattr(self, '_memory_instance'):
-                memory_instance = self._memory_instance
-            else:
-                # Create a temporary Memory instance for storage operations
-                from mem0 import Memory
-                memory_instance = Memory(self.config)
-                self._memory_instance = memory_instance
+            # Use existing Memory infrastructure instead of mem0
+            if not hasattr(self, '_memory_instance'):
+                from mem.core.memory import Memory
+                # Convert ConfigObject back to dict for Memory class
+                config_dict = self.config._data if hasattr(self.config, '_data') else self.config
+                self._memory_instance = Memory(config_dict)
             
-            # Prepare metadata for storage
-            storage_metadata = {
-                'data': memory_data['content'],
-                'agent_id': memory_data['agent_id'],
-                'scope': memory_data['scope'].value if hasattr(memory_data['scope'], 'value') else str(memory_data['scope']),
-                'memory_type': memory_data['memory_type'].value if hasattr(memory_data['memory_type'], 'value') else str(memory_data['memory_type']),
-                'retention_score': memory_data['retention_score'],
-                'importance_level': memory_data['importance_level'],
-                'created_at': memory_data['created_at'],
-                **memory_data['metadata']
-            }
-            
-            # Generate embeddings
-            embeddings = memory_instance.embedding_model.embed(memory_data['content'], memory_action="add")
-            
-            # Store in vector store
-            memory_instance.vector_store.insert(
-                vectors=[embeddings],
-                ids=[memory_data['id']],
-                payloads=[storage_metadata],
-            )
-            
-            # Store in database
-            memory_instance.db.add_history(
-                memory_data['id'],
-                None,
-                memory_data['content'],
-                "ADD",
-                created_at=memory_data['created_at'],
-                actor_id=memory_data['agent_id'],
-                role=memory_data['metadata'].get('role'),
+            # Use the existing Memory.add() method
+            self._memory_instance.add(
+                content=memory_data['content'],
+                user_id=memory_data.get('user_id'),
+                agent_id=memory_data.get('agent_id'),
+                metadata={
+                    'scope': memory_data.get('scope').value if memory_data.get('scope') else None,
+                    'memory_type': memory_data.get('memory_type').value if memory_data.get('memory_type') else None,
+                    'retention_score': memory_data.get('retention_score'),
+                    'importance_level': memory_data.get('importance_level'),
+                    **memory_data.get('metadata', {})
+                }
             )
             
             logger.info(f"Persisted memory {memory_data['id']} to storage")
@@ -336,8 +314,12 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             logger.error(f"Failed to persist memory {memory_data.get('id', 'unknown')} to storage: {e}")
             # Don't raise the exception to avoid breaking the main flow
     
-    def _determine_memory_type(self, memory_result: Dict[str, Any]) -> MemoryType:
+    def _determine_memory_type(self, memory_result: Union[str, Dict[str, Any]]) -> MemoryType:
         """Determine the memory type based on intelligent memory manager result."""
+        if isinstance(memory_result, str):
+            # If it's a string, default to working memory
+            return MemoryType.WORKING
+        
         memory_type_str = memory_result.get('memory_type', 'working_memory')
         
         # Map string to enum
@@ -882,3 +864,66 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
                 if memory_id in self.scope_memories[scope][memory_type]:
                     return self.scope_memories[scope][memory_type][memory_id]
         return None
+    
+    def create_group(self, group_name: str, agent_ids: List[str], permissions: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
+        """
+        Create an agent group.
+        
+        Args:
+            group_name: Name of the group
+            agent_ids: List of agent IDs to include in the group
+            permissions: Optional permissions configuration
+            
+        Returns:
+            Dictionary containing the group creation result
+        """
+        try:
+            # Check if group already exists
+            if group_name in self.agent_groups:
+                raise ValueError(f"Group '{group_name}' already exists")
+            
+            # Validate agent IDs
+            for agent_id in agent_ids:
+                if not agent_id or not isinstance(agent_id, str):
+                    raise ValueError(f"Invalid agent ID: {agent_id}")
+            
+            # Set default permissions if not provided
+            if permissions is None:
+                permissions = {
+                    'owner': ['read', 'write', 'delete', 'admin'],
+                    'collaborator': ['read', 'write'],
+                    'viewer': ['read']
+                }
+            
+            # Create the group
+            self.agent_groups[group_name] = {
+                'members': agent_ids.copy(),
+                'permissions': permissions.copy(),
+                'created_at': datetime.now().isoformat(),
+                'created_by': 'system'  # Could be passed as parameter
+            }
+            
+            # Update agent memberships
+            for agent_id in agent_ids:
+                if agent_id not in self.agent_memberships:
+                    self.agent_memberships[agent_id] = []
+                if group_name not in self.agent_memberships[agent_id]:
+                    self.agent_memberships[agent_id].append(group_name)
+            
+            logger.info(f"Created group '{group_name}' with {len(agent_ids)} members")
+            
+            return {
+                'success': True,
+                'group_name': group_name,
+                'members': agent_ids,
+                'permissions': permissions,
+                'created_at': self.agent_groups[group_name]['created_at']
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to create group '{group_name}': {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'group_name': group_name
+            }

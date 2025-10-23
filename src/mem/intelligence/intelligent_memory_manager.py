@@ -10,6 +10,7 @@ from datetime import datetime
 
 from .importance_evaluator import ImportanceEvaluator
 from .ebbinghaus_algorithm import EbbinghausAlgorithm
+from mem.integrations.llm.factory import LLMFactory
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,32 @@ class IntelligentMemoryManager:
         )
         self.ebbinghaus_algorithm = EbbinghausAlgorithm(self.intelligent_config)
         
+        # Initialize LLM for importance evaluation
+        self._initialize_llm()
+        
         # Memory storage
         self.working_memories: Dict[str, Dict] = {}
         self.short_term_memories: Dict[str, Dict] = {}
         self.long_term_memories: Dict[str, Dict] = {}
         
         logger.info("IntelligentMemoryManager initialized")
+    
+    def _initialize_llm(self):
+        """
+        Initialize LLM for importance evaluation.
+        """
+        try:
+            llm_config = self.config.get("llm", {})
+            if llm_config:
+                llm_provider = llm_config.get("provider", "openai")
+                llm_instance = LLMFactory.create(llm_provider, llm_config.get("config", {}))
+                self.importance_evaluator.set_llm(llm_instance)
+                logger.info(f"LLM initialized for importance evaluation: {llm_provider}")
+            else:
+                logger.warning("No LLM configuration found, using rule-based evaluation only")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM for importance evaluation: {e}")
+            logger.warning("Falling back to rule-based evaluation only")
     
     def process_content(
         self,

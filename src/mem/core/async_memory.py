@@ -6,6 +6,7 @@ This module provides the asynchronous memory management interface.
 
 import asyncio
 import logging
+import hashlib
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -116,6 +117,16 @@ class AsyncMemory(MemoryBase):
                     user_id=user_id, agent_id=agent_id, run_id=run_id, metadata=metadata, filters=filters
                 )
 
+            # Generate content hash for deduplication
+            content_hash = hashlib.md5(processed_content.encode('utf-8')).hexdigest()
+
+            # Extract category from metadata if present
+            category = ""
+            if metadata and isinstance(metadata, dict):
+                category = metadata.get("category", "")
+                # Remove category from metadata to avoid duplication
+                metadata = {k: v for k, v in metadata.items() if k != "category"}
+
             # Store in database asynchronously
             memory_data = {
                 "content": processed_content,
@@ -123,6 +134,8 @@ class AsyncMemory(MemoryBase):
                 "user_id": user_id,
                 "agent_id": agent_id,
                 "run_id": run_id,
+                "hash": content_hash,
+                "category": category,
                 "metadata": metadata or {},
                 "filters": filters or {},
                 "created_at": datetime.utcnow(),
