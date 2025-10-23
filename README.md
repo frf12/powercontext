@@ -373,7 +373,6 @@ powermem is built with a modular architecture that supports:
 - **Storage Adapters**: Pluggable storage backends
 - **LLM Integrations**: Multiple LLM provider support
 - **Embedding Services**: Various embedding model integrations
-- **Telemetry & Monitoring**: Built-in observability and audit capabilities
 
 ## 🔧 Development
 
@@ -387,24 +386,9 @@ cd powermem
 # Install development dependencies
 pip install -e ".[dev,test,llm,vector_stores]"
 
-# Run tests
-pytest
-
-# Run linting
-black src/ tests/
-isort src/ tests/
-flake8 src/ tests/
 ```
 
-### Docker Support
 
-```bash
-# Build Docker image
-docker build -t powermem .
-
-# Run with docker-compose
-docker-compose up -d
-```
 
 ## 📄 License
 
