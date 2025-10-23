@@ -14,6 +14,7 @@ from .utils import (
     extract_keywords,
     format_timestamp,
     parse_timestamp,
+    extract_json,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "extract_keywords",
     "format_timestamp",
     "parse_timestamp",
+    "extract_json",
 ]

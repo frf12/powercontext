@@ -51,7 +51,7 @@ class TestOceanBaseGraph(unittest.TestCase):
         self.mock_graph_tools_prompts = MagicMock()
 
         # Patch the necessary components
-        self.embedding_factory_patcher = patch("mem.storage.oceanbase.oceanbase_graph.EmbeddingFactory")
+        self.embedding_factory_patcher = patch("mem.storage.oceanbase.oceanbase_graph.EmbedderFactory")
         self.mock_embedding_factory = self.embedding_factory_patcher.start()
         self.mock_embedding_factory.create.return_value = self.mock_embedding_model
 
