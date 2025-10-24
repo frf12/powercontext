@@ -30,7 +30,7 @@ clean: ## Clean build files
 	find . -type f -name "*.pyc" -delete
 
 build: ## Build package
-	python -m build
+	python -m build --outdir build
 
 benchmark: ## Run performance tests
 	python scripts/benchmark.py

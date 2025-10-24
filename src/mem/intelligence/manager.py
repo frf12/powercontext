@@ -26,9 +26,16 @@ class IntelligenceManager:
             config: Configuration dictionary
         """
         self.config = config or {}
-        self.intelligent_memory_manager = IntelligentMemoryManager(self.config)
+        # Check if intelligent memory is enabled
+        intelligent_config = self.config.get("intelligent_memory", {})
+        self.enabled = intelligent_config.get("enabled", True)  # Default to True for backward compatibility
         
-        logger.info("IntelligenceManager initialized")
+        if self.enabled:
+            self.intelligent_memory_manager = IntelligentMemoryManager(self.config)
+        else:
+            self.intelligent_memory_manager = None
+            
+        logger.info(f"IntelligenceManager initialized (enabled: {self.enabled})")
     
     def process_content(
         self,
@@ -47,6 +54,10 @@ class IntelligenceManager:
         Returns:
             Processed content
         """
+        if not self.enabled or not self.intelligent_memory_manager:
+            # Return original content if intelligence is disabled
+            return content
+            
         return self.intelligent_memory_manager.process_content(content, metadata, context)
     
     async def process_content_async(
@@ -66,6 +77,10 @@ class IntelligenceManager:
         Returns:
             Processed content
         """
+        if not self.enabled or not self.intelligent_memory_manager:
+            # Return original content if intelligence is disabled
+            return content
+            
         return await self.intelligent_memory_manager.process_content_async(content, metadata, context)
     
     def process_search_results(
@@ -83,6 +98,10 @@ class IntelligenceManager:
         Returns:
             Processed and ranked results
         """
+        if not self.enabled or not self.intelligent_memory_manager:
+            # Return original results if intelligence is disabled
+            return results
+            
         return self.intelligent_memory_manager.process_search_results(results, query)
     
     async def process_search_results_async(
@@ -100,6 +119,10 @@ class IntelligenceManager:
         Returns:
             Processed and ranked results
         """
+        if not self.enabled or not self.intelligent_memory_manager:
+            # Return original results if intelligence is disabled
+            return results
+            
         return await self.intelligent_memory_manager.process_search_results_async(results, query)
     
     def optimize_memories(self) -> Dict[str, Any]:
@@ -109,6 +132,9 @@ class IntelligenceManager:
         Returns:
             Optimization results
         """
+        if not self.enabled or not self.intelligent_memory_manager:
+            return {"optimized": False, "reason": "intelligence disabled"}
+            
         return self.intelligent_memory_manager.optimize_memories()
     
     def get_memory_stats(self) -> Dict[str, Any]:
@@ -118,4 +144,7 @@ class IntelligenceManager:
         Returns:
             Memory statistics
         """
+        if not self.enabled or not self.intelligent_memory_manager:
+            return {"stats": "intelligence disabled"}
+            
         return self.intelligent_memory_manager.get_memory_stats()
