@@ -349,12 +349,21 @@ class OceanBaseVectorStore(VectorStoreBase):
         return ids
 
     def _parse_metadata(self, metadata_json):
-        """Parse metadata from OceanBase, handling potential double encoding."""
-        if isinstance(metadata_json, str):
+        """
+        Parse metadata from OceanBase.
+        
+        SQLAlchemy's JSON type automatically deserializes to dict, but this method
+        handles backward compatibility with legacy string-serialized data.
+        """
+        if isinstance(metadata_json, dict):
+            # SQLAlchemy JSON type returns dict directly (preferred path)
+            return metadata_json
+        elif isinstance(metadata_json, str):
+            # Legacy compatibility: handle manually serialized strings
             try:
                 # First attempt to parse
                 metadata = json.loads(metadata_json)
-                # Check if it's still a string (double encoded)
+                # Check if it's still a string (double encoded - legacy bug)
                 if isinstance(metadata, str):
                     try:
                         # Second attempt to parse
@@ -364,8 +373,6 @@ class OceanBaseVectorStore(VectorStoreBase):
                 return metadata
             except json.JSONDecodeError:
                 return {}
-        elif isinstance(metadata_json, dict):
-            return metadata_json
         else:
             return {}
 
@@ -482,10 +489,10 @@ class OceanBaseVectorStore(VectorStoreBase):
                                  updated_at: str, category: str, metadata_json: str) -> Dict:
         """Build standard metadata dictionary from row fields."""
         # Parse the JSON metadata first
-        metadata = self._parse_metadata(metadata_json)
+        user_metadata = self._parse_metadata(metadata_json)
 
-        # Add mem0 standard fields
-        metadata.update({
+        # Return dict with user metadata separate from system fields
+        return {
             "user_id": user_id,
             "agent_id": agent_id,
             "run_id": run_id,
@@ -494,9 +501,8 @@ class OceanBaseVectorStore(VectorStoreBase):
             "created_at": created_at,
             "updated_at": updated_at,
             "category": category,
-        })
-
-        return metadata
+            "metadata": user_metadata,  # Keep user metadata separate
+        }
 
     def _create_output_data(self, vector_id: str, text_content: str, score: float,
                             metadata: Dict) -> OutputData:
@@ -518,8 +524,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 vector if not self.normalize else self._normalize(vector)
             ),
             self.text_field: payload.get("data", ""),
-            self.metadata_field: json.dumps(payload.get("metadata", {})),  # Only store user metadata
-            # mem0 standard fields
+            self.metadata_field: payload.get("metadata", {}),  # SQLAlchemy JSON type handles serialization automatically
             "user_id": payload.get("user_id", ""),
             "agent_id": payload.get("agent_id", ""),
             "run_id": payload.get("run_id", ""),
@@ -532,7 +537,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Add hybrid search fields if enabled
         if self.include_sparse and "sparse_embedding" in payload:
-            record[self.sparse_vector_field] = json.dumps(payload["sparse_embedding"])
+            record[self.sparse_vector_field] = payload["sparse_embedding"]  # SQLAlchemy JSON type handles serialization automatically
 
         # Always add full-text content (enabled by default)
         fulltext_content = payload.get("fulltext_content") or payload.get("data", "")

@@ -18,7 +18,7 @@ class QwenEmbedding(EmbeddingBase):
         super().__init__(config)
 
         # Set default model and dimensions
-        self.config.model = self.config.model or "text-embedding-v2"
+        self.config.model = self.config.model or "text-embedding-v4"
         self.config.embedding_dims = self.config.embedding_dims or 1536
 
         # Check if dashscope is available
