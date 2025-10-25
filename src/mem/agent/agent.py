@@ -203,9 +203,22 @@ class AgentMemory:
         self._initialize_multi_agent()
     
     def _get_default_multi_agent_config(self) -> Dict[str, Any]:
-        """Get default multi-agent configuration."""
+        """Get default multi-agent configuration with environment variable support."""
+        import os
+        
+        # Get environment variables with defaults
+        enabled = os.getenv('AGENT_ENABLED', 'true').lower() == 'true'
+        default_scope = os.getenv('AGENT_DEFAULT_SCOPE', 'AGENT')
+        default_privacy_level = os.getenv('AGENT_DEFAULT_PRIVACY_LEVEL', 'PRIVATE')
+        default_collaboration_level = os.getenv('AGENT_DEFAULT_COLLABORATION_LEVEL', 'READ_ONLY')
+        default_access_permission = os.getenv('AGENT_DEFAULT_ACCESS_PERMISSION', 'OWNER_ONLY')
+        
         return {
-            'enabled': True,
+            'enabled': enabled,
+            'default_scope': default_scope,
+            'default_privacy_level': default_privacy_level,
+            'default_collaboration_level': default_collaboration_level,
+            'default_access_permission': default_access_permission,
             'default_permissions': {
                 'owner': ['read', 'write', 'delete', 'admin'],
                 'collaborator': ['read', 'write'],
@@ -214,7 +227,7 @@ class AgentMemory:
             'agent_groups': {},
             'collaboration_settings': {
                 'auto_share_threshold': 0.8,
-                'default_privacy_level': 'standard'
+                'default_privacy_level': default_privacy_level.lower()
             },
             'privacy_config': {
                 'enable_encryption': False,
@@ -222,22 +235,36 @@ class AgentMemory:
                 'access_logging': True,
                 'retention_policy': '30_days',
                 'gdpr_compliance': True,
-                'default_privacy_level': 'standard'
+                'default_privacy_level': default_privacy_level.lower()
             },
             'collaborative_memory_config': {
                 'enabled': True,
                 'auto_collaboration': True,
                 'collaboration_threshold': 0.7,
                 'max_collaborators': 5,
-                'collaboration_timeout': 3600
+                'collaboration_timeout': 3600,
+                'default_collaboration_level': default_collaboration_level.lower()
             },
-            'default_scope': 'private'
+            'default_scope': default_scope.lower()
         }
     
     def _get_default_multi_user_config(self) -> Dict[str, Any]:
-        """Get default multi-user configuration."""
+        """Get default multi-user configuration with environment variable support."""
+        import os
+        
+        # Get environment variables with defaults
+        enabled = os.getenv('AGENT_ENABLED', 'true').lower() == 'true'
+        default_scope = os.getenv('AGENT_DEFAULT_SCOPE', 'USER_GROUP')
+        default_privacy_level = os.getenv('AGENT_DEFAULT_PRIVACY_LEVEL', 'PRIVATE')
+        default_collaboration_level = os.getenv('AGENT_DEFAULT_COLLABORATION_LEVEL', 'READ_ONLY')
+        default_access_permission = os.getenv('AGENT_DEFAULT_ACCESS_PERMISSION', 'OWNER_ONLY')
+        
         return {
-            'enabled': True,
+            'enabled': enabled,
+            'default_scope': default_scope,
+            'default_privacy_level': default_privacy_level,
+            'default_collaboration_level': default_collaboration_level,
+            'default_access_permission': default_access_permission,
             'user_isolation': True,
             'cross_user_sharing': True,
             'privacy_protection': True,
@@ -255,9 +282,22 @@ class AgentMemory:
         }
     
     def _get_default_hybrid_config(self) -> Dict[str, Any]:
-        """Get default hybrid configuration."""
+        """Get default hybrid configuration with environment variable support."""
+        import os
+        
+        # Get environment variables with defaults
+        enabled = os.getenv('AGENT_ENABLED', 'true').lower() == 'true'
+        default_scope = os.getenv('AGENT_DEFAULT_SCOPE', 'AGENT')
+        default_privacy_level = os.getenv('AGENT_DEFAULT_PRIVACY_LEVEL', 'PRIVATE')
+        default_collaboration_level = os.getenv('AGENT_DEFAULT_COLLABORATION_LEVEL', 'READ_ONLY')
+        default_access_permission = os.getenv('AGENT_DEFAULT_ACCESS_PERMISSION', 'OWNER_ONLY')
+        
         return {
-            'enabled': True,
+            'enabled': enabled,
+            'default_scope': default_scope,
+            'default_privacy_level': default_privacy_level,
+            'default_collaboration_level': default_collaboration_level,
+            'default_access_permission': default_access_permission,
             'primary_mode': 'multi_agent',
             'fallback_mode': 'multi_user',
             'auto_switch': True,

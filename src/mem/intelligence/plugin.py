@@ -66,7 +66,12 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
                     self.config.get("importance", {}),
                     self.config.get("llm", {}),
                 )
-                self._algo = EbbinghausAlgorithm(self.config.get("ebbinghaus", {}))
+                # Support both "ebbinghaus" and direct intelligent_memory config
+                ebbinghaus_cfg = self.config.get("ebbinghaus", {})
+                # If no ebbinghaus config, use the main config as ebbinghaus config
+                if not ebbinghaus_cfg:
+                    ebbinghaus_cfg = self.config
+                self._algo = EbbinghausAlgorithm(ebbinghaus_cfg)
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning(f"Failed to init Ebbinghaus plugin: {e}")
                 self.config["enabled"] = False

@@ -100,6 +100,14 @@ def load_oceanbase_config():
             'batch_size': int(os.getenv('TELEMETRY_BATCH_SIZE', '100')),
             'flush_interval': int(os.getenv('TELEMETRY_FLUSH_INTERVAL', '30'))
         },
+        'agent_memory': {
+            'enabled': os.getenv('AGENT_ENABLED', 'true').lower() == 'true',
+            'mode': os.getenv('AGENT_MEMORY_MODE', 'auto'),
+            'default_scope': os.getenv('AGENT_DEFAULT_SCOPE', 'AGENT'),
+            'default_privacy_level': os.getenv('AGENT_DEFAULT_PRIVACY_LEVEL', 'PRIVATE'),
+            'default_collaboration_level': os.getenv('AGENT_DEFAULT_COLLABORATION_LEVEL', 'READ_ONLY'),
+            'default_access_permission': os.getenv('AGENT_DEFAULT_ACCESS_PERMISSION', 'OWNER_ONLY')
+        },
         'audit': {
             'enabled': os.getenv('AUDIT_ENABLED', 'true').lower() == 'true',
             'log_file': os.getenv('AUDIT_LOG_FILE', './logs/audit.log'),
