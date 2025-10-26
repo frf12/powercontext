@@ -70,24 +70,28 @@ class IntelligentMemoryManager:
             logger.error(f"Failed to initialize LLM for importance evaluation: {e}")
             logger.warning("Falling back to rule-based evaluation only")
     
-    def process_content(
+    def process_metadata(
         self,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        Process content with intelligent memory management.
+        Process metadata with intelligent memory management.
         
         Args:
-            content: Content to process
+            content: Content to analyze
             metadata: Additional metadata
             context: Additional context
             
         Returns:
-            Processed content
+            Enhanced metadata with intelligence analysis
         """
         try:
+            # Initialize metadata if None
+            if metadata is None:
+                metadata = {}
+            
             # Evaluate importance
             importance_score = self.importance_evaluator.evaluate_importance(
                 content, metadata, context
@@ -101,39 +105,43 @@ class IntelligentMemoryManager:
             else:
                 memory_type = "working"
             
-            # Process with Ebbinghaus algorithm
-            processed_content = self.ebbinghaus_algorithm.process_memory(
+            # Process with Ebbinghaus algorithm to get intelligence metadata
+            intelligence_metadata = self.ebbinghaus_algorithm.process_memory_metadata(
                 content, importance_score, memory_type
             )
             
-            logger.debug(f"Processed content with importance: {importance_score}, type: {memory_type}")
+            # Merge intelligence metadata into existing metadata
+            enhanced_metadata = metadata.copy()
+            enhanced_metadata.update(intelligence_metadata)
             
-            return processed_content
+            logger.debug(f"Processed metadata with importance: {importance_score}, type: {memory_type}")
+            
+            return enhanced_metadata
             
         except Exception as e:
-            logger.error(f"Failed to process content: {e}")
-            return content
+            logger.error(f"Failed to process metadata: {e}")
+            return metadata or {}
     
-    async def process_content_async(
+    async def process_metadata_async(
         self,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        Process content with intelligent memory management asynchronously.
+        Process metadata with intelligent memory management asynchronously.
         
         Args:
-            content: Content to process
+            content: Content to analyze
             metadata: Additional metadata
             context: Additional context
             
         Returns:
-            Processed content
+            Enhanced metadata with intelligence analysis
         """
         # For now, just call the sync version
         # In a real implementation, this would use async LLM calls
-        return self.process_content(content, metadata, context)
+        return self.process_metadata(content, metadata, context)
     
     def process_search_results(
         self,

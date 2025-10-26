@@ -83,7 +83,8 @@ def load_oceanbase_config():
             'reinforcement_factor': float(os.getenv('INTELLIGENT_MEMORY_REINFORCEMENT_FACTOR', '0.3')),
             'working_threshold': float(os.getenv('INTELLIGENT_MEMORY_WORKING_THRESHOLD', '0.3')),
             'short_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_SHORT_TERM_THRESHOLD', '0.6')),
-            'long_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_LONG_TERM_THRESHOLD', '0.8'))
+            'long_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_LONG_TERM_THRESHOLD', '0.8')),
+            'review_intervals': [1, 6, 24, 72, 168]  # hours
         },
         'telemetry': {
             'enable_telemetry': os.getenv('TELEMETRY_ENABLED', 'false').lower() == 'true',
@@ -302,6 +303,176 @@ def demonstrate_hybrid_mode():
     print(f"\n📊 Hybrid statistics: {stats}")
 
 
+def demonstrate_ebbinghaus_algorithm():
+    """Demonstrate Ebbinghaus forgetting curve algorithm in detail."""
+    print("\n📈 Ebbinghaus Forgetting Curve Algorithm Demo")
+    print("=" * 50)
+    
+    config = load_oceanbase_config()
+    agent_memory = AgentMemory(config, mode='auto')
+    
+    print("🧠 Testing Ebbinghaus algorithm with different content types...")
+    
+    # Test different types of content to see how importance is evaluated
+    test_cases = [
+        {
+            "content": "URGENT: System down, all users affected, immediate action required",
+            "metadata": {"urgency": "critical", "impact": "high", "category": "incident"},
+            "expected_type": "long_term"
+        },
+        {
+            "content": "User mentioned they prefer dark mode in the application",
+            "metadata": {"preference": "ui", "category": "user_preference"},
+            "expected_type": "short_term"
+        },
+        {
+            "content": "Customer said hello and asked about the weather",
+            "metadata": {"category": "casual_conversation"},
+            "expected_type": "working"
+        }
+    ]
+    
+    results = []
+    for i, test_case in enumerate(test_cases):
+        print(f"\n📝 Test Case {i+1}: {test_case['expected_type']} expected")
+        print(f"   Content: {test_case['content']}")
+        
+        result = agent_memory.add(
+            test_case['content'],
+            user_id="test_user",
+            agent_id="test_agent",
+            metadata=test_case['metadata']
+        )
+        
+        results.append(result)
+        
+        # Extract intelligence data
+        intelligence = result.get('metadata', {}).get('intelligence', {})
+        if intelligence:
+            importance = intelligence.get('importance_score', 0)
+            memory_type = intelligence.get('memory_type', 'unknown')
+            retention = intelligence.get('initial_retention', 0)
+            decay_rate = intelligence.get('decay_rate', 0)
+            
+            print(f"   🎯 Importance Score: {importance:.3f}")
+            print(f"   🧠 Memory Type: {memory_type}")
+            print(f"   📊 Initial Retention: {retention:.3f}")
+            print(f"   ⚡ Decay Rate: {decay_rate:.3f}")
+            print(f"   ✅ Type Match: {'✓' if memory_type == test_case['expected_type'] else '✗'}")
+    
+    # Show review schedules
+    print("\n📅 Review Schedules Comparison:")
+    print("-" * 40)
+    
+    for i, result in enumerate(results):
+        intelligence = result.get('metadata', {}).get('intelligence', {})
+        memory_type = intelligence.get('memory_type', 'unknown')
+        review_schedule = intelligence.get('review_schedule', [])
+        
+        print(f"\n{memory_type.title()} Memory:")
+        print(f"  Next review: {intelligence.get('next_review', 'N/A')}")
+        print(f"  Review schedule: {len(review_schedule)} reviews planned")
+        
+        if review_schedule:
+            print("  Review times:")
+            for j, review_time in enumerate(review_schedule[:3]):  # Show first 3 reviews
+                print(f"    {j+1}. {review_time}")
+            if len(review_schedule) > 3:
+                print(f"    ... and {len(review_schedule) - 3} more reviews")
+    
+    print("\n✅ Ebbinghaus algorithm demonstration completed!")
+
+
+def demonstrate_intelligent_memory():
+    """Demonstrate intelligent memory management with metadata processing."""
+    print("\n🧠 Intelligent Memory Management Demo")
+    print("=" * 50)
+    
+    config = load_oceanbase_config()
+    
+    # Create AgentMemory with intelligent memory enabled
+    agent_memory = AgentMemory(config, mode='auto')
+    
+    print(f"✅ Intelligent memory enabled: {config['intelligent_memory']['enabled']}")
+    
+    # Add memories with different importance levels
+    print("\n📝 Adding memories with different importance levels...")
+    
+    # High importance memory
+    high_importance_result = agent_memory.add(
+        "Customer reported critical security vulnerability in production system",
+        user_id="customer_123",
+        agent_id="security_agent",
+        metadata={"priority": "critical", "category": "security", "severity": "high"}
+    )
+    
+    # Medium importance memory
+    medium_importance_result = agent_memory.add(
+        "User prefers email notifications over SMS",
+        user_id="customer_123",
+        agent_id="preference_agent",
+        metadata={"priority": "medium", "category": "preference", "type": "notification"}
+    )
+    
+    # Low importance memory
+    low_importance_result = agent_memory.add(
+        "User mentioned they like the color blue in UI",
+        user_id="customer_123",
+        agent_id="ui_agent",
+        metadata={"priority": "low", "category": "ui_preference", "color": "blue"}
+    )
+    
+    print("✅ Memories added successfully!")
+    
+    # Display intelligence metadata
+    print("\n🔍 Intelligence Analysis Results:")
+    print("-" * 40)
+    
+    memories = [high_importance_result, medium_importance_result, low_importance_result]
+    descriptions = ["High Importance", "Medium Importance", "Low Importance"]
+    
+    for i, (memory, desc) in enumerate(zip(memories, descriptions)):
+        print(f"\n{desc} Memory:")
+        print(f"  Content: {memory.get('content', 'N/A')[:50]}...")
+        
+        # Extract intelligence metadata
+        metadata = memory.get('metadata', {})
+        intelligence = metadata.get('intelligence', {})
+        
+        if intelligence:
+            print(f"  🎯 Importance Score: {intelligence.get('importance_score', 'N/A')}")
+            print(f"  🧠 Memory Type: {intelligence.get('memory_type', 'N/A')}")
+            print(f"  📊 Initial Retention: {intelligence.get('initial_retention', 'N/A')}")
+            print(f"  ⏰ Next Review: {intelligence.get('next_review', 'N/A')}")
+            print(f"  📅 Review Schedule: {len(intelligence.get('review_schedule', []))} reviews planned")
+            
+            # Memory management flags
+            memory_mgmt = metadata.get('memory_management', {})
+            print(f"  🔄 Should Promote: {memory_mgmt.get('should_promote', False)}")
+            print(f"  🗑️ Should Forget: {memory_mgmt.get('should_forget', False)}")
+            print(f"  📦 Should Archive: {memory_mgmt.get('should_archive', False)}")
+        else:
+            print("  ⚠️ No intelligence metadata found")
+    
+    # Search and show how intelligence affects results
+    print("\n🔍 Intelligent Search Results:")
+    print("-" * 40)
+    
+    search_results = agent_memory.search("customer preferences", user_id="customer_123")
+    print(f"Found {len(search_results)} memories for 'customer preferences'")
+    
+    for i, result in enumerate(search_results):
+        intelligence = result.get('metadata', {}).get('intelligence', {})
+        importance = intelligence.get('importance_score', 0)
+        memory_type = intelligence.get('memory_type', 'unknown')
+        
+        print(f"  {i+1}. [{memory_type}] Importance: {importance:.2f} - {result.get('content', '')[:60]}...")
+    
+    # Show statistics
+    stats = agent_memory.get_statistics()
+    print(f"\n📊 Memory Statistics: {stats}")
+
+
 def demonstrate_unified_api():
     """Demonstrate the unified API across all modes."""
     print("\n🎯 Unified API Demo")
@@ -354,6 +525,8 @@ def main():
         demonstrate_multi_agent_mode()
         demonstrate_multi_user_mode()
         demonstrate_hybrid_mode()
+        demonstrate_intelligent_memory()
+        demonstrate_ebbinghaus_algorithm()
         demonstrate_unified_api()
         
         print("\n🎉 Unified Agent Memory Demo Completed Successfully!")
@@ -363,6 +536,10 @@ def main():
         print("  • Multi-agent collaboration")
         print("  • Multi-user isolation")
         print("  • Hybrid dynamic switching")
+        print("  • Intelligent memory management with Ebbinghaus algorithm")
+        print("  • Metadata-based intelligence processing")
+        print("  • Detailed Ebbinghaus forgetting curve demonstration")
+        print("  • Review schedule generation and decay calculation")
         print("  • Unified API across all modes")
         print("  • Simple, consistent interface")
         print("  • No mem0 dependencies")

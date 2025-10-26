@@ -6,7 +6,7 @@ This module implements the Ebbinghaus forgetting curve for memory management.
 
 import logging
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -41,14 +41,14 @@ class EbbinghausAlgorithm:
         
         logger.info("EbbinghausAlgorithm initialized")
     
-    def process_memory(
+    def process_memory_metadata(
         self,
         content: str,
         importance_score: float,
         memory_type: str
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        Process memory using Ebbinghaus algorithm.
+        Process memory using Ebbinghaus algorithm and return metadata.
         
         Args:
             content: Memory content
@@ -56,22 +56,63 @@ class EbbinghausAlgorithm:
             memory_type: Type of memory
             
         Returns:
-            Processed content
+            Dictionary containing intelligence metadata
         """
         try:
-            # Apply importance-based processing
-            processed_content = self._apply_importance_processing(content, importance_score)
+            current_time = datetime.utcnow()
             
-            # Apply memory type-specific processing
-            processed_content = self._apply_memory_type_processing(processed_content, memory_type)
+            # Calculate initial retention based on importance
+            initial_retention = self.initial_retention * importance_score
             
-            logger.debug(f"Processed memory with type: {memory_type}, importance: {importance_score}")
+            # Calculate decay rate based on memory type
+            decay_rate = self._get_decay_rate_for_type(memory_type)
             
-            return processed_content
+            # Generate review schedule
+            review_schedule = self._generate_review_schedule(importance_score, current_time)
+            
+            # Calculate next review time
+            next_review = review_schedule[0] if review_schedule else current_time + timedelta(hours=1)
+            
+            intelligence_metadata = {
+                # Ebbinghaus algorithm data
+                "intelligence": {
+                    "importance_score": importance_score,
+                    "memory_type": memory_type,
+                    "initial_retention": initial_retention,
+                    "decay_rate": decay_rate,
+                    "current_retention": initial_retention,
+                    "next_review": next_review.isoformat(),
+                    "review_schedule": [rt.isoformat() for rt in review_schedule],
+                    "last_reviewed": current_time.isoformat(),
+                    "review_count": 0,
+                    "access_count": 0,
+                    "reinforcement_factor": self.reinforcement_factor,
+                },
+                # Memory management flags
+                "memory_management": {
+                    "should_promote": False,
+                    "should_forget": False,
+                    "should_archive": False,
+                    "is_active": True,
+                },
+                # Timestamps
+                "created_at": current_time.isoformat(),
+                "updated_at": current_time.isoformat(),
+            }
+            
+            logger.debug(f"Generated intelligence metadata for type: {memory_type}, importance: {importance_score}")
+            
+            return intelligence_metadata
             
         except Exception as e:
-            logger.error(f"Failed to process memory: {e}")
-            return content
+            logger.error(f"Failed to process memory metadata: {e}")
+            return {
+                "intelligence": {
+                    "importance_score": importance_score,
+                    "memory_type": memory_type,
+                    "error": str(e)
+                }
+            }
     
     def calculate_decay(self, created_at) -> float:
         """
@@ -159,6 +200,9 @@ class EbbinghausAlgorithm:
             # Check recency
             created_at = memory.get("created_at")
             if created_at:
+                # Parse string to datetime if needed
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                 time_elapsed = datetime.utcnow() - created_at
                 if time_elapsed > timedelta(hours=24):
                     return True
@@ -197,6 +241,9 @@ class EbbinghausAlgorithm:
             if access_count == 0:
                 # Check if memory is old enough to be forgotten
                 if created_at:
+                    # Parse string to datetime if needed
+                    if isinstance(created_at, str):
+                        created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                     time_elapsed = datetime.utcnow() - created_at
                     if time_elapsed > timedelta(days=7):
                         return True
@@ -221,6 +268,9 @@ class EbbinghausAlgorithm:
             # Check age
             created_at = memory.get("created_at")
             if created_at:
+                # Parse string to datetime if needed
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                 time_elapsed = datetime.utcnow() - created_at
                 if time_elapsed > timedelta(days=30):
                     return True
@@ -248,6 +298,9 @@ class EbbinghausAlgorithm:
         """
         try:
             created_at = memory.get("created_at", datetime.utcnow())
+            # Parse string to datetime if needed
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
             importance = memory.get("importance_score", 0.5)
             
             # Adjust intervals based on importance
@@ -269,14 +322,33 @@ class EbbinghausAlgorithm:
             logger.error(f"Failed to get review schedule: {e}")
             return []
     
-    def _apply_importance_processing(self, content: str, importance_score: float) -> str:
-        """Apply importance-based processing to content."""
-        # For now, just return the content
-        # In a real implementation, this might add importance markers
-        return content
+    def _get_decay_rate_for_type(self, memory_type: str) -> float:
+        """Get decay rate based on memory type."""
+        decay_rates = {
+            "working": self.decay_rate * 2.0,  # Faster decay for working memory
+            "short_term": self.decay_rate * 1.5,  # Medium decay for short-term
+            "long_term": self.decay_rate,  # Standard decay for long-term
+        }
+        return decay_rates.get(memory_type, self.decay_rate)
     
-    def _apply_memory_type_processing(self, content: str, memory_type: str) -> str:
-        """Apply memory type-specific processing to content."""
-        # For now, just return the content
-        # In a real implementation, this might add type-specific formatting
-        return content
+    def _generate_review_schedule(self, importance_score: float, created_at: datetime) -> List[datetime]:
+        """Generate review schedule based on importance and Ebbinghaus curve."""
+        try:
+            # Adjust intervals based on importance
+            adjusted_intervals = []
+            for interval in self.review_intervals:
+                # Higher importance = shorter intervals (more frequent reviews)
+                adjusted_interval = interval * (1 - importance_score * 0.3)
+                adjusted_intervals.append(max(adjusted_interval, 0.5))  # Minimum 0.5 hours
+            
+            # Calculate review times
+            review_times = []
+            for interval in adjusted_intervals:
+                review_time = created_at + timedelta(hours=interval)
+                review_times.append(review_time)
+            
+            return review_times
+            
+        except Exception as e:
+            logger.error(f"Failed to generate review schedule: {e}")
+            return []

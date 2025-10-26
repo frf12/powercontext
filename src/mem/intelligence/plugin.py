@@ -95,16 +95,16 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
             # Classify memory type
             memory_type = self._classify(score)
             
-            # Process content with importance-based enhancements
-            processed_content = self._algo.process_memory(content, score, memory_type)
+            # Process with Ebbinghaus algorithm to get intelligence metadata
+            intelligence_metadata = self._algo.process_memory_metadata(content, score, memory_type)
             
             # Return enhanced metadata
             return {
                 "importance_score": score,
                 "memory_type": memory_type,
                 "access_count": 0,
-                "processed_content": processed_content,
-                "original_content": content,
+                "intelligence": intelligence_metadata.get('intelligence', {}),
+                "memory_management": intelligence_metadata.get('memory_management', {}),
                 "processing_applied": True,
             }
         except Exception as e:
@@ -147,9 +147,9 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
                 importance_score = memory.get("importance_score", 0.5)
                 memory_type = updates.get("memory_type") or memory.get("memory_type", "working")
                 
-                # Re-process content with updated parameters
-                processed_content = self._algo.process_memory(original_content, importance_score, memory_type)
-                updates["processed_content"] = processed_content
+                # Re-process with updated parameters
+                intelligence_metadata = self._algo.process_memory_metadata(original_content, importance_score, memory_type)
+                updates.update(intelligence_metadata)
                 updates["last_reprocessed_at"] = datetime.utcnow()
             
             return updates, False

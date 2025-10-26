@@ -37,51 +37,49 @@ class IntelligenceManager:
             
         logger.info(f"IntelligenceManager initialized (enabled: {self.enabled})")
     
-    def process_content(
+    def process_metadata(
         self,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        Process content with intelligence.
+        Process metadata with intelligence.
         
         Args:
-            content: Content to process
+            content: Content to analyze
             metadata: Additional metadata
             context: Additional context
             
         Returns:
-            Processed content
+            Enhanced metadata with intelligence analysis
         """
         if not self.enabled or not self.intelligent_memory_manager:
-            # Return original content if intelligence is disabled
-            return content
+            return metadata or {}
             
-        return self.intelligent_memory_manager.process_content(content, metadata, context)
+        return self.intelligent_memory_manager.process_metadata(content, metadata, context)
     
-    async def process_content_async(
+    async def process_metadata_async(
         self,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        Process content with intelligence asynchronously.
+        Process metadata with intelligence asynchronously.
         
         Args:
-            content: Content to process
+            content: Content to analyze
             metadata: Additional metadata
             context: Additional context
             
         Returns:
-            Processed content
+            Enhanced metadata with intelligence analysis
         """
         if not self.enabled or not self.intelligent_memory_manager:
-            # Return original content if intelligence is disabled
-            return content
+            return metadata or {}
             
-        return await self.intelligent_memory_manager.process_content_async(content, metadata, context)
+        return await self.intelligent_memory_manager.process_metadata_async(content, metadata, context)
     
     def process_search_results(
         self,

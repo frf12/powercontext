@@ -188,34 +188,58 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             # Determine memory scope
             scope = self.scope_controller.determine_scope(agent_id, context, metadata)
             
+            # Add agent collaboration context information to metadata
+            agent_context_metadata = metadata or {}
+            
+            # Get collaboration information
+            collaboration_info = self._get_collaboration_context(agent_id, context)
+            
+            # Get permission information
+            permission_info = self._get_permission_context(agent_id, scope)
+            
+            # Get sharing information
+            sharing_info = self._get_sharing_context(agent_id, context)
+            
+            # Organize all agent-related information under 'agent' key
+            agent_info = {
+                'agent_id': agent_id,
+                'mode': 'multi_agent',
+                'scope': scope.value if hasattr(scope, 'value') else str(scope),
+                'collaboration': collaboration_info,
+                'permissions': permission_info,
+                'sharing': sharing_info,
+            }
+            
+            agent_context_metadata['agent'] = agent_info
+            
             # Process with intelligent memory manager
-            memory_result = self.intelligent_manager.process_content(
+            enhanced_metadata = self.intelligent_manager.process_metadata(
                 content=content,
-                metadata=metadata or {},
+                metadata=agent_context_metadata,
                 context=context or {}
             )
             
             # Create memory ID
             memory_id = str(uuid.uuid4())
             
-            # Determine memory type
-            memory_type = self._determine_memory_type(memory_result)
+            # Determine memory type from enhanced metadata
+            memory_type = self._determine_memory_type_from_metadata(enhanced_metadata)
             
             # Store in scope-based storage
             memory_data = {
                 'id': memory_id,
-                'content': content,
+                'content': content,  # Keep original content unchanged
                 'agent_id': agent_id,
                 'scope': scope,
                 'memory_type': memory_type,
-                'metadata': metadata or {},
+                'metadata': enhanced_metadata,  # Use enhanced metadata
                 'context': context or {},
                 'created_at': datetime.now().isoformat(),
                 'updated_at': datetime.now().isoformat(),
                 'access_count': 0,
                 'last_accessed': None,
-                'retention_score': memory_result.get('retention_score', 1.0) if isinstance(memory_result, dict) else 1.0,
-                'importance_level': memory_result.get('importance_level') if isinstance(memory_result, dict) else None,
+                'retention_score': enhanced_metadata.get('intelligence', {}).get('current_retention', 1.0),
+                'importance_level': enhanced_metadata.get('intelligence', {}).get('importance_score'),
             }
             
             # Store in appropriate scope and type
@@ -314,19 +338,80 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             logger.error(f"Failed to persist memory {memory_data.get('id', 'unknown')} to storage: {e}")
             # Don't raise the exception to avoid breaking the main flow
     
-    def _determine_memory_type(self, memory_result: Union[str, Dict[str, Any]]) -> MemoryType:
-        """Determine the memory type based on intelligent memory manager result."""
-        if isinstance(memory_result, str):
-            # If it's a string, default to working memory
-            return MemoryType.WORKING
+    def _get_collaboration_context(self, agent_id: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Get collaboration context information."""
+        collaboration_info = {
+            'is_collaborating': False,
+            'collaboration_type': None,
+            'collaboration_status': None,
+            'participants': [],
+            'collaboration_level': context.get('collaboration_level', 'low') if context else 'low'
+        }
         
-        memory_type_str = memory_result.get('memory_type', 'working_memory')
+        # Check if agent is in active collaboration
+        for collaboration_id, collaboration_data in self.active_collaborations.items():
+            if agent_id in collaboration_data.get('participants', []):
+                collaboration_info.update({
+                    'is_collaborating': True,
+                    'collaboration_type': collaboration_data.get('type', 'asynchronous'),
+                    'collaboration_status': collaboration_data.get('status', 'active'),
+                    'participants': collaboration_data.get('participants', []),
+                })
+                break
+        
+        return collaboration_info
+    
+    def _get_permission_context(self, agent_id: str, scope: MemoryScope) -> Dict[str, Any]:
+        """Get permission context information."""
+        return {
+            'scope_permissions': {
+                'read': True,  # Agent can always read their own memories
+                'write': True,  # Agent can always write to their scope
+                'delete': True,  # Agent can delete their own memories
+                'admin': scope in [MemoryScope.PUBLIC, MemoryScope.AGENT_GROUP]  # Admin for public/group scopes
+            },
+            'scope_type': scope.value if hasattr(scope, 'value') else str(scope),
+            'access_level': 'owner' if scope == MemoryScope.PRIVATE else 'member'
+        }
+    
+    def _get_sharing_context(self, agent_id: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Get sharing context information."""
+        sharing_info = {
+            'is_shared': False,
+            'shared_with': [],
+            'sharing_level': 'private',
+            'can_share': True
+        }
+        
+        # Check if memory is being shared
+        if context and context.get('share_with'):
+            sharing_info.update({
+                'is_shared': True,
+                'shared_with': context.get('share_with', []),
+                'sharing_level': 'collaborative'
+            })
+        
+        # Check if agent is in any groups
+        agent_groups = [group for group, members in self.agent_groups.items() if agent_id in members]
+        if agent_groups:
+            sharing_info.update({
+                'is_shared': True,
+                'shared_with': agent_groups,
+                'sharing_level': 'group'
+            })
+        
+        return sharing_info
+    
+    def _determine_memory_type_from_metadata(self, enhanced_metadata: Dict[str, Any]) -> MemoryType:
+        """Determine the memory type based on enhanced metadata."""
+        intelligence = enhanced_metadata.get('intelligence', {})
+        memory_type_str = intelligence.get('memory_type', 'working')
         
         # Map string to enum
         type_mapping = {
-            'working_memory': MemoryType.WORKING,
-            'short_term_memory': MemoryType.SHORT_TERM,
-            'long_term_memory': MemoryType.LONG_TERM,
+            'working': MemoryType.WORKING,
+            'short_term': MemoryType.SHORT_TERM,
+            'long_term': MemoryType.LONG_TERM,
             'semantic_memory': MemoryType.SEMANTIC,
             'episodic_memory': MemoryType.EPISODIC,
             'procedural_memory': MemoryType.PROCEDURAL,

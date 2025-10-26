@@ -117,40 +117,64 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             if self.multi_user_config.user_isolation:
                 self._ensure_user_isolation(user_id)
             
+            # Add user collaboration context information to metadata
+            agent_context_metadata = metadata or {}
+            
+            # Get user collaboration information
+            user_collaboration_info = self._get_user_collaboration_context(user_id, context)
+            
+            # Get user permission information
+            user_permission_info = self._get_user_permission_context(user_id, agent_id)
+            
+            # Get user sharing information
+            user_sharing_info = self._get_user_sharing_context(user_id, context)
+            
+            # Organize all agent/user-related information under 'agent' key
+            agent_info = {
+                'agent_id': agent_id,
+                'user_id': user_id,
+                'mode': 'multi_user',
+                'collaboration': user_collaboration_info,
+                'permissions': user_permission_info,
+                'sharing': user_sharing_info,
+            }
+            
+            agent_context_metadata['agent'] = agent_info
+            
             # Process with intelligent memory manager
-            memory_result = self.intelligent_manager.process_content(
+            enhanced_metadata = self.intelligent_manager.process_metadata(
                 content=content,
-                metadata=metadata or {},
+                metadata=agent_context_metadata,
                 context=context or {}
             )
             
             # Create memory ID
             memory_id = str(uuid.uuid4())
             
-            # Determine memory type
-            memory_type = self._determine_memory_type(memory_result)
+            # Determine memory type from enhanced metadata
+            memory_type = self._determine_memory_type_from_metadata(enhanced_metadata)
             
             # Determine scope based on sharing settings
-            scope = self._determine_user_scope(user_id, context, metadata)
+            scope = self._determine_user_scope(user_id, context, enhanced_metadata)
             
             # Create memory data
             memory_data = {
                 'id': memory_id,
-                'content': content,
+                'content': content,  # Keep original content unchanged
                 'user_id': user_id,
                 'agent_id': agent_id,  # Keep for compatibility
                 'scope': scope,
                 'memory_type': memory_type,
-                'metadata': metadata or {},
+                'metadata': enhanced_metadata,  # Use enhanced metadata
                 'context': context or {},
                 'created_at': datetime.now().isoformat(),
                 'updated_at': datetime.now().isoformat(),
                 'access_count': 0,
                 'last_accessed': None,
-                'retention_score': memory_result.get('retention_score', 1.0) if isinstance(memory_result, dict) else 1.0,
-                'importance_level': memory_result.get('importance_level') if isinstance(memory_result, dict) else None,
-                'privacy_level': self._determine_privacy_level(metadata),
-                'shared_with': metadata.get('share_with', []) if metadata else [],
+                'retention_score': enhanced_metadata.get('intelligence', {}).get('current_retention', 1.0),
+                'importance_level': enhanced_metadata.get('intelligence', {}).get('importance_score'),
+                'privacy_level': self._determine_privacy_level(enhanced_metadata),
+                'shared_with': enhanced_metadata.get('share_with', []),
             }
             
             # Store in user-specific storage
@@ -276,25 +300,79 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
         else:
             return MemoryScope.PRIVATE
     
-    def _determine_memory_type(self, memory_result: Union[str, Dict[str, Any]]) -> MemoryType:
-        """Determine the memory type based on intelligent memory manager result."""
-        if isinstance(memory_result, str):
-            # If it's a string, default to working memory
-            return MemoryType.WORKING
-        
-        memory_type_str = memory_result.get('memory_type', 'working_memory')
+    def _determine_memory_type_from_metadata(self, enhanced_metadata: Dict[str, Any]) -> MemoryType:
+        """Determine the memory type based on enhanced metadata."""
+        intelligence = enhanced_metadata.get('intelligence', {})
+        memory_type_str = intelligence.get('memory_type', 'working')
         
         # Map string to enum
         type_mapping = {
-            'working_memory': MemoryType.WORKING,
-            'short_term_memory': MemoryType.SHORT_TERM,
-            'long_term_memory': MemoryType.LONG_TERM,
+            'working': MemoryType.WORKING,
+            'short_term': MemoryType.SHORT_TERM,
+            'long_term': MemoryType.LONG_TERM,
             'semantic_memory': MemoryType.SEMANTIC,
             'episodic_memory': MemoryType.EPISODIC,
             'procedural_memory': MemoryType.PROCEDURAL,
         }
         
         return type_mapping.get(memory_type_str, MemoryType.WORKING)
+    
+    def _get_user_collaboration_context(self, user_id: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Get user collaboration context information."""
+        return {
+            'is_collaborating': context.get('collaboration_level', 'low') == 'high' if context else False,
+            'collaboration_type': context.get('collaboration_type', 'asynchronous') if context else 'asynchronous',
+            'collaboration_status': 'active' if context and context.get('collaboration_level') == 'high' else 'inactive',
+            'participants': context.get('share_with', []) if context else [],
+            'collaboration_level': context.get('collaboration_level', 'low') if context else 'low'
+        }
+    
+    def _get_user_permission_context(self, user_id: str, agent_id: str) -> Dict[str, Any]:
+        """Get user permission context information."""
+        return {
+            'user_permissions': {
+                'read': True,  # User can always read their own memories
+                'write': True,  # User can write to their memories
+                'delete': True,  # User can delete their own memories
+                'admin': True  # User is admin of their own memories
+            },
+            'agent_permissions': {
+                'read': True,  # Agent can read user memories
+                'write': True,  # Agent can write to user memories
+                'delete': False,  # Agent cannot delete user memories
+                'admin': False  # Agent is not admin
+            },
+            'access_level': 'owner',
+            'isolation_enabled': getattr(self.multi_user_config, 'user_isolation', True)
+        }
+    
+    def _get_user_sharing_context(self, user_id: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Get user sharing context information."""
+        sharing_info = {
+            'is_shared': False,
+            'shared_with': [],
+            'sharing_level': 'private',
+            'can_share': getattr(self.multi_user_config, 'sharing_enabled', False)
+        }
+        
+        # Check if memory is being shared
+        if context and context.get('share_with'):
+            sharing_info.update({
+                'is_shared': True,
+                'shared_with': context.get('share_with', []),
+                'sharing_level': 'collaborative'
+            })
+        
+        # Check if user is in any groups (placeholder - would need to be implemented)
+        user_groups = []  # MultiUserMemoryManager doesn't have user_groups yet
+        if user_groups:
+            sharing_info.update({
+                'is_shared': True,
+                'shared_with': user_groups,
+                'sharing_level': 'group'
+            })
+        
+        return sharing_info
     
     def _determine_privacy_level(self, metadata: Optional[Dict[str, Any]]) -> PrivacyLevel:
         """Determine privacy level for the memory."""

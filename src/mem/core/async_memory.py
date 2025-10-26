@@ -101,34 +101,34 @@ class AsyncMemory(MemoryBase):
             embedding = await self.embedding.embed_async(content)
             
             # Process with intelligence manager
-            processed_content = await self.intelligence.process_content_async(content, metadata)
+            enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
 
             # Intelligent plugin annotations
             extra_fields = {}
             if self._intelligence_plugin and self._intelligence_plugin.enabled:
-                extra_fields = self._intelligence_plugin.on_add(content=content, metadata=metadata)
+                extra_fields = self._intelligence_plugin.on_add(content=content, metadata=enhanced_metadata)
             
 
             # Generate content hash for deduplication
-            content_hash = hashlib.md5(processed_content.encode('utf-8')).hexdigest()
+            content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
 
-            # Extract category from metadata if present
+            # Extract category from enhanced metadata if present
             category = ""
-            if metadata and isinstance(metadata, dict):
-                category = metadata.get("category", "")
+            if enhanced_metadata and isinstance(enhanced_metadata, dict):
+                category = enhanced_metadata.get("category", "")
                 # Remove category from metadata to avoid duplication
-                metadata = {k: v for k, v in metadata.items() if k != "category"}
+                enhanced_metadata = {k: v for k, v in enhanced_metadata.items() if k != "category"}
 
             # Store in database asynchronously
             memory_data = {
-                "content": processed_content,
+                "content": content,
                 "embedding": embedding,
                 "user_id": user_id,
                 "agent_id": agent_id,
                 "run_id": run_id,
                 "hash": content_hash,
                 "category": category,
-                "metadata": metadata or {},
+                "metadata": enhanced_metadata or {},
                 "filters": filters or {},
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
@@ -156,11 +156,11 @@ class AsyncMemory(MemoryBase):
             
             return {
                 "id": memory_id,
-                "content": processed_content,
+                "content": content,
                 "user_id": user_id,
                 "agent_id": agent_id,
                 "run_id": run_id,
-                "metadata": metadata,
+                "metadata": enhanced_metadata,
                 "created_at": memory_data["created_at"],
             }
             
@@ -280,14 +280,14 @@ class AsyncMemory(MemoryBase):
             embedding = await self.embedding.embed_async(content)
             
             # Process with intelligence manager
-            processed_content = await self.intelligence.process_content_async(content, metadata)
+            enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
             
 
             # Update in storage asynchronously
             update_data = {
-                "content": processed_content,
+                "content": content,
                 "embedding": embedding,
-                "metadata": metadata,
+                "metadata": enhanced_metadata,
                 "updated_at": datetime.utcnow(),
             }
             
