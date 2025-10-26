@@ -20,8 +20,8 @@ powermem is an AI-powered intelligent memory management system that provides a p
 - **Privacy Protection**: Built-in privacy controls and data protection
 
 ### 💾 Multiple Storage Backends
+- **OceanBase**: Default enterprise-grade, scalable vector database
 - **SQLite**: Lightweight, file-based storage for development
-- **OceanBase**: Enterprise-grade, scalable vector database
 - **PostgreSQL**: Open-source vector database solution
 - **Custom Adapters**: Extensible storage architecture
 
@@ -53,36 +53,13 @@ pip install powermem[dev,test,llm,vector_stores,extras]
 
 ### Basic Usage
 
-**⚠️ Important**: Before using Memory(), you need to install the required LLM dependencies and provide configuration.
-
-```bash
-# Install required LLM dependencies
-pip install openai anthropic dashscope ollama
-```
+**✨ Simplest Way**: Create memory from `.env` file automatically!
 
 ```python
-from mem import Memory
+from mem import create_memory
 
-# Create memory instance with configuration
-config = {
-    'llm': {
-        'provider': 'qwen',  # or 'openai', 'anthropic', 'ollama'
-        'config': {
-            'api_key': 'your_api_key',
-            'model': 'qwen-plus'
-        }
-    },
-    'embedding': {
-        'provider': 'qwen',
-        'config': {
-            'api_key': 'your_api_key',
-            'model': 'text-embedding-v4'
-        }
-    }
-}
-
-# ✨ Simple! All configuration is handled through the config parameter
-memory = Memory(config=config)
+# Automatically loads from .env or uses mock providers
+memory = create_memory()
 
 # Add memory
 memory.add("User likes coffee", user_id="user123")
@@ -93,7 +70,37 @@ for memory in memories:
     print(f"- {memory['content']}")
 ```
 
-### Alternative: Using Environment Configuration
+**Programmatic Configuration**:
+
+```python
+from mem import Memory
+
+# Using mem0-compatible field names
+config = {
+    'llm': {
+        'provider': 'qwen',  # or 'openai', 'anthropic', 'ollama'
+        'config': {
+            'api_key': 'your_api_key',
+            'model': 'qwen-plus'
+        }
+    },
+    'embedder': {  # mem0 field name
+        'provider': 'qwen',
+        'config': {
+            'api_key': 'your_api_key',
+            'model': 'text-embedding-v4'
+        }
+    },
+    'vector_store': {  # mem0 field name (defaults to oceanbase)
+        'provider': 'oceanbase',
+        'config': {}
+    }
+}
+
+memory = Memory(config=config)
+```
+
+### Configuration with .env File
 
 Create a `.env` file:
 ```env
@@ -106,49 +113,43 @@ EMBEDDING_MODEL=text-embedding-v4
 ```
 
 ```python
-import os
-from dotenv import load_dotenv
-from mem import Memory
+from mem import create_memory
 
-# Load environment variables
-load_dotenv()
+# ✨ Automatically loads from .env
+memory = create_memory()
+```
 
-# Build config from environment
-config = {
-    'llm': {
-        'provider': os.getenv('LLM_PROVIDER', 'qwen'),
-        'config': {
-            'api_key': os.getenv('LLM_API_KEY'),
-            'model': os.getenv('LLM_MODEL', 'qwen-plus')
-        }
-    },
-    'embedding': {
-        'provider': os.getenv('EMBEDDING_PROVIDER', 'qwen'),
-        'config': {
-            'api_key': os.getenv('EMBEDDING_API_KEY'),
-            'model': os.getenv('EMBEDDING_MODEL', 'text-embedding-v4')
-        }
-    }
-}
+**Or use programmatic configuration**:
 
-# ✨ Simple creation with just config
+```python
+from mem import Memory, auto_config
+
+# Option 1: Auto-load from environment
+config = auto_config()
 memory = Memory(config=config)
+
+# Option 2: Direct configuration
+memory = Memory(config={
+    'llm': {'provider': 'qwen', 'config': {'api_key': '...'}},
+    'embedder': {'provider': 'qwen', 'config': {'api_key': '...'}},
+    'vector_store': {'provider': 'oceanbase', 'config': {}}
+})
 ```
 
 ## 🤖 Multi-Agent Examples
 
-### Basic Multi-Agent Setup with Configuration
+### Basic Multi-Agent Setup
 
 ```python
-from mem import Memory
+from mem import create_memory, auto_config
 
-# Configuration for multi-agent setup
+# Simple way: auto-load from .env
+config = auto_config()
+
 config = {
-    'database': {
-        'provider': 'sqlite',  # or 'oceanbase', 'postgresql'
-        'config': {
-            'database_path': './data/powermem_multi_agent.db'
-        }
+    'vector_store': {
+        'provider': 'oceanbase',
+        'config': {}
     },
     'llm': {
         'provider': 'qwen',
@@ -158,7 +159,7 @@ config = {
             'temperature': 0.7
         }
     },
-    'embedding': {
+    'embedder': { 
         'provider': 'qwen',
         'config': {
             'api_key': 'your_qwen_api_key',
@@ -168,9 +169,9 @@ config = {
 }
 
 # Create memory instances for different agents
-support_memory = Memory(config=config, agent_id="support_agent")
-sales_memory = Memory(config=config, agent_id="sales_agent")
-tech_memory = Memory(config=config, agent_id="tech_agent")
+support_memory = create_memory(config=config, agent_id="support_agent")
+sales_memory = create_memory(config=config, agent_id="sales_agent")
+tech_memory = create_memory(config=config, agent_id="tech_agent")
 
 # Add agent-specific memories
 customer_id = "customer_12345"
@@ -285,16 +286,15 @@ for result in project_results:
 Create a `.env` file with your configuration:
 
 ```env
-# Database Configuration
-DATABASE_PROVIDER=sqlite  # or oceanbase, postgresql
-DATABASE_PATH=./data/powermem_dev.db
+# Vector Store Configuration (defaults to oceanbase)
+DATABASE_PROVIDER=oceanbase  # or sqlite, postgresql
 
 # LLM Configuration  
 LLM_PROVIDER=qwen  # or openai, anthropic, ollama
 LLM_API_KEY=your_api_key
 LLM_MODEL=qwen-plus
 
-# Embedding Configuration
+# Embedder Configuration
 EMBEDDING_PROVIDER=qwen
 EMBEDDING_MODEL=text-embedding-v4
 EMBEDDING_API_KEY=your_api_key
@@ -309,7 +309,7 @@ INTELLIGENT_MEMORY_DECAY_RATE=0.1
 
 ```python
 config = {
-    'database': {
+    'vector_store': {
         'provider': 'oceanbase',
         'config': {
             'host': 'localhost',
@@ -327,7 +327,7 @@ config = {
             'temperature': 0.7
         }
     },
-    'embedding': {
+    'embedder': {
         'provider': 'openai',
         'config': {
             'api_key': 'your_openai_key',
@@ -336,25 +336,29 @@ config = {
     }
 }
 
-memory = Memory(config=config)
+memory = create_memory(config=config)  # or Memory(config=config)
 ```
 
 ## 📚 Examples and Documentation
 
 ### Available Examples
 
-- **[Basic Usage](examples/basic_usage.py)**: Simple memory operations with SQLite
+- **[Basic Usage](examples/basic_usage.py)**: Simple memory operations with automatic config loading
 - **[Multi-Agent Demo](examples/multi_agent.py)**: Comprehensive multi-agent scenarios
+- **[Agent Memory](examples/agent_memory.py)**: Agent memory management with scope detection
 - **[Configuration Examples](examples/configs/)**: Different database and LLM configurations
 
 ### Run Examples
 
 ```bash
-# Basic usage example
+# Basic usage example (auto-loads from .env)
 python examples/basic_usage.py
 
 # Multi-agent demonstration
 python examples/multi_agent.py
+
+# Agent memory demonstration  
+python examples/agent_memory.py
 ```
 
 ### Documentation
