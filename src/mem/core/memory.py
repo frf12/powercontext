@@ -22,6 +22,53 @@ from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligenc
 logger = logging.getLogger(__name__)
 
 
+def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert legacy powermem config to mem0 format for compatibility.
+    
+    Now powermem uses mem0-style field names directly.
+    
+    Args:
+        config: Configuration dictionary (legacy or mem0 format)
+        
+    Returns:
+        mem0-style configuration dictionary
+    """
+    if not config:
+        return config
+    
+    # Check if legacy powermem format (has database or embedding)
+    if "database" in config or ("llm" in config and "embedding" in config):
+        converted = {}
+        
+        # Convert llm
+        if "llm" in config:
+            converted["llm"] = config["llm"]
+        
+        # Convert embedding to embedder
+        if "embedding" in config:
+            converted["embedder"] = config["embedding"]
+        
+        # Convert database to vector_store
+        if "database" in config:
+            db_config = config["database"]
+            converted["vector_store"] = {
+                "provider": db_config.get("provider", "oceanbase"),
+                "config": db_config.get("config", {})
+            }
+        else:
+            converted["vector_store"] = {
+                "provider": "oceanbase",
+                "config": {}
+            }
+        
+        logger.info("Converted legacy powermem config to mem0 format")
+        return converted
+    
+    # Already in mem0 format (has embedder or vector_store)
+    return config
+
+
 class Memory(MemoryBase):
     """
     Synchronous memory management implementation.
@@ -40,33 +87,58 @@ class Memory(MemoryBase):
         """
         Initialize the memory manager.
         
+        Compatible with both mem0 and powermem config formats.
+        
         Args:
-            config: Configuration dictionary containing all settings
+            config: Configuration dictionary containing all settings.
+                   Supports both mem0 style (llm, embedder, vector_store)
+                   and powermem style (database, llm, embedding)
             storage_type: Type of storage backend to use (overrides config)
             llm_provider: LLM provider to use (overrides config)
             embedding_provider: Embedding provider to use (overrides config)
             agent_id: Agent identifier for multi-agent scenarios
+        
+        Example:
+            ```python
+            # powermem style
+            from mem import Memory
+            memory = Memory({
+                "database": {"provider": "oceanbase", "config": {...}},
+                "llm": {"provider": "qwen", "config": {...}},
+            })
+            
+            # mem0 style (auto-converted)
+            memory = Memory({
+                "llm": {"provider": "openai", "config": {...}},
+                "embedder": {"provider": "openai", "config": {...}},
+                "vector_store": {"provider": "chroma", "config": {...}},
+            })
+            ```
         """
         self.config = config or {}
+        
+        # Auto-detect and convert mem0-style config
+        self.config = _auto_convert_config(self.config)
         self.agent_id = agent_id
         
         # Extract providers from config with fallbacks
-        self.storage_type = storage_type or self.config.get('database', {}).get('provider', 'sqlite')
-        self.llm_provider = llm_provider or self.config.get('llm', {}).get('provider', 'openai')
-        self.embedding_provider = embedding_provider or self.config.get('embedding', {}).get('provider', 'openai')
+        # Use mem0-style field names: 'vector_store' instead of 'database', 'embedder' instead of 'embedding'
+        self.storage_type = storage_type or self.config.get('vector_store', {}).get('provider', 'oceanbase')
+        self.llm_provider = llm_provider or self.config.get('llm', {}).get('provider', 'mock')
+        self.embedding_provider = embedding_provider or self.config.get('embedder', {}).get('provider', 'mock')
         
         # Initialize components
-        # Extract database config
-        db_config = self.config.get('database', {}).get('config', {}) if isinstance(self.config, dict) else {}
-        vector_store = VectorStoreFactory.create(self.storage_type, db_config)
+        # Extract vector_store config (mem0 naming)
+        vector_store_config = self.config.get('vector_store', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
         
         # Extract LLM config
         llm_config = self.config.get('llm', {}).get('config', {}) if isinstance(self.config, dict) else {}
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
         
-        # Extract embedding config
-        embedding_config = self.config.get('embedding', {}).get('config', {}) if isinstance(self.config, dict) else {}
-        self.embedding = EmbedderFactory.create(self.embedding_provider, embedding_config, None)
+        # Extract embedder config (mem0 naming)
+        embedder_config = self.config.get('embedder', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
         # Initialize storage adapter with embedding service
         self.storage = StorageAdapter(vector_store, self.embedding)

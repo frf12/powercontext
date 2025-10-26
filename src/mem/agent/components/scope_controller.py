@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from typing import Any, Dict
+from mem.agent.agent import ConfigObject
 from mem.agent.types import MemoryScope, MemoryType
 from mem.agent.abstract.scope import AgentScopeManagerBase
 from mem.integrations import LLMFactory
@@ -36,7 +36,23 @@ class ScopeController(AgentScopeManagerBase):
         super().__init__(config.agent_memory.multi_agent_config.__dict__)
         self.config = config
         self.multi_agent_config = config.agent_memory.multi_agent_config
-        self.llm = LLMFactory.create(config.llm.provider, config.llm.config)
+        
+        # Extract llm config as dict (handle both ConfigObject and dict)
+        try:
+            llm_provider = config.llm.provider if hasattr(config, 'llm') else 'mock'
+            llm_config_obj = config.llm.config if hasattr(config, 'llm') else {}
+            
+            # Convert to dict if ConfigObject
+            if isinstance(llm_config_obj, ConfigObject):
+                llm_config = llm_config_obj.to_dict()
+            else:
+                llm_config = dict(llm_config_obj) if llm_config_obj else {}
+        except Exception as e:
+            logger.warning(f"Failed to extract LLM config: {e}")
+            llm_provider = 'mock'
+            llm_config = {}
+        
+        self.llm = LLMFactory.create(llm_provider, llm_config)
         
         # Scope-specific storage areas
         self.scope_storage = {

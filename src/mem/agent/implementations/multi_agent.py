@@ -315,7 +315,13 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             if not hasattr(self, '_memory_instance'):
                 from mem.core.memory import Memory
                 # Convert ConfigObject back to dict for Memory class
-                config_dict = self.config._data if hasattr(self.config, '_data') else self.config
+                if hasattr(self.config, '_data'):
+                    config_dict = self.config._data
+                elif hasattr(self.config, 'to_dict'):
+                    config_dict = self.config.to_dict()
+                else:
+                    config_dict = self.config
+                
                 self._memory_instance = Memory(config_dict)
             
             # Use the existing Memory.add() method

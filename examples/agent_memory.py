@@ -21,98 +21,29 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from mem.agent import AgentMemory
+from mem import auto_config
 
 
 def load_oceanbase_config():
-    """Load OceanBase configuration from environment variables."""
+    """
+    Load OceanBase configuration from environment variables.
+    
+    Uses the auto_config() utility function to automatically load from .env.
+    """
+    # Try to load from examples/configs/oceanbase.env first
     config_path = os.path.join(os.path.dirname(__file__), 'configs', 'oceanbase.env')
-    load_dotenv(config_path)
+    if os.path.exists(config_path):
+        load_dotenv(config_path)
+    else:
+        # Try to load from any .env file
+        load_dotenv()
     
-    # Build connection args
-    connection_args = {
-        "host": os.getenv('DATABASE_HOST', '127.0.0.1'),
-        "port": int(os.getenv('DATABASE_PORT', '2881')),
-        "user": os.getenv('DATABASE_USER', 'root@sys'),
-        "password": os.getenv('DATABASE_PASSWORD', 'password'),
-        "db_name": os.getenv('DATABASE_NAME', 'powermem')
-    }
+    # Automatically load config from environment variables
+    config = auto_config()
     
-    # Build configuration dictionary
-    config = {
-        'database': {
-            'provider': os.getenv('DATABASE_PROVIDER', 'oceanbase'),
-            'config': {
-                'collection_name': os.getenv('DATABASE_COLLECTION_NAME', 'memories'),
-                'connection_args': connection_args,
-                'vidx_metric_type': os.getenv('DATABASE_VECTOR_METRIC_TYPE', 'cosine'),
-                'index_type': os.getenv('DATABASE_INDEX_TYPE', 'IVF_FLAT'),
-                'embedding_model_dims': int(os.getenv('DATABASE_EMBEDDING_MODEL_DIMS', '1536')),
-                'primary_field': os.getenv('DATABASE_PRIMARY_FIELD', 'id'),
-                'vector_field': os.getenv('DATABASE_VECTOR_FIELD', 'embedding'),
-                'text_field': os.getenv('DATABASE_TEXT_FIELD', 'document'),
-                'metadata_field': os.getenv('DATABASE_METADATA_FIELD', 'metadata'),
-                'vidx_name': os.getenv('DATABASE_VIDX_NAME', 'memories_vidx')
-            }
-        },
-        'llm': {
-            'provider': os.getenv('LLM_PROVIDER', 'qwen'),
-            'config': {
-                'api_key': os.getenv('LLM_API_KEY'),
-                'model': os.getenv('LLM_MODEL', 'qwen-plus'),
-                'temperature': float(os.getenv('LLM_TEMPERATURE', '0.7')),
-                'max_tokens': int(os.getenv('LLM_MAX_TOKENS', '1000')),
-                'top_p': float(os.getenv('LLM_TOP_P', '0.8')),
-                'top_k': int(os.getenv('LLM_TOP_K', '50')),
-                'dashscope_base_url': os.getenv('LLM_BASE_URL', 'https://dashscope.aliyuncs.com/api/v1'),
-                'enable_search': os.getenv('LLM_ENABLE_SEARCH', 'false').lower() == 'true',
-                'response_callback': None
-            }
-        },
-        'embedding': {
-            'provider': os.getenv('EMBEDDING_PROVIDER', 'qwen'),
-            'config': {
-                'api_key': os.getenv('EMBEDDING_API_KEY'),
-                'model': os.getenv('EMBEDDING_MODEL', 'text-embedding-v4'),
-                'embedding_dims': int(os.getenv('EMBEDDING_DIMS', '1536'))
-            }
-        },
-        'intelligent_memory': {
-            'enabled': os.getenv('INTELLIGENT_MEMORY_ENABLED', 'true').lower() == 'true',
-            'initial_retention': float(os.getenv('INTELLIGENT_MEMORY_INITIAL_RETENTION', '1.0')),
-            'decay_rate': float(os.getenv('INTELLIGENT_MEMORY_DECAY_RATE', '0.1')),
-            'reinforcement_factor': float(os.getenv('INTELLIGENT_MEMORY_REINFORCEMENT_FACTOR', '0.3')),
-            'working_threshold': float(os.getenv('INTELLIGENT_MEMORY_WORKING_THRESHOLD', '0.3')),
-            'short_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_SHORT_TERM_THRESHOLD', '0.6')),
-            'long_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_LONG_TERM_THRESHOLD', '0.8')),
-            'review_intervals': [1, 6, 24, 72, 168]  # hours
-        },
-        'telemetry': {
-            'enable_telemetry': os.getenv('TELEMETRY_ENABLED', 'false').lower() == 'true',
-            'telemetry_endpoint': os.getenv('TELEMETRY_ENDPOINT', 'https://telemetry.powermem.ai'),
-            'telemetry_api_key': os.getenv('TELEMETRY_API_KEY'),
-            'batch_size': int(os.getenv('TELEMETRY_BATCH_SIZE', '100')),
-            'flush_interval': int(os.getenv('TELEMETRY_FLUSH_INTERVAL', '30'))
-        },
-        'agent_memory': {
-            'enabled': os.getenv('AGENT_ENABLED', 'true').lower() == 'true',
-            'mode': os.getenv('AGENT_MEMORY_MODE', 'auto'),
-            'default_scope': os.getenv('AGENT_DEFAULT_SCOPE', 'AGENT'),
-            'default_privacy_level': os.getenv('AGENT_DEFAULT_PRIVACY_LEVEL', 'PRIVATE'),
-            'default_collaboration_level': os.getenv('AGENT_DEFAULT_COLLABORATION_LEVEL', 'READ_ONLY'),
-            'default_access_permission': os.getenv('AGENT_DEFAULT_ACCESS_PERMISSION', 'OWNER_ONLY')
-        },
-        'audit': {
-            'enabled': os.getenv('AUDIT_ENABLED', 'true').lower() == 'true',
-            'log_file': os.getenv('AUDIT_LOG_FILE', './logs/audit.log'),
-            'log_level': os.getenv('AUDIT_LOG_LEVEL', 'INFO'),
-            'retention_days': int(os.getenv('AUDIT_RETENTION_DAYS', '90'))
-        },
-        'logging': {
-            'level': os.getenv('LOGGING_LEVEL', 'DEBUG'),
-            'format': os.getenv('LOGGING_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
-            'file': os.getenv('LOGGING_FILE', './logs/powermem.log')
-        }
-    }
+    # Add review_intervals if not present in intelligent_memory config
+    if 'intelligent_memory' in config and 'review_intervals' not in config['intelligent_memory']:
+        config['intelligent_memory']['review_intervals'] = [1, 6, 24, 72, 168]  # hours
     
     return config
 

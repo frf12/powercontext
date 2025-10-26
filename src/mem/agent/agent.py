@@ -27,6 +27,24 @@ class ConfigObject:
             return value
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
+    def to_dict(self):
+        """Convert ConfigObject to dictionary (recursively)."""
+        if hasattr(self, '_data'):
+            result = {}
+            for key, value in self._data.items():
+                if isinstance(value, ConfigObject):
+                    result[key] = value.to_dict()
+                elif isinstance(value, dict):
+                    result[key] = value
+                else:
+                    result[key] = value
+            return result
+        return {}
+    
+    def __dict__(self):
+        """Support dict() conversion."""
+        return self.to_dict()
+    
     def get(self, key: str, default=None):
         """Dictionary-like get method."""
         return self._data.get(key, default)

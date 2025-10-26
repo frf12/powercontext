@@ -4,6 +4,7 @@ Utility functions and classes
 This module provides utility functions and helper classes.
 """
 
+import os
 import hashlib
 import json
 import logging
@@ -243,3 +244,22 @@ def remove_code_blocks(content: str) -> str:
     pattern = r"^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$"
     match = re.match(pattern, content.strip())
     return match.group(1).strip() if match else content.strip()
+
+
+def load_config_from_env() -> Dict[str, Any]:
+    """
+    Load configuration from environment variables.
+    
+    .. deprecated:: 0.1.0
+       This function is now in :mod:`mem.config_loader`.
+       Please use ``from mem import load_config_from_env`` instead.
+    
+    This is kept for backward compatibility.
+    For the actual implementation, see :mod:`mem.config_loader`.
+    
+    Returns:
+        Configuration dictionary built from environment variables
+    """
+    # Import here to avoid circular import
+    from ..config_loader import load_config_from_env as _load_config_from_env
+    return _load_config_from_env()
