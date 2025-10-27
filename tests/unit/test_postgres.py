@@ -33,7 +33,7 @@ sys.modules['psycopg2.sql'] = mock_psycopg2_sql
 # Import and reload the module to pick up our mocks
 import mem.storage.pgvector.pgvector
 importlib.reload(mem.storage.pgvector.pgvector)
-from mem.storage.pgvector.pgvector import PGVectorStore
+from powermem.storage.pgvector.pgvector import PGVectorStore
 
 
 class TestPGVector(unittest.TestCase):

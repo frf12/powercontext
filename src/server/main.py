@@ -67,7 +67,7 @@ TOKEN_COUNTING = os.getenv("TOKEN_COUNTING", "false").lower() in ("true", "1", "
 # Initialize a default Memory instance for demo/server use
 memory_instance = None
 try:
-    from mem.core.memory import Memory
+    from powermem.core.memory import Memory
     
     # Try to load configuration from environment
     vector_store_config = None

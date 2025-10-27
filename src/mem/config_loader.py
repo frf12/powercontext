@@ -51,7 +51,7 @@ def load_config_from_env() -> Dict[str, Any]:
     Example:
         ```python
         from dotenv import load_dotenv
-        from mem.config_loader import load_config_from_env
+        from powermem.config_loader import load_config_from_env
         
         # Load .env file
         load_dotenv()
@@ -194,7 +194,7 @@ def create_config(
         
     Example:
         ```python
-        from mem.config_loader import create_config
+        from powermem.config_loader import create_config
         from mem import Memory
         
         config = create_config(
@@ -247,7 +247,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
         
     Example:
         ```python
-        from mem.config_loader import load_config_from_env, validate_config
+        from powermem.config_loader import load_config_from_env, validate_config
         
         config = load_config_from_env()
         if validate_config(config):

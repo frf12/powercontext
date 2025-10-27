@@ -20,8 +20,8 @@ from dotenv import load_dotenv
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from mem.agent import AgentMemory
-from mem import auto_config
+from powermem.agent import AgentMemory
+from powermem import auto_config
 
 
 def load_oceanbase_config():

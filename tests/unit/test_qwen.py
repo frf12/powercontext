@@ -3,13 +3,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mem.integrations.llm.config.qwen import QwenConfig
-from mem.integrations.llm.qwen import QwenLLM
+from powermem.integrations.llm.config.qwen import QwenConfig
+from powermem.integrations.llm.qwen import QwenLLM
 
 
 @pytest.fixture
 def mock_dashscope_generation():
-    with patch("mem.integrations.llm.qwen.Generation") as mock_generation:
+    with patch("powermem.integrations.llm.qwen.Generation") as mock_generation:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.message = "Success"
@@ -20,7 +20,7 @@ def mock_dashscope_generation():
 
 @pytest.fixture
 def mock_dashscope_import():
-    with patch("mem.integrations.llm.qwen.dashscope") as mock_dashscope:
+    with patch("powermem.integrations.llm.qwen.dashscope") as mock_dashscope:
         yield mock_dashscope
 
 

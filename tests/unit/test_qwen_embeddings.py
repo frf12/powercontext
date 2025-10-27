@@ -2,14 +2,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mem.integrations.embeddings.config.base import BaseEmbedderConfig
-from mem.integrations.embeddings.qwen import QwenEmbedding
+from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
+from powermem.integrations.embeddings.qwen import QwenEmbedding
 
 
 @pytest.fixture
 def mock_dashscope():
     """Mock the dashscope module and TextEmbedding.call method"""
-    with patch("mem.integrations.embeddings.qwen.TextEmbedding") as mock_text_embedding:
+    with patch("powermem.integrations.embeddings.qwen.TextEmbedding") as mock_text_embedding:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.output = {
@@ -22,7 +22,7 @@ def mock_dashscope():
 @pytest.fixture
 def mock_dashscope_api():
     """Mock dashscope.api_key setting"""
-    with patch("mem.integrations.embeddings.qwen.dashscope") as mock_dashscope:
+    with patch("powermem.integrations.embeddings.qwen.dashscope") as mock_dashscope:
         yield mock_dashscope
 
 

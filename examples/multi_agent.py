@@ -24,12 +24,12 @@ from dotenv import load_dotenv
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from mem import Memory
-from mem.agent.implementations.multi_agent import MultiAgentMemoryManager
-from mem.agent.components.collaboration_coordinator import CollaborationCoordinator
-from mem.agent.components.permission_controller import PermissionController
-from mem.agent.components.privacy_protector import PrivacyProtector
-from mem.agent.components.scope_controller import ScopeController
+from powermem import Memory
+from powermem.agent.implementations.multi_agent import MultiAgentMemoryManager
+from powermem.agent.components.collaboration_coordinator import CollaborationCoordinator
+from powermem.agent.components.permission_controller import PermissionController
+from powermem.agent.components.privacy_protector import PrivacyProtector
+from powermem.agent.components.scope_controller import ScopeController
 
 
 def load_oceanbase_config():

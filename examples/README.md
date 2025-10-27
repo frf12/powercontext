@@ -77,7 +77,7 @@ The new unified interface provides a single, consistent API for all agent memory
 
 ### Auto Mode (Recommended)
 ```python
-from mem.agent import AgentMemory
+from powermem.agent import AgentMemory
 
 # Automatic mode detection
 agent_memory = AgentMemory(config)

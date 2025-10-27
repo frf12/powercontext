@@ -9,7 +9,7 @@ import time
 import asyncio
 import logging
 from typing import List, Dict, Any
-from mem import Memory, AsyncMemory
+from powermem import Memory, AsyncMemory
 
 logger = logging.getLogger(__name__)
 

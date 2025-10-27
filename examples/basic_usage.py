@@ -12,7 +12,7 @@ Or simply run without config - it will use mock providers for demonstration.
 """
 
 import os
-from mem import create_memory
+from powermem import create_memory
 
 
 def main():
