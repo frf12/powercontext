@@ -25,4 +25,7 @@ python3 run_experiments.py --method search --output_folder "$output_folder" --to
 curl -s "$API_BASE_URL/token_count" > "./$output_folder/token2.json"
 
 python3 evals.py --input_file "./$output_folder/results.json" --output_file "./$output_folder/evaluation_metrics.json"
-python3 generate_scores.py "$output_folder"
+echo '' >> "./$output_folder/evaluation.txt"
+python3 generate_scores.py "$output_folder" >> "./$output_folder/evaluation.txt"
+
+cat "./$output_folder/evaluation.txt"
