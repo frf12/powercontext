@@ -21,8 +21,9 @@ class StorageAdapter:
         """Initialize the adapter with a vector store and embedding service."""
         self.vector_store = vector_store
         self.embedding_service = embedding_service
-        self.collection_name = "memories"
-        
+        # get collection name from vector store attribute collection_name
+        self.collection_name = getattr(vector_store, 'collection_name', 'memories')
+
         # Ensure collection exists (will be created with actual vector size when first vector is added)
         # self.vector_store.create_col(self.collection_name, vector_size=1536, distance="cosine")
     
