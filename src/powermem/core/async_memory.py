@@ -12,6 +12,7 @@ from datetime import datetime
 
 from .base import MemoryBase
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
+from ..storage.adapter import StorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
@@ -51,9 +52,13 @@ class AsyncMemory(MemoryBase):
         self.embedding_provider = embedding_provider
         
         # Initialize components
-        self.storage = VectorStoreFactory.create(storage_type, self.config)
+        vector_store = VectorStoreFactory.create(storage_type, self.config)
         self.llm = LLMFactory.create(llm_provider, self.config)
         self.embedding = EmbedderFactory.create(embedding_provider, self.config)
+        
+        # Use StorageAdapter like Memory class
+        self.storage = StorageAdapter(vector_store, self.embedding)
+        
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
@@ -350,16 +355,18 @@ class AsyncMemory(MemoryBase):
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Get all memories with optional filtering asynchronously."""
         try:
-            results = await self.storage.get_all_memories_async(user_id, agent_id, limit, offset)
+            results = await self.storage.get_all_memories_async(user_id, agent_id, run_id, limit, offset)
             
             await self.audit.log_event_async("memory.get_all", {
                 "user_id": user_id,
                 "agent_id": agent_id,
+                "run_id": run_id,
                 "limit": limit,
                 "offset": offset,
                 "results_count": len(results)
@@ -390,6 +397,35 @@ class AsyncMemory(MemoryBase):
             
         except Exception as e:
             logger.error(f"Failed to clear memories: {e}")
+            raise
+    
+    async def delete_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> bool:
+        """Delete all memories for given identifiers asynchronously."""
+        try:
+            result = await self.storage.clear_memories_async(user_id, agent_id, run_id)
+            
+            if result:
+                await self.audit.log_event_async("memory.delete_all", {
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "run_id": run_id
+                })
+                
+                self.telemetry.capture_event("memory.delete_all", {
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "run_id": run_id
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to delete all memories: {e}")
             raise
 
     # No internal helpers are needed in core now; logic resides in plugin

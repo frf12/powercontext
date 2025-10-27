@@ -441,10 +441,7 @@ class Memory(MemoryBase):
     ) -> bool:
         """Delete all memories for given identifiers."""
         try:
-            # Note: clear_memories doesn't support run_id currently
-            # So we need to implement a more complete solution
-            # For now, use clear which works with user_id and agent_id
-            result = self.storage.clear_memories(user_id, agent_id)
+            result = self.storage.clear_memories(user_id, agent_id, run_id)
             
             if result:
                 self.audit.log_event("memory.delete_all", {
@@ -469,16 +466,18 @@ class Memory(MemoryBase):
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Get all memories with optional filtering."""
         try:
-            results = self.storage.get_all_memories(user_id, agent_id, limit, offset)
+            results = self.storage.get_all_memories(user_id, agent_id, run_id, limit, offset)
             
             self.audit.log_event("memory.get_all", {
                 "user_id": user_id,
                 "agent_id": agent_id,
+                "run_id": run_id,
                 "limit": limit,
                 "offset": offset,
                 "results_count": len(results)

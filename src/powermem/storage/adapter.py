@@ -227,16 +227,38 @@ class StorageAdapter:
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Get all memories with optional filtering."""
-        # Get all memories from vector store
-        results = self.vector_store.list(limit=limit + offset)
+        # Build filters for database-level filtering
+        filters = {}
+        if user_id:
+            filters["user_id"] = user_id
+        if agent_id:
+            filters["agent_id"] = agent_id
+        if run_id:
+            filters["run_id"] = run_id
+        
+        # Get memories from vector store with filters (if supported)
+        if filters and hasattr(self.vector_store, 'list'):
+            # Pass filters to vector store's list method for database-level filtering
+            # Request more records to support offset
+            results = self.vector_store.list(filters=filters, limit=limit + offset)
+        else:
+            # Fallback: get all and filter in memory
+            results = self.vector_store.list(limit=limit + offset)
+        
+        # OceanBase returns [memories], SQLite/PGVector return memories directly
+        if results and isinstance(results[0], list):
+            raw_results = results[0]
+        else:
+            raw_results = results
         
         # Convert to expected format and apply filters
         memories = []
-        for result in results[offset:]:
+        for result in raw_results:
             # Handle different result formats
             if hasattr(result, 'payload') and result.payload:
                 # Result with payload attribute (e.g., from OceanBase OutputData)
@@ -273,27 +295,136 @@ class StorageAdapter:
                 "updated_at": updated_at,
             }
             
-            # Apply filters
+            # Apply filters (as double-check if database didn't filter)
+            # Note: If filters were applied at database level, these will all pass
             if user_id and memory.get("user_id") != user_id:
                 continue
             if agent_id and memory.get("agent_id") != agent_id:
                 continue
+            if run_id and memory.get("run_id") != run_id:
+                continue
             
             memories.append(memory)
         
-        return memories[:limit]
+        # Apply offset and limit
+        return memories[offset:offset + limit]
     
     def clear_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> bool:
-        """Clear all memories for a user or agent."""
-        # Get all memories
-        all_memories = self.get_all_memories(user_id, agent_id, limit=10000)
+        """Clear all memories for a user or agent or run."""
+        # Build filters for database query
+        filters = {}
+        if user_id:
+            filters["user_id"] = user_id
+        if agent_id:
+            filters["agent_id"] = agent_id
+        if run_id:
+            filters["run_id"] = run_id
         
-        # Delete each memory
-        for memory in all_memories:
-            self.vector_store.delete(memory["id"])
+        # Use batch processing to avoid timeout
+        batch_size = 1000
+        deleted_count = 0
         
+        while True:
+            # Get a batch of memories with filtering
+            batch = self.get_all_memories(user_id, agent_id, run_id, limit=batch_size, offset=deleted_count)
+            
+            # If no more records, we're done
+            if not batch:
+                break
+            
+            # Delete each memory in the batch
+            for memory in batch:
+                try:
+                    self.vector_store.delete(memory["id"])
+                except Exception as e:
+                    logger.warning(f"Failed to delete memory {memory.get('id')}: {e}")
+            
+            deleted_count += len(batch)
+            
+            # If we got fewer records than batch_size, we've reached the end
+            if len(batch) < batch_size:
+                break
+        
+        logger.info(f"Deleted {deleted_count} memories with filters: {filters}")
         return True
+    
+    async def get_all_memories_async(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Get all memories with optional filtering asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.get_all_memories, user_id, agent_id, run_id, limit, offset)
+    
+    async def clear_memories_async(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> bool:
+        """Clear all memories for a user or agent or run asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.clear_memories, user_id, agent_id, run_id)
+    
+    async def initialize_async(self):
+        """Initialize storage asynchronously."""
+        # No-op for now
+        pass
+    
+    async def add_memory_async(self, memory_data: Dict[str, Any]) -> str:
+        """Add a memory to the store asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.add_memory, memory_data)
+    
+    async def search_memories_async(
+        self,
+        query_embedding: List[float],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Search for memories asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.search_memories, query_embedding, user_id, agent_id, run_id, filters, limit)
+    
+    async def get_memory_async(
+        self,
+        memory_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a specific memory by ID asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.get_memory, memory_id, user_id, agent_id)
+    
+    async def delete_memory_async(
+        self,
+        memory_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> bool:
+        """Delete a memory asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.delete_memory, memory_id, user_id, agent_id)
+    
+    async def update_memory_async(
+        self,
+        memory_id: str,
+        update_data: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Update a memory asynchronously."""
+        import asyncio
+        return await asyncio.to_thread(self.update_memory, memory_id, update_data, user_id, agent_id)
