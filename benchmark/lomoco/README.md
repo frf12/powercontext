@@ -10,9 +10,9 @@ The LOCOMO dataset used in our experiments can be seen from [locomo10.json](data
 
 We use several metrics to evaluate the performance of different memory techniques:
 
-1. **BLEU Score**: Measures the similarity between the model's response and the ground truth
-2. **F1 Score**: Measures the harmonic mean of precision and recall
-3. **LLM Score**: A binary score (0 or 1) determined by an LLM judge evaluating the correctness of responses
+1. **BLEU Score**: Measures the similarity between the model's response and the ground truth.
+2. **F1 Score**: Measures the harmonic mean of precision and recall.
+3. **LLM Score**: A binary score (0 or 1) determined by an LLM judge evaluating the correctness of responses.
 4. **Token Consumption**: Number of tokens required to generate final answer.
 5. **Latency**: Time required during search and to generate response.
 
@@ -34,6 +34,9 @@ We use several metrics to evaluate the performance of different memory technique
 ├── prompts.py                # Prompt templates
 ├── requirements.txt          # Python dependencies
 ├── run_experiments.py        # Main experiment runner
-├── run.sh                    # Shell script for running experiments
-└── README.md                 # This file
+└── run.sh                    # Shell script for running experiments
 ```
+
+## License
+
+[Apache License](LICENSE)
