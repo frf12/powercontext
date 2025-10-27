@@ -491,7 +491,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Parse the JSON metadata first
         metadata = self._parse_metadata(metadata_json)
 
-        # Add mem0 standard fields
+        # Add standard fields
         metadata.update({
             "user_id": user_id,
             "agent_id": agent_id,
