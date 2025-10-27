@@ -39,7 +39,7 @@ def create_memory(
         
     Example:
         ```python
-        from mem import create_memory
+        from powermem import create_memory
         
         # Simplest usage - auto loads from .env
         # No API keys needed - will use mock providers
@@ -73,7 +73,7 @@ def from_config(config: Any = None, **kwargs):
         
     Example (mem0-compatible):
         ```python
-        from mem import from_config
+        from powermem import from_config
         
         # mem0-style config
         memory = from_config({
