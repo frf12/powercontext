@@ -27,7 +27,7 @@ class TelemetryManager:
             config: Configuration dictionary
         """
         self.config = config or {}
-        self.enabled = self.config.get("enable_telemetry", True)
+        self.enabled = self.config.get("enable_telemetry", False)
         self.endpoint = self.config.get("telemetry_endpoint", "https://telemetry.powermem.ai")
         self.api_key = self.config.get("telemetry_api_key")
         self.batch_size = self.config.get("telemetry_batch_size", 100)
