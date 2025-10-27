@@ -249,6 +249,19 @@ class StorageAdapter:
             else:
                 continue
             
+            # Convert datetime objects to ISO format strings
+            created_at = payload.get("created_at")
+            if created_at is not None:
+                from datetime import datetime
+                if isinstance(created_at, datetime):
+                    created_at = created_at.isoformat()
+            
+            updated_at = payload.get("updated_at")
+            if updated_at is not None:
+                from datetime import datetime
+                if isinstance(updated_at, datetime):
+                    updated_at = updated_at.isoformat()
+            
             memory = {
                 "id": memory_id,
                 "content": payload.get("data", ""),  # Unified field name
@@ -256,8 +269,8 @@ class StorageAdapter:
                 "agent_id": payload.get("agent_id"),
                 "run_id": payload.get("run_id"),
                 "metadata": payload.get("metadata", {}),
-                "created_at": payload.get("created_at"),
-                "updated_at": payload.get("updated_at"),
+                "created_at": created_at,
+                "updated_at": updated_at,
             }
             
             # Apply filters

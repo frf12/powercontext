@@ -108,24 +108,40 @@ class TelemetryManager:
     def _send_events_async(self, payload: Dict[str, Any], headers: Dict[str, str]) -> None:
         """Send events asynchronously."""
         try:
-            # Use httpx for async HTTP requests
+            # Try to get current event loop
             import asyncio
-            
-            async def send_request():
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        f"{self.endpoint}/events",
-                        json=payload,
-                        headers=headers,
-                        timeout=10.0
-                    )
-                    response.raise_for_status()
-            
-            # Run in background
-            asyncio.create_task(send_request())
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, schedule the task
+                asyncio.create_task(self._send_request(payload, headers))
+            except RuntimeError:
+                # No running event loop, use httpx in sync mode for now
+                import httpx
+                try:
+                    with httpx.Client(timeout=10.0) as client:
+                        response = client.post(
+                            f"{self.endpoint}/events",
+                            json=payload,
+                            headers=headers,
+                            timeout=10.0
+                        )
+                        response.raise_for_status()
+                except Exception as sync_e:
+                    logger.debug(f"Failed to send telemetry events synchronously: {sync_e}")
             
         except Exception as e:
-            logger.error(f"Failed to send telemetry events: {e}")
+            logger.debug(f"Failed to send telemetry events: {e}")
+    
+    async def _send_request(self, payload: Dict[str, Any], headers: Dict[str, str]) -> None:
+        """Helper method to send HTTP request asynchronously."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.endpoint}/events",
+                json=payload,
+                headers=headers,
+                timeout=10.0
+            )
+            response.raise_for_status()
     
     def flush(self) -> None:
         """Manually flush all pending events."""

@@ -88,7 +88,8 @@ class AsyncMemory(MemoryBase):
     
     async def add(
         self,
-        content: str,
+        messages=None,
+        content: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -97,6 +98,22 @@ class AsyncMemory(MemoryBase):
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously."""
         try:
+            # Handle messages parameter (mem0 compatibility)
+            if messages is not None:
+                if isinstance(messages, str):
+                    # Convert string to message format
+                    content = messages
+                elif isinstance(messages, dict):
+                    # Single message dict
+                    content = messages.get("content", "")
+                elif isinstance(messages, list):
+                    # List of messages - extract content
+                    content = "\n".join([msg.get("content", "") for msg in messages if isinstance(msg, dict) and msg.get("content")])
+                else:
+                    raise ValueError("messages must be str, dict, or list[dict]")
+            elif content is None:
+                raise ValueError("Either 'content' or 'messages' must be provided")
+            
             # Generate embedding asynchronously
             embedding = await self.embedding.embed_async(content)
             

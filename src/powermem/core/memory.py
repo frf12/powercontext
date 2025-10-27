@@ -172,7 +172,8 @@ class Memory(MemoryBase):
     
     def add(
         self,
-        content: str,
+        messages=None,
+        content: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -181,6 +182,22 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Add a new memory."""
         try:
+            # Handle messages parameter (mem0 compatibility)
+            if messages is not None:
+                if isinstance(messages, str):
+                    # Convert string to message format
+                    content = messages
+                elif isinstance(messages, dict):
+                    # Single message dict
+                    content = messages.get("content", "")
+                elif isinstance(messages, list):
+                    # List of messages - extract content
+                    content = "\n".join([msg.get("content", "") for msg in messages if isinstance(msg, dict) and msg.get("content")])
+                else:
+                    raise ValueError("messages must be str, dict, or list[dict]")
+            elif content is None:
+                raise ValueError("Either 'content' or 'messages' must be provided")
+            
             # Generate embedding
             embedding = self.embedding.embed(content)
             
@@ -245,7 +262,7 @@ class Memory(MemoryBase):
                 "agent_id": agent_id,
                 "run_id": run_id,
                 "metadata": metadata,
-                "created_at": memory_data["created_at"],
+                "created_at": memory_data["created_at"].isoformat() if isinstance(memory_data["created_at"], datetime) else memory_data["created_at"],
             }
             
         except Exception as e:
@@ -416,6 +433,38 @@ class Memory(MemoryBase):
             logger.error(f"Failed to delete memory {memory_id}: {e}")
             raise
     
+    def delete_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> bool:
+        """Delete all memories for given identifiers."""
+        try:
+            # Note: clear_memories doesn't support run_id currently
+            # So we need to implement a more complete solution
+            # For now, use clear which works with user_id and agent_id
+            result = self.storage.clear_memories(user_id, agent_id)
+            
+            if result:
+                self.audit.log_event("memory.delete_all", {
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "run_id": run_id
+                })
+                
+                self.telemetry.capture_event("memory.delete_all", {
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "run_id": run_id
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to delete all memories: {e}")
+            raise
+    
     def get_all(
         self,
         user_id: Optional[str] = None,
@@ -461,3 +510,37 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to clear memories: {e}")
             raise
+    
+    @classmethod
+    def from_config(cls, config: Optional[Dict[str, Any]] = None, **kwargs):
+        """
+        Create Memory instance from configuration (mem0-compatible style).
+        
+        Compatible with mem0's initialization pattern.
+        
+        Args:
+            config: Configuration dictionary (mem0 or powermem format)
+            **kwargs: Additional parameters
+        
+        Returns:
+            Memory instance
+            
+        Example:
+            ```python
+            # mem0-style config
+            memory = Memory.from_config({
+                "llm": {"provider": "openai", "config": {"api_key": "..."}},
+                "embedder": {"provider": "openai", "config": {"api_key": "..."}},
+                "vector_store": {"provider": "oceanbase", "config": {...}},
+            })
+            ```
+        """
+        if config is None:
+            # Use auto config from environment
+            from ..config_loader import auto_config
+            config = auto_config()
+        
+        # Convert legacy config to mem0 format if needed
+        converted_config = _auto_convert_config(config)
+        
+        return cls(config=converted_config, **kwargs)
