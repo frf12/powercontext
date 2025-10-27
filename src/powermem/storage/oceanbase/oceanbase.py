@@ -489,10 +489,10 @@ class OceanBaseVectorStore(VectorStoreBase):
                                  updated_at: str, category: str, metadata_json: str) -> Dict:
         """Build standard metadata dictionary from row fields."""
         # Parse the JSON metadata first
-        user_metadata = self._parse_metadata(metadata_json)
+        metadata = self._parse_metadata(metadata_json)
 
-        # Return dict with user metadata separate from system fields
-        return {
+        # Add standard fields
+        metadata.update({
             "user_id": user_id,
             "agent_id": agent_id,
             "run_id": run_id,
@@ -501,8 +501,9 @@ class OceanBaseVectorStore(VectorStoreBase):
             "created_at": created_at,
             "updated_at": updated_at,
             "category": category,
-            "metadata": user_metadata,  # Keep user metadata separate
-        }
+        })
+
+        return metadata
 
     def _create_output_data(self, vector_id: str, text_content: str, score: float,
                             metadata: Dict) -> OutputData:
