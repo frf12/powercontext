@@ -91,9 +91,9 @@ DEFAULT_OCEANBASE_CONNECTION = constants_module.DEFAULT_OCEANBASE_CONNECTION
 
 # Mock all the oceanbase modules to avoid import issues (except constants)
 sys.modules['mem'] = MagicMock()
-sys.modules['mem.storage'] = MagicMock()
-sys.modules['mem.storage.oceanbase'] = MagicMock()
-sys.modules['mem.storage.base'] = MagicMock()
+sys.modules['powermem.storage'] = MagicMock()
+sys.modules['powermem.storage.oceanbase'] = MagicMock()
+sys.modules['powermem.storage.base'] = MagicMock()
 
 # Create a mock class that behaves like OceanBaseVectorStore
 class MockOceanBaseVectorStore:

@@ -56,7 +56,7 @@ pip install powermem[dev,test,llm,vector_stores,extras]
 **✨ Simplest Way**: Create memory from `.env` file automatically!
 
 ```python
-from mem import create_memory
+from powermem import create_memory
 
 # Automatically loads from .env or uses mock providers
 memory = create_memory()
@@ -73,7 +73,7 @@ for memory in memories:
 **Programmatic Configuration**:
 
 ```python
-from mem import Memory
+from powermem import Memory
 
 # Using mem0-compatible field names
 config = {
@@ -113,7 +113,7 @@ EMBEDDING_MODEL=text-embedding-v4
 ```
 
 ```python
-from mem import create_memory
+from powermem import create_memory
 
 # ✨ Automatically loads from .env
 memory = create_memory()
@@ -122,7 +122,7 @@ memory = create_memory()
 **Or use programmatic configuration**:
 
 ```python
-from mem import Memory, auto_config
+from powermem import Memory, auto_config
 
 # Option 1: Auto-load from environment
 config = auto_config()
@@ -141,7 +141,7 @@ memory = Memory(config={
 ### Basic Multi-Agent Setup
 
 ```python
-from mem import create_memory, auto_config
+from powermem import create_memory, auto_config
 
 # Simple way: auto-load from .env
 config = auto_config()

@@ -5,8 +5,8 @@ This module contains basic unit tests for the memory system.
 """
 
 import pytest
-from mem import Memory
-from mem.core.base import MemoryBase
+from powermem import Memory
+from powermem.core.base import MemoryBase
 
 
 class TestMemory:

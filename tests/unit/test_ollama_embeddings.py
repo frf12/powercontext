@@ -2,13 +2,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mem.integrations.embeddings.config.base import BaseEmbedderConfig
-from mem.integrations.embeddings.ollama import OllamaEmbedding
+from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
+from powermem.integrations.embeddings.ollama import OllamaEmbedding
 
 
 @pytest.fixture
 def mock_ollama_client():
-    with patch("mem.integrations.embeddings.ollama.Client") as mock_ollama:
+    with patch("powermem.integrations.embeddings.ollama.Client") as mock_ollama:
         mock_client = Mock()
         mock_client.list.return_value = {"models": [{"name": "nomic-embed-text"}]}
         mock_ollama.return_value = mock_client
