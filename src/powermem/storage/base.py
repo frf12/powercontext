@@ -5,7 +5,7 @@ This module defines the storage interface that all implementations must follow.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, List
 
 from pydantic import BaseModel
 
@@ -75,4 +75,35 @@ class VectorStoreBase(ABC):
     @abstractmethod
     def reset(self):
         """Reset by delete the collection and recreate it."""
+        pass
+
+class GraphStoreBase(ABC):
+    """
+    Abstract base class for graph storage implementations.
+
+    This class defines the interface that all graph storage backends must implement.
+    """
+    @abstractmethod
+    def add(self, data: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Add data to the graph."""
+        pass
+
+    @abstractmethod
+    def search(self, query: str, filters: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
+        """Search for memories."""
+        pass
+
+    @abstractmethod
+    def delete_all(self, filters: Dict[str, Any]) -> None:
+        """Delete all graph data for the given filters."""
+        pass
+
+    @abstractmethod
+    def get_all(self, filters: Dict[str, Any], limit: int = 100) -> List[Dict[str, str]]:
+        """Retrieve all nodes and relationships from the graph database."""
+        pass
+
+    @abstractmethod
+    def reset(self) -> None:
+        """Reset the graph by clearing all nodes and relationships."""
         pass

@@ -139,7 +139,14 @@ class Memory(MemoryBase):
         # Extract vector_store config (mem0 naming)
         vector_store_config = self.config.get('vector_store', {}).get('config', {}) if isinstance(self.config, dict) else {}
         vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
-        
+
+        # Extract graph_store config
+        self.enable_graph = self.config.get('enabled', False)
+        self.graph_store = None
+        if self.enable_graph:
+            graph_store_config = self.config.get('graph_store', {}).get('config', {}) if isinstance(self.config, dict) else {}
+            self.graph_store = GraphStoreFactory.create(self.storage_type, graph_store_config)
+
         # Extract LLM config
         llm_config = self.config.get('llm', {}).get('config', {}) if isinstance(self.config, dict) else {}
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
@@ -386,6 +393,11 @@ class Memory(MemoryBase):
         
         memory_id = self.storage.add_memory(memory_data)
         
+        # Add to graph store
+        if self.enable_graph:
+            graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+            self.graph_store.add(content, graph_filters)
+        
         # Log audit event
         self.audit.log_event("memory.add", {
             "memory_id": memory_id,
@@ -601,6 +613,11 @@ class Memory(MemoryBase):
         
         memory_id = self.storage.add_memory(memory_data)
         
+        # Add to graph store
+        if self.enable_graph:
+            graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+            self.graph_store.add(content, graph_filters)
+        
         self.audit.log_event("memory.add", {
             "memory_id": memory_id,
             "user_id": user_id,
@@ -715,7 +732,13 @@ class Memory(MemoryBase):
                 "agent_id": agent_id,
                 "results_count": len(processed_results)
             })
-            
+
+            # Search in graph store
+            if self.enable_graph:
+                filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+                graph_results = self.graph_store.search(query, filters, limit)
+                return {"results": transformed_results, "relations": graph_results}
+
             # Return in benchmark expected format
             return {"results": transformed_results}
             
@@ -845,7 +868,11 @@ class Memory(MemoryBase):
                     "agent_id": agent_id,
                     "run_id": run_id
                 })
-            
+
+            if self.enable_graph:
+                filters = {"user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+                self.graph_store.delete_all(filters)
+
             return result
             
         except Exception as e:
@@ -859,7 +886,8 @@ class Memory(MemoryBase):
         run_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> dict[str, list[dict[str, Any]]]:
         """Get all memories with optional filtering."""
         try:
             results = self.storage.get_all_memories(user_id, agent_id, run_id, limit, offset)
@@ -872,8 +900,15 @@ class Memory(MemoryBase):
                 "offset": offset,
                 "results_count": len(results)
             })
-            
-            return results
+
+            # get from graph store
+            if self.enable_graph:
+                filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+                graph_results = self.graph_store.get_all(filters, limit + offset)
+                results.extend(graph_results)
+                return {"results": results, "relations": graph_results}
+
+            return {"results": results}
             
         except Exception as e:
             logger.error(f"Failed to get all memories: {e}")
@@ -893,7 +928,11 @@ class Memory(MemoryBase):
                     "user_id": user_id,
                     "agent_id": agent_id
                 })
-            
+
+            if self.enable_graph:
+                filters = {"user_id": user_id, "agent_id": agent_id}
+                self.graph_store.delete_all(filters)
+
             return result
             
         except Exception as e:
