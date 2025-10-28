@@ -6,7 +6,7 @@ This module provides the synchronous memory management interface.
 
 import logging
 import hashlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 
 from .base import MemoryBase
@@ -278,7 +278,7 @@ class Memory(MemoryBase):
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """Search for memories."""
         try:
             # Generate query embedding
@@ -312,6 +312,22 @@ class Memory(MemoryBase):
                     except Exception:
                         continue
             
+            # Transform results to match benchmark expected format
+            # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
+            # Map "content" to "memory" field to match mem0 format
+            transformed_results = []
+            for result in processed_results:
+                transformed_result = {
+                    "memory": result.get("content", ""),  # Map "content" to "memory"
+                    "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
+                    "score": result.get("score", 0.0),
+                }
+                # Preserve other fields if needed
+                for key in ["id", "created_at", "updated_at", "user_id", "agent_id", "run_id"]:
+                    if key in result:
+                        transformed_result[key] = result[key]
+                transformed_results.append(transformed_result)
+            
             # Log audit event
             self.audit.log_event("memory.search", {
                 "query": query,
@@ -327,7 +343,8 @@ class Memory(MemoryBase):
                 "results_count": len(processed_results)
             })
             
-            return processed_results
+            # Return in benchmark expected format
+            return {"results": transformed_results}
             
         except Exception as e:
             logger.error(f"Failed to search memories: {e}")
