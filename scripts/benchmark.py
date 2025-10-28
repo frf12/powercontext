@@ -35,7 +35,7 @@ def benchmark_memory_operations():
     results["search_10_queries"] = search_time
     
     # Benchmark get operations
-    memories = memory.get_all(user_id="benchmark_user", limit=10)
+    memories = memory.get_all(user_id="benchmark_user", limit=10).get("results", [])
     start_time = time.time()
     for memory_data in memories:
         memory.get(memory_data["id"], user_id="benchmark_user")
