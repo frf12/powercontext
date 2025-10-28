@@ -51,10 +51,13 @@ def main():
     
     # Search memories
     print("Searching memories...")
-    results = memory.search("user preferences", user_id="user123")
+    search_response = memory.search("user preferences", user_id="user123")
+    results = search_response.get('results', [])
     print(f"Found {len(results)} results:")
     for result in results:
-        print(f"- {result['content']}")
+        # Search returns {"memory": "content", "metadata": {...}, "score": ...}
+        content = result.get('memory', result.get('content', 'No content'))
+        print(f"- {content}")
     
     # Get all memories
     all_memories = memory.get_all(user_id="user123")
