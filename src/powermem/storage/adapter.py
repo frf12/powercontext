@@ -209,17 +209,36 @@ class StorageAdapter:
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Update a memory."""
-        # Get existing memory
-        existing = self.get_memory(memory_id, user_id, agent_id)
-        if not existing:
+        # Get existing record from vector store directly
+        existing_result = self.vector_store.get(memory_id)
+        if not existing_result or not existing_result.payload:
+            logger.warning(f"Memory {memory_id} not found")
             return None
         
-        # Update payload
-        updated_payload = existing.copy()
+        # Get existing payload
+        existing_payload = existing_result.payload
+        
+        # Merge update_data into payload
+        updated_payload = existing_payload.copy()
+        
+        # Handle content field - map to "data" in payload
+        if "content" in update_data:
+            updated_payload["data"] = update_data["content"]
+            updated_payload["fulltext_content"] = update_data["content"]
+            # Remove content from update_data to avoid confusion
+            update_data = update_data.copy()
+            del update_data["content"]
+        
+        # Update other fields
         updated_payload.update(update_data)
         
-        # Update in vector store
-        self.vector_store.update(memory_id, payload=updated_payload)
+        # Update updated_at if not provided
+        if "updated_at" not in updated_payload:
+            from datetime import datetime
+            updated_payload["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Update in vector store with proper payload
+        self.vector_store.update(memory_id, vector=update_data.get("embedding"), payload=updated_payload)
         
         return updated_payload
     

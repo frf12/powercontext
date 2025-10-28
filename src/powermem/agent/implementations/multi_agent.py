@@ -326,7 +326,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             
             # Use the existing Memory.add() method
             self._memory_instance.add(
-                content=memory_data['content'],
+                messages=memory_data['content'],
                 user_id=memory_data.get('user_id'),
                 agent_id=memory_data.get('agent_id'),
                 metadata={
