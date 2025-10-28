@@ -98,11 +98,12 @@ class Memory(MemoryBase):
         """
         Initialize the memory manager.
         
-        Compatible with both mem0 and powermem config formats.
+        Compatible with both dict config and MemoryConfig object.
+        Supports both mem0 and powermem config formats.
         
         Args:
-            config: Configuration dictionary containing all settings.
-                   Supports both mem0 style (llm, embedder, vector_store)
+            config: Configuration dictionary or MemoryConfig object containing all settings.
+                   Dict format supports both mem0 style (llm, embedder, vector_store)
                    and powermem style (database, llm, embedding)
             storage_type: Type of storage backend to use (overrides config)
             llm_provider: LLM provider to use (overrides config)
@@ -111,14 +112,22 @@ class Memory(MemoryBase):
         
         Example:
             ```python
-            # powermem style
-            from powermem import Memory
+            # Method 1: Using MemoryConfig object (recommended)
+
+            config = MemoryConfig(
+                vector_store=VectorStoreConfig(provider="oceanbase", config={...}),
+                llm=LlmConfig(provider="qwen", config={...}),
+                embedder=EmbedderConfig(provider="qwen", config={...})
+            )
+            memory = Memory(config)
+            
+            # Method 2: Using dict (backward compatible - powermem style)
             memory = Memory({
                 "database": {"provider": "oceanbase", "config": {...}},
                 "llm": {"provider": "qwen", "config": {...}},
             })
             
-            # mem0 style (auto-converted)
+            # Method 3: Using dict (mem0 style - auto-converted)
             memory = Memory({
                 "llm": {"provider": "openai", "config": {...}},
                 "embedder": {"provider": "openai", "config": {...}},
@@ -126,36 +135,48 @@ class Memory(MemoryBase):
             })
             ```
         """
-        self.config = config or {}
+        # Handle MemoryConfig object or dict
+        if isinstance(config, MemoryConfig):
+            # Use MemoryConfig object directly
+            self.memory_config = config
+            # For backward compatibility, also store as dict
+            self.config = config.model_dump()
+        else:
+            # Convert dict config
+            dict_config = config or {}
+            dict_config = _auto_convert_config(dict_config)
+            self.config = dict_config
+            # Try to create MemoryConfig from dict, fallback to dict if fails
+            try:
+                self.memory_config = MemoryConfig(**dict_config)
+            except Exception as e:
+                logger.warning(f"Could not parse config as MemoryConfig: {e}, using dict mode")
+                self.memory_config = None
         
-        # Auto-detect and convert mem0-style config
-        self.config = _auto_convert_config(self.config)
         self.agent_id = agent_id
         
         # Extract providers from config with fallbacks
-        # Use mem0-style field names: 'vector_store' instead of 'database', 'embedder' instead of 'embedding'
-        self.storage_type = storage_type or self.config.get('vector_store', {}).get('provider', 'oceanbase')
-        self.llm_provider = llm_provider or self.config.get('llm', {}).get('provider', 'mock')
-        self.embedding_provider = embedding_provider or self.config.get('embedder', {}).get('provider', 'mock')
+        self.storage_type = storage_type or self._get_provider('vector_store', 'oceanbase')
+        self.llm_provider = llm_provider or self._get_provider('llm', 'mock')
+        self.embedding_provider = embedding_provider or self._get_provider('embedder', 'mock')
         
         # Initialize components
-        # Extract vector_store config (mem0 naming)
-        vector_store_config = self.config.get('vector_store', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        vector_store_config = self._get_component_config('vector_store')
         vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
 
         # Extract graph_store config
-        self.enable_graph = self.config.get('enabled', False)
+        self.enable_graph = self._get_graph_enabled()
         self.graph_store = None
         if self.enable_graph:
-            graph_store_config = self.config.get('graph_store', {}).get('config', {}) if isinstance(self.config, dict) else {}
+            graph_store_config = self._get_component_config('graph_store')
             self.graph_store = GraphStoreFactory.create(self.storage_type, graph_store_config)
 
         # Extract LLM config
-        llm_config = self.config.get('llm', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        llm_config = self._get_component_config('llm')
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
         
-        # Extract embedder config (mem0 naming)
-        embedder_config = self.config.get('embedder', {}).get('config', {}) if isinstance(self.config, dict) else {}
+        # Extract embedder config
+        embedder_config = self._get_component_config('embedder')
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
         # Initialize storage adapter with embedding service
@@ -165,12 +186,7 @@ class Memory(MemoryBase):
         self.audit = AuditLogger(self.config)
 
         # Intelligent memory plugin (pluggable)
-        # Support both "intelligence" and "intelligent_memory" config keys for backward compatibility
-        intelligence_cfg = (self.config or {}).get("intelligence", {})
-        intelligent_memory_cfg = (self.config or {}).get("intelligent_memory", {})
-        
-        # Merge configurations, with intelligent_memory taking precedence
-        merged_cfg = {**intelligence_cfg, **intelligent_memory_cfg}
+        merged_cfg = self._get_intelligent_memory_config()
         
         plugin_type = merged_cfg.get("plugin", "ebbinghaus")
         self._intelligence_plugin: Optional[IntelligentMemoryPlugin] = None
@@ -187,6 +203,68 @@ class Memory(MemoryBase):
         
         logger.info(f"Memory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
         self.telemetry.capture_event("memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
+    
+    def _get_provider(self, component: str, default: str) -> str:
+        """
+        Helper method to get component provider uniformly.
+        
+        Args:
+            component: Component name ('vector_store', 'llm', 'embedder')
+            default: Default provider name
+            
+        Returns:
+            Provider name string
+        """
+        if self.memory_config:
+            component_obj = getattr(self.memory_config, component, None)
+            return component_obj.provider if component_obj else default
+        else:
+            return self.config.get(component, {}).get('provider', default)
+    
+    def _get_component_config(self, component: str) -> Dict[str, Any]:
+        """
+        Helper method to get component configuration uniformly.
+        
+        Args:
+            component: Component name ('vector_store', 'llm', 'embedder', 'graph_store')
+            
+        Returns:
+            Component configuration dictionary
+        """
+        if self.memory_config:
+            component_obj = getattr(self.memory_config, component, None)
+            return component_obj.config or {} if component_obj else {}
+        else:
+            return self.config.get(component, {}).get('config', {})
+    
+    def _get_graph_enabled(self) -> bool:
+        """
+        Helper method to get graph store enabled status.
+        
+        Returns:
+            Boolean indicating whether graph store is enabled
+        """
+        if self.memory_config:
+            return self.memory_config.graph_store.enabled if self.memory_config.graph_store else False
+        else:
+            return self.config.get('enabled', False)
+    
+    def _get_intelligent_memory_config(self) -> Dict[str, Any]:
+        """
+        Helper method to get intelligent memory configuration.
+        Supports both "intelligence" and "intelligent_memory" config keys for backward compatibility.
+        
+        Returns:
+            Merged intelligent memory configuration dictionary
+        """
+        if self.memory_config and self.memory_config.intelligent_memory:
+            # Use MemoryConfig's intelligent_memory
+            return self.memory_config.intelligent_memory.model_dump()
+        else:
+            # Fallback to dict access
+            intelligence_cfg = (self.config or {}).get("intelligence", {})
+            intelligent_memory_cfg = (self.config or {}).get("intelligent_memory", {})
+            return {**intelligence_cfg, **intelligent_memory_cfg}
     
     def _extract_facts(self, messages: Any) -> List[str]:
         """
