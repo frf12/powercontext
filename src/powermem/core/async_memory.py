@@ -356,26 +356,35 @@ class AsyncMemory(MemoryBase):
             fact_embedding = await self.embedding.embed_async(fact)
             fact_embeddings[fact] = fact_embedding
             
-            # Search for similar memories
+            # Search for similar memories with reduced limit to reduce noise
             similar = await self.storage.search_memories_async(
                 query_embedding=fact_embedding,
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
                 filters=filters,
-                limit=5
+                limit=3  # Reduced from 5 to 3 to reduce token usage
             )
             existing_memories.extend(similar)
         
-        # Remove duplicates
+        # Improved deduplication: prefer memories with better similarity scores
         unique_memories = {}
         for mem in existing_memories:
             mem_id = mem.get("id")
             if mem_id and mem_id not in unique_memories:
                 unique_memories[mem_id] = mem
-        existing_memories = list(unique_memories.values())
+            elif mem_id:
+                # If duplicate ID, keep the one with better similarity (lower distance)
+                existing = unique_memories.get(mem_id)
+                mem_distance = mem.get("distance", float('inf'))
+                existing_distance = existing.get("distance", float('inf')) if existing else float('inf')
+                if mem_distance < existing_distance:
+                    unique_memories[mem_id] = mem
         
-        logger.info(f"Found {len(existing_memories)} existing memories to consider")
+        # Limit candidates to avoid LLM prompt overload
+        existing_memories = list(unique_memories.values())[:10]  # Max 10 memories
+        
+        logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
         # Step 3: Let LLM decide memory actions
         actions = await self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
