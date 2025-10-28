@@ -132,7 +132,7 @@ class StorageAdapter:
             # Extract unified fields
             # Core and promoted keys that should not be in metadata
             promoted_payload_keys = ["user_id", "agent_id", "run_id", "actor_id", "role"]
-            core_and_promoted_keys = {"data", "hash", "created_at", "updated_at", "id", *promoted_payload_keys}
+            core_and_promoted_keys = {"data", "hash", "created_at", "updated_at", "id", "metadata", *promoted_payload_keys}
             
             # Extract core fields
             content = payload.get("data", "")
@@ -145,8 +145,14 @@ class StorageAdapter:
                 if key in payload:
                     promoted_fields[key] = payload[key]
             
-            # Extract additional metadata (all fields not in core_and_promoted_keys)
-            additional_metadata = {k: v for k, v in payload.items() if k not in core_and_promoted_keys}
+            # Extract user metadata from payload
+            # If payload contains "metadata" field (nested user metadata), use it directly
+            # Otherwise, extract additional metadata from other fields
+            if "metadata" in payload:
+                user_metadata = payload["metadata"]
+            else:
+                # Extract additional metadata (all fields not in core_and_promoted_keys)
+                user_metadata = {k: v for k, v in payload.items() if k not in core_and_promoted_keys}
             
             memory = {
                 "id": memory_id,
@@ -155,7 +161,7 @@ class StorageAdapter:
                 "updated_at": updated_at,
                 "score": score,
                 **promoted_fields,  # Add promoted fields at top level
-                "metadata": additional_metadata if additional_metadata else {},  # Add remaining fields as metadata
+                "metadata": user_metadata if user_metadata else {},  # Add user metadata
             }
             
             # Apply filters
