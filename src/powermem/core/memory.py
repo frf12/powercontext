@@ -47,8 +47,8 @@ def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
     
     # Check if legacy powermem format (has database or embedding)
     if "database" in config or ("llm" in config and "embedding" in config):
-        converted = {}
-        
+        converted = config.copy()
+
         # Convert llm
         if "llm" in config:
             converted["llm"] = config["llm"]
@@ -56,7 +56,8 @@ def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
         # Convert embedding to embedder
         if "embedding" in config:
             converted["embedder"] = config["embedding"]
-        
+            converted.pop("embedding", None)
+
         # Convert database to vector_store
         if "database" in config:
             db_config = config["database"]
@@ -64,7 +65,8 @@ def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
                 "provider": db_config.get("provider", "oceanbase"),
                 "config": db_config.get("config", {})
             }
-        else:
+            converted.pop("database", None)
+        elif "vector_store" not in converted:
             converted["vector_store"] = {
                 "provider": "oceanbase",
                 "config": {}
