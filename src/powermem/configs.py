@@ -6,7 +6,11 @@ of the memory system.
 """
 
 from typing import Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from powermem.integrations.embeddings.configs import EmbedderConfig
+from powermem.integrations.llm import LlmConfig
+from powermem.storage.configs import VectorStoreConfig, GraphStoreConfig
 
 
 class AgentMemoryConfig(BaseModel):
@@ -45,8 +49,40 @@ class HybridConfig(BaseModel):
 
 class MemoryConfig(BaseModel):
     """Main memory configuration class."""
-    
-    agent_memory: Optional[AgentMemoryConfig] = None
+
+    vector_store: VectorStoreConfig = Field(
+        description="Configuration for the vector store",
+        default_factory=VectorStoreConfig,
+    )
+    llm: LlmConfig = Field(
+        description="Configuration for the language model",
+        default_factory=LlmConfig,
+    )
+    embedder: EmbedderConfig = Field(
+        description="Configuration for the embedding model",
+        default_factory=EmbedderConfig,
+    )
+    graph_store: GraphStoreConfig = Field(
+        description="Configuration for the graph",
+        default_factory=GraphStoreConfig,
+    )
+    version: str = Field(
+        description="The version of the API",
+        default="v1.1",
+    )
+    custom_fact_extraction_prompt: Optional[str] = Field(
+        description="Custom prompt for the fact extraction",
+        default=None,
+    )
+    custom_update_memory_prompt: Optional[str] = Field(
+        description="Custom prompt for the update memory",
+        default=None,
+    )
+    agent_memory: Optional[AgentMemoryConfig] = Field(
+        description="Configuration for agent memory management",
+        default=None,
+    )
+
     
     def __init__(self, **data):
         super().__init__(**data)

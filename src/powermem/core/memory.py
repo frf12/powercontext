@@ -12,6 +12,7 @@ from datetime import datetime
 from copy import deepcopy
 
 from .base import MemoryBase
+from ..configs import MemoryConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..storage.adapter import StorageAdapter
 from ..intelligence.manager import IntelligenceManager
@@ -88,7 +89,7 @@ class Memory(MemoryBase):
     
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any] | MemoryConfig] = None,
         storage_type: Optional[str] = None,
         llm_provider: Optional[str] = None,
         embedding_provider: Optional[str] = None,

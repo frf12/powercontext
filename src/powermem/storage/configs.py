@@ -12,7 +12,7 @@ from powermem.integrations.llm.configs import LLMConfig
 from powermem.storage.config.oceanbase import OceanBaseGraphConfig
 
 
-class VectorStorageConfig(BaseModel):
+class VectorStoreConfig(BaseModel):
     provider: str = Field(
         description="Provider of the vector store (e.g., 'oceanbase', 'pgvector')",
         default="oceanbase",
@@ -25,7 +25,7 @@ class VectorStorageConfig(BaseModel):
     }
 
     @model_validator(mode="after")
-    def validate_and_create_config(self) -> "VectorStorageConfig":
+    def validate_and_create_config(self) -> "VectorStoreConfig":
         provider = self.provider
         config = self.config
 
