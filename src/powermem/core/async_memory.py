@@ -379,6 +379,7 @@ class AsyncMemory(MemoryBase):
         
         # Step 4: Execute actions
         results = []
+        action_counts = {"ADD": 0, "UPDATE": 0, "DELETE": 0, "NONE": 0}
         
         if not actions:
             logger.warning("No actions returned from LLM, falling back to simple mode")
@@ -413,6 +414,7 @@ class AsyncMemory(MemoryBase):
                         "memory": action_text,
                         "event": event_type
                     })
+                    action_counts["ADD"] += 1
                     
                 elif event_type == "UPDATE":
                     # Find the corresponding existing memory ID
@@ -432,6 +434,7 @@ class AsyncMemory(MemoryBase):
                             "event": event_type,
                             "old_memory": action.get("old_memory")
                         })
+                        action_counts["UPDATE"] += 1
                         
                 elif event_type == "DELETE":
                     # Find the corresponding existing memory ID
@@ -444,12 +447,23 @@ class AsyncMemory(MemoryBase):
                             "memory": action_text,
                             "event": event_type
                         })
+                        action_counts["DELETE"] += 1
                         
                 elif event_type == "NONE":
                     logger.debug("No action needed for memory")
+                    action_counts["NONE"] += 1
                     
             except Exception as e:
                 logger.error(f"Error executing memory action {event_type}: {e}")
+        
+        # Log audit event for intelligent add operation
+        await self.audit.log_event_async("memory.intelligent_add", {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "facts_count": len(facts),
+            "action_counts": action_counts,
+            "results_count": len(results)
+        })
         
         # Log and return
         if results:
@@ -509,13 +523,6 @@ class AsyncMemory(MemoryBase):
         }
         
         memory_id = await self.storage.add_memory_async(memory_data)
-        
-        await self.audit.log_event_async("memory.add", {
-            "memory_id": memory_id,
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "content_length": len(content)
-        })
         
         return memory_id
     

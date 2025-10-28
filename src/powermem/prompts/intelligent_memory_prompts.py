@@ -6,7 +6,6 @@ This module provides prompts for intelligent memory operations including:
 2. Memory consolidation and deduplication
 3. Memory update operations (ADD/UPDATE/DELETE)
 
-Prompts are based on mem0's implementation for compatibility.
 """
 
 import logging
@@ -16,7 +15,7 @@ from typing import Dict, Any, Optional, List
 logger = logging.getLogger(__name__)
 
 
-# Use mem0's FACT_RETRIEVAL_PROMPT for compatibility
+# Use  FACT_RETRIEVAL_PROMPT for compatibility
 FACT_RETRIEVAL_PROMPT = f"""You are a Personal Information Organizer, specialized in accurately storing facts, user memories, and preferences. Your primary role is to extract relevant pieces of information from conversations and organize them into distinct, manageable facts. This allows for easy retrieval and personalization in future interactions. Below are the types of information you need to focus on and the detailed instructions on how to handle the input data.
 
 Types of Information to Remember:
@@ -67,7 +66,6 @@ You should detect the language of the user input and record the facts in the sam
 FACT_EXTRACTION_PROMPT = FACT_RETRIEVAL_PROMPT
 
 
-# Use mem0's DEFAULT_UPDATE_MEMORY_PROMPT
 DEFAULT_UPDATE_MEMORY_PROMPT = """You are a smart memory manager which controls the memory of a system.
 You can perform four operations: (1) add into the memory, (2) update the memory, (3) delete from the memory, and (4) no change.
 
