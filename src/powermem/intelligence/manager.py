@@ -28,7 +28,7 @@ class IntelligenceManager:
         self.config = config or {}
         # Check if intelligent memory is enabled
         intelligent_config = self.config.get("intelligent_memory", {})
-        self.enabled = intelligent_config.get("enabled", True)  # Default to True for backward compatibility
+        self.enabled = intelligent_config.get("enabled", False)  # Default to False for backward compatibility
         
         if self.enabled:
             self.intelligent_memory_manager = IntelligentMemoryManager(self.config)
