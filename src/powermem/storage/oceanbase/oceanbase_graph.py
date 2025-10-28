@@ -14,6 +14,7 @@ from sqlalchemy import bindparam, text, MetaData, Column, String, Integer, Index
 from sqlalchemy.dialects.mysql import TIMESTAMP
 
 from powermem.integrations import EmbedderFactory, LLMFactory
+from powermem.storage.base import GraphStoreBase
 from powermem.utils.utils import format_entities, remove_code_blocks
 
 try:
@@ -28,7 +29,7 @@ from powermem.storage.oceanbase import constants
 logger = logging.getLogger(__name__)
 
 
-class MemoryGraph:
+class MemoryGraph(GraphStoreBase):
     """OceanBase-based graph memory storage implementation."""
 
     def __init__(self, config: Any) -> None:

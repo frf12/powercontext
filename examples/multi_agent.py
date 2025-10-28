@@ -479,7 +479,7 @@ def demonstrate_memory_management():
     # Get all memories for analysis
     print("\n📊 Memory Analysis:")
     print("-" * 40)
-    all_memories = memory.get_all(user_id="admin", agent_id="memory_manager")
+    all_memories = memory.get_all(user_id="admin", agent_id="memory_manager").get("results", [])
     
     # Analyze by importance
     importance_counts = {}
