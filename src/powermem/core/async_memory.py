@@ -21,6 +21,7 @@ from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
+from ..utils.utils import remove_code_blocks
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -129,6 +130,8 @@ class AsyncMemory(MemoryBase):
             
             # Parse response
             try:
+                # Remove code blocks if present (LLM sometimes wraps JSON in code blocks)
+                response = remove_code_blocks(response)
                 facts_data = json.loads(response)
                 facts = facts_data.get("facts", [])
                 logger.debug(f"Extracted {len(facts)} facts: {facts}")
@@ -256,8 +259,10 @@ class AsyncMemory(MemoryBase):
         # Generate embedding asynchronously
         embedding = await self.embedding.embed_async(content)
         
+        # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
-        enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
+        # enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
+        enhanced_metadata = metadata  # Use original metadata without LLM evaluation
 
         # Intelligent plugin annotations
         extra_fields = {}
@@ -495,8 +500,10 @@ class AsyncMemory(MemoryBase):
         else:
             embedding = await self.embedding.embed_async(content)
         
+        # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
-        enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
+        # enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
+        enhanced_metadata = metadata  # Use original metadata without LLM evaluation
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -686,8 +693,10 @@ class AsyncMemory(MemoryBase):
             # Generate new embedding asynchronously
             embedding = await self.embedding.embed_async(content)
             
+            # Disabled LLM-based importance evaluation to save tokens
             # Process with intelligence manager
-            enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
+            # enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
+            enhanced_metadata = metadata  # Use original metadata without LLM evaluation
             
 
             # Update in storage asynchronously
