@@ -51,7 +51,7 @@ class MemoryBase(ABC):
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Search for memories.
         
@@ -64,7 +64,7 @@ class MemoryBase(ABC):
             limit: Maximum number of results
             
         Returns:
-            List of matching memories
+            Dictionary containing search results in format: {"results": [...]}
         """
         pass
     
