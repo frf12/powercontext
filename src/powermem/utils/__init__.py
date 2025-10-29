@@ -16,6 +16,7 @@ from .utils import (
     parse_timestamp,
     extract_json,
     load_config_from_env,
+    convert_config_object_to_dict,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "parse_timestamp",
     "extract_json",
     "load_config_from_env",
+    "convert_config_object_to_dict",
 ]
