@@ -20,6 +20,7 @@ from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
+from ..utils.utils import remove_code_blocks
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -217,6 +218,8 @@ class Memory(MemoryBase):
             
             # Parse response
             try:
+                # Remove code blocks if present (LLM sometimes wraps JSON in code blocks)
+                response = remove_code_blocks(response)
                 facts_data = json.loads(response)
                 facts = facts_data.get("facts", [])
                 
@@ -352,8 +355,10 @@ class Memory(MemoryBase):
         # Generate embedding
         embedding = self.embedding.embed(content)
         
+        # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
-        enhanced_metadata = self.intelligence.process_metadata(content, metadata)
+        # enhanced_metadata = self.intelligence.process_metadata(content, metadata)
+        enhanced_metadata = metadata  # Use original metadata without LLM evaluation
 
         # Intelligent plugin annotations
         extra_fields = {}
@@ -456,26 +461,35 @@ class Memory(MemoryBase):
             fact_embedding = self.embedding.embed(fact)
             fact_embeddings[fact] = fact_embedding
             
-            # Search for similar memories
+            # Search for similar memories with reduced limit to reduce noise
             similar = self.storage.search_memories(
                 query_embedding=fact_embedding,
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
                 filters=filters,
-                limit=5
+                limit=3  # Reduced from 5 to 3 to reduce token usage
             )
             existing_memories.extend(similar)
         
-        # Remove duplicates
+        # Improved deduplication: prefer memories with better similarity scores
         unique_memories = {}
         for mem in existing_memories:
             mem_id = mem.get("id")
             if mem_id and mem_id not in unique_memories:
                 unique_memories[mem_id] = mem
-        existing_memories = list(unique_memories.values())
+            elif mem_id:
+                # If duplicate ID, keep the one with better similarity (lower distance)
+                existing = unique_memories.get(mem_id)
+                mem_distance = mem.get("distance", float('inf'))
+                existing_distance = existing.get("distance", float('inf')) if existing else float('inf')
+                if mem_distance < existing_distance:
+                    unique_memories[mem_id] = mem
         
-        logger.info(f"Found {len(existing_memories)} existing memories to consider")
+        # Limit candidates to avoid LLM prompt overload
+        existing_memories = list(unique_memories.values())[:10]  # Max 10 memories
+        
+        logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
         # Step 3: Let LLM decide memory actions
         actions = self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
@@ -600,8 +614,10 @@ class Memory(MemoryBase):
         else:
             embedding = self.embedding.embed(content)
         
+        # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
-        enhanced_metadata = self.intelligence.process_metadata(content, metadata)
+        # enhanced_metadata = self.intelligence.process_metadata(content, metadata)
+        enhanced_metadata = metadata  # Use original metadata without LLM evaluation
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
