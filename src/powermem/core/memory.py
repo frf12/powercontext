@@ -544,13 +544,15 @@ class Memory(MemoryBase):
             fact_embeddings[fact] = fact_embedding
             
             # Search for similar memories with reduced limit to reduce noise
+            # Pass fact text to enable hybrid search for better results
             similar = self.storage.search_memories(
                 query_embedding=fact_embedding,
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
                 filters=filters,
-                limit=3  # Reduced from 5 to 3 to reduce token usage
+                limit=3,  # Reduced from 5 to 3 to reduce token usage
+                query=fact  # Enable hybrid search
             )
             existing_memories.extend(similar)
         
@@ -782,14 +784,15 @@ class Memory(MemoryBase):
             query_embedding = self.embedding.embed(query)
             
 
-            # Search in storage
+            # Search in storage - pass query text to enable hybrid search
             results = self.storage.search_memories(
                 query_embedding=query_embedding,
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
                 filters=filters,
-                limit=limit
+                limit=limit,
+                query=query  # Pass query text for hybrid search (vector + full-text)
             )
             
             # Process results with intelligence manager
