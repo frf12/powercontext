@@ -488,11 +488,11 @@ class OceanBaseVectorStore(VectorStoreBase):
                                  actor_id: str, hash_val: str, created_at: str,
                                  updated_at: str, category: str, metadata_json: str) -> Dict:
         """Build standard metadata dictionary from row fields."""
-        # Parse the JSON metadata first
-        metadata = self._parse_metadata(metadata_json)
-
-        # Add standard fields
-        metadata.update({
+        # Parse the JSON metadata first - this contains user-defined metadata
+        user_metadata = self._parse_metadata(metadata_json)
+        
+        # Build complete payload with standard fields at top level and user metadata nested
+        metadata = {
             "user_id": user_id,
             "agent_id": agent_id,
             "run_id": run_id,
@@ -501,7 +501,9 @@ class OceanBaseVectorStore(VectorStoreBase):
             "created_at": created_at,
             "updated_at": updated_at,
             "category": category,
-        })
+            # Store user metadata as nested structure to preserve it
+            "metadata": user_metadata
+        }
 
         return metadata
 
