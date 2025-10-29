@@ -364,7 +364,7 @@ class AsyncMemory(MemoryBase):
                 agent_id=agent_id,
                 run_id=run_id,
                 filters=filters,
-                limit=5,
+                limit=10,
                 query=fact  # Enable hybrid search
             )
             existing_memories.extend(similar)
