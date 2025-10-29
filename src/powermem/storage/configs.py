@@ -4,23 +4,20 @@ Storage configuration management
 This module handles storage configuration and validation.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 from powermem.integrations.llm.configs import LLMConfig
 from powermem.storage.config.oceanbase import OceanBaseGraphConfig
 
 
-class VectorStoreConfig(BaseModel):
+class VectorStorageConfig(BaseModel):
     provider: str = Field(
         description="Provider of the vector store (e.g., 'oceanbase', 'pgvector')",
         default="oceanbase",
     )
-    config: Optional[Dict] = Field(
-        description="Configuration for the specific vector store", 
-        default=None
-    )
+    config: Optional[Dict] = Field(description="Configuration for the specific vector store", default=None)
 
     _provider_configs: Dict[str, str] = {
         "oceanbase": "OceanBaseConfig",
@@ -28,90 +25,51 @@ class VectorStoreConfig(BaseModel):
     }
 
     @model_validator(mode="after")
-    def validate_config(self) -> "VectorStoreConfig":
-        """
-        Validate the configuration without converting to provider-specific config class.
-        The conversion is handled by VectorStoreFactory.create() when needed.
-        """
+    def validate_and_create_config(self) -> "VectorStorageConfig":
         provider = self.provider
         config = self.config
 
         if provider not in self._provider_configs:
             raise ValueError(f"Unsupported vector store provider: {provider}")
 
-        if config is None:
-            self.config = {}
-            return self
-
-        if not isinstance(config, dict):
-            raise ValueError(f"Config must be a dictionary, got {type(config)}")
-
-        # Validate config by attempting to create provider-specific config instance
-        # This ensures the config has valid fields, but we don't store the converted object
         module = __import__(
             f"powermem.storage.config.{provider}",
             fromlist=[self._provider_configs[provider]],
         )
         config_class = getattr(module, self._provider_configs[provider])
 
-        # Add default path if needed
+        if config is None:
+            config = {}
+
+        if not isinstance(config, dict):
+            if not isinstance(config, config_class):
+                raise ValueError(f"Invalid config type for provider {provider}")
+            return self
+
+        # also check if path in allowed kays for pydantic model, and whether config extra fields are allowed
         if "path" not in config and "path" in config_class.__annotations__:
             config["path"] = f"/tmp/{provider}"
-            self.config = config
 
-        # Validate by creating instance (throws error if invalid)
-        try:
-            config_class(**config)
-        except Exception as e:
-            raise ValueError(f"Invalid configuration for {provider}: {e}")
-
-        # Keep config as dict, don't convert to config_class instance
+        self.config = config_class(**config)
         return self
 
 class GraphStoreConfig(BaseModel):
-    enabled: bool = Field(
-        description="Whether to enable graph store",
-        default=False,
-    )
     provider: str = Field(
         description="Provider of the data store (e.g., 'oceanbase')",
         default="oceanbase",
     )
-    config: Optional[Dict] = Field(
-        description="Configuration for the specific data store", 
-        default=None
+    config: Union[OceanBaseGraphConfig] = Field(
+        description="Configuration for the specific data store", default=None
     )
-    llm: Optional[LLMConfig] = Field(
-        description="LLM configuration for querying the graph store", 
-        default=None
-    )
+    llm: Optional[LLMConfig] = Field(description="LLM configuration for querying the graph store", default=None)
     custom_prompt: Optional[str] = Field(
-        description="Custom prompt to fetch entities from the given text", 
-        default=None
+        description="Custom prompt to fetch entities from the given text", default=None
     )
 
-    @model_validator(mode="after")
-    def validate_config(self) -> "GraphStoreConfig":
-        """
-        Validate the configuration without converting to provider-specific config class.
-        Keep config as dict for consistency.
-        """
-        if self.config is None:
-            self.config = {}
-            return self
-        
-        if not isinstance(self.config, dict):
-            raise ValueError(f"Config must be a dictionary, got {type(self.config)}")
-        
-        # Validate config based on provider
-        provider = self.provider
+    @field_validator("config")
+    def validate_config(cls, v, values):
+        provider = values.data.get("provider")
         if provider == "oceanbase":
-            try:
-                OceanBaseGraphConfig(**self.config)
-            except Exception as e:
-                raise ValueError(f"Invalid configuration for {provider}: {e}")
+            return OceanBaseGraphConfig(**v.model_dump())
         else:
             raise ValueError(f"Unsupported graph store provider: {provider}")
-        
-        # Keep config as dict, don't convert
-        return self
