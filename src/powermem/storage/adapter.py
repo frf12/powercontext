@@ -89,6 +89,7 @@ class StorageAdapter:
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
+        query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Search for memories."""
         # Use the provided query embedding or generate one
@@ -100,11 +101,13 @@ class StorageAdapter:
             return []
         
         # Unified search method - try OceanBase format first, fallback to SQLite
+        # Pass query text to enable hybrid search (vector + full-text search)
         try:
-            # Try OceanBase format first
-            results = self.vector_store.search("", vectors=[query_vector], limit=limit, filters=filters)
+            # Try OceanBase format first - pass query text for hybrid search
+            search_query = query if query else ""
+            results = self.vector_store.search(search_query, vectors=[query_vector], limit=limit, filters=filters)
         except TypeError:
-            # Fallback to SQLite format
+            # Fallback to SQLite format (doesn't support query text parameter)
             results = self.vector_store.search(query_vector, vectors=[query_vector], limit=limit)
         
         # Convert results to unified format
@@ -434,10 +437,11 @@ class StorageAdapter:
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
+        query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Search for memories asynchronously."""
         import asyncio
-        return await asyncio.to_thread(self.search_memories, query_embedding, user_id, agent_id, run_id, filters, limit)
+        return await asyncio.to_thread(self.search_memories, query_embedding, user_id, agent_id, run_id, filters, limit, query)
     
     async def get_memory_async(
         self,
