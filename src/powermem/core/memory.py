@@ -482,11 +482,6 @@ class Memory(MemoryBase):
         
         memory_id = self.storage.add_memory(memory_data)
         
-        # Add to graph store
-        if self.enable_graph:
-            graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
-            self.graph_store.add(content, graph_filters)
-        
         # Log audit event
         self.audit.log_event("memory.add", {
             "memory_id": memory_id,
@@ -502,15 +497,23 @@ class Memory(MemoryBase):
             "agent_id": agent_id
         })
         
-        return {
-            "id": memory_id,
-            "content": content,
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "run_id": run_id,
-            "metadata": metadata,
-            "created_at": memory_data["created_at"].isoformat() if isinstance(memory_data["created_at"], datetime) else memory_data["created_at"],
+        graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
+        
+        result = {
+            "results": [{
+                "id": memory_id,
+                "memory": content,
+                "event": "ADD",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "metadata": metadata,
+                "created_at": memory_data["created_at"].isoformat() if isinstance(memory_data["created_at"], datetime) else memory_data["created_at"],
+            }]
         }
+        if graph_result:
+            result["relations"] = graph_result
+        return result
     
     def _intelligent_add(
         self,
@@ -635,7 +638,7 @@ class Memory(MemoryBase):
                             "id": mem_id,
                             "memory": action_text,
                             "event": event_type,
-                            "old_memory": action.get("old_memory")
+                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response
                         })
                         action_counts["UPDATE"] += 1
                         
@@ -668,14 +671,57 @@ class Memory(MemoryBase):
             "results_count": len(results)
         })
         
-        # Log and return
+        # Add to graph store and get relations
+        graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
         if results:
-            result = results[0]  # Return the first result for compatibility
+            result = {"results": results}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
         else:
             # Fallback to simple mode
             return self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
+    
+    def _add_to_graph(
+        self,
+        messages,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Add messages to graph store and return relations.
+        Matches mem0's _add_to_graph behavior.
         
-        return result
+        Returns:
+            dict with added_entities and deleted_entities, or None if graph store is disabled
+        """
+        if not self.enable_graph:
+            return None
+        
+        # Extract content from messages for graph processing (matching mem0)
+        if isinstance(messages, str):
+            data = messages
+        elif isinstance(messages, dict):
+            data = messages.get("content", "")
+        elif isinstance(messages, list):
+            data = "\n".join([
+                msg.get("content", "") 
+                for msg in messages 
+                if isinstance(msg, dict) and msg.get("content") and msg.get("role") != "system"
+            ])
+        else:
+            data = ""
+        
+        if not data:
+            return None
+        
+        graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+        if graph_filters.get("user_id") is None:
+            graph_filters["user_id"] = "user"
+        
+        return self.graph_store.add(data, graph_filters)
     
     def _create_memory(
         self,
@@ -728,11 +774,6 @@ class Memory(MemoryBase):
         }
         
         memory_id = self.storage.add_memory(memory_data)
-        
-        # Add to graph store
-        if self.enable_graph:
-            graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
-            self.graph_store.add(content, graph_filters)
         
         return memory_id
     

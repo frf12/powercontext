@@ -65,6 +65,14 @@ class AsyncMemory(MemoryBase):
         self.llm = LLMFactory.create(llm_provider, self.config)
         self.embedding = EmbedderFactory.create(embedding_provider, self.config)
         
+        # Extract graph_store config (simplified version for dict config)
+        graph_store_cfg = self.config.get('graph_store', {})
+        self.enable_graph = graph_store_cfg.get('enabled', False) if isinstance(graph_store_cfg, dict) else False
+        self.graph_store = None
+        if self.enable_graph:
+            graph_store_config = graph_store_cfg.get('config', {}) if isinstance(graph_store_cfg, dict) else {}
+            self.graph_store = GraphStoreFactory.create(storage_type, graph_store_config)
+        
         # Use StorageAdapter like Memory class
         self.storage = StorageAdapter(vector_store, self.embedding)
         
@@ -318,15 +326,24 @@ class AsyncMemory(MemoryBase):
             "agent_id": agent_id
         })
         
-        return {
-            "id": memory_id,
-            "content": content,
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "run_id": run_id,
-            "metadata": enhanced_metadata,
-            "created_at": memory_data["created_at"],
+        # Add to graph store and get relations
+        graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
+        
+        result = {
+            "results": [{
+                "id": memory_id,
+                "memory": content,
+                "event": "ADD",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "metadata": enhanced_metadata,
+                "created_at": memory_data["created_at"],
+            }]
         }
+        if graph_result:
+            result["relations"] = graph_result
+        return result
     
     async def _intelligent_add_async(
         self,
@@ -448,7 +465,7 @@ class AsyncMemory(MemoryBase):
                             "id": mem_id,
                             "memory": action_text,
                             "event": event_type,
-                            "old_memory": action.get("old_memory")
+                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response<｜place▁holder▁no▁303｜>
                         })
                         action_counts["UPDATE"] += 1
                         
@@ -481,14 +498,59 @@ class AsyncMemory(MemoryBase):
             "results_count": len(results)
         })
         
-        # Log and return
+        # Add to graph store and get relations
+        graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
+        
+        # Log and return - match mem0 v1.1+ API format: {"results": [...]}
         if results:
-            result = results[0]  # Return the first result for compatibility
+            result = {"results": results}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
         else:
             # Fallback to simple mode
             return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+    
+    async def _add_to_graph_async(
+        self,
+        messages,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Add messages to graph store and return relations asynchronously.
+        Matches mem0's _add_to_graph behavior.
         
-        return result
+        Returns:
+            dict with added_entities and deleted_entities, or None if graph store is disabled
+        """
+        if not self.enable_graph:
+            return None
+        
+        # Extract content from messages for graph processing (matching mem0)
+        if isinstance(messages, str):
+            data = messages
+        elif isinstance(messages, dict):
+            data = messages.get("content", "")
+        elif isinstance(messages, list):
+            data = "\n".join([
+                msg.get("content", "") 
+                for msg in messages 
+                if isinstance(msg, dict) and msg.get("content") and msg.get("role") != "system"
+            ])
+        else:
+            data = ""
+        
+        if not data:
+            return None
+        
+        graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+        if graph_filters.get("user_id") is None:
+            graph_filters["user_id"] = "user"
+        
+        return self.graph_store.add(data, graph_filters)
     
     async def _create_memory_async(
         self,
