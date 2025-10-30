@@ -483,7 +483,7 @@ class AsyncMemory(MemoryBase):
                             "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type,
-                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response
+                            "previous_memory": action.get("old_memory")
                         })
                         action_counts["UPDATE"] += 1
                     else:
