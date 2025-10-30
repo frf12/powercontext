@@ -263,3 +263,32 @@ def load_config_from_env() -> Dict[str, Any]:
     # Import here to avoid circular import
     from ..config_loader import load_config_from_env as _load_config_from_env
     return _load_config_from_env()
+
+
+def convert_config_object_to_dict(obj: Any) -> Any:
+    """
+    Recursively convert ConfigObject instances to dictionaries.
+
+    Args:
+        obj: Object to convert (can be ConfigObject, dict, list, or primitive)
+
+    Returns:
+        Converted object with all ConfigObjects replaced by dicts
+    """
+    if obj is None:
+        return None
+
+    # Handle ConfigObject
+    if hasattr(obj, 'to_dict'):
+        obj = obj.to_dict()
+
+    # Handle dict
+    if isinstance(obj, dict):
+        return {key: convert_config_object_to_dict(value) for key, value in obj.items()}
+
+    # Handle list
+    if isinstance(obj, list):
+        return [convert_config_object_to_dict(item) for item in obj]
+
+    # Return primitive types as-is
+    return obj
