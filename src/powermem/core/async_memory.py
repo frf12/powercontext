@@ -208,7 +208,7 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
-        use_intelligent_memory: bool = True,
+        use_intelligent_memory: bool = False,
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
         try:
