@@ -301,7 +301,7 @@ class Memory(MemoryBase):
         scope: Optional[str] = None,
         memory_type: Optional[str] = None,
         prompt: Optional[str] = None,
-        use_intelligent_memory: bool = True,
+        use_intelligent_memory: bool = False,
     ) -> Dict[str, Any]:
         """Add a new memory with optional intelligent processing."""
         try:
