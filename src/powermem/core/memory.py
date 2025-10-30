@@ -290,13 +290,17 @@ class Memory(MemoryBase):
             user_prompt = f"Input:\n{conversation}"
             
             # Call LLM to extract facts
-            response = self.llm.generate_response(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"}
-            )
+            try:
+                response = self.llm.generate_response(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+            except Exception as e:
+                logger.error(f"Error in fact extraction: {e}")
+                response = ""
             
             # Parse response
             try:
@@ -309,8 +313,8 @@ class Memory(MemoryBase):
                 logger.debug(f"Extracted {len(facts)} facts: {facts}")
                 
                 return facts
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse LLM response as JSON: {response}")
+            except Exception as e:
+                logger.error(f"Error in new_retrieved_facts: {e}")
                 return []
                 
         except Exception as e:
@@ -353,10 +357,14 @@ class Memory(MemoryBase):
             update_prompt = get_memory_update_prompt(old_memory, new_facts)
             
             # Call LLM
-            response = self.llm.generate_response(
-                messages=[{"role": "user", "content": update_prompt}],
-                response_format={"type": "json_object"}
-            )
+            try:
+                response = self.llm.generate_response(
+                    messages=[{"role": "user", "content": update_prompt}],
+                    response_format={"type": "json_object"}
+                )
+            except Exception as e:
+                logger.error(f"Error in new memory actions response: {e}")
+                response = ""
             
             # Parse response
             try:
@@ -364,9 +372,8 @@ class Memory(MemoryBase):
                 actions_data = json.loads(response)
                 actions = actions_data.get("memory", [])
                 return actions
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse memory actions JSON: {e}")
-                logger.debug(f"Response was: {response}")
+            except Exception as e:
+                logger.error(f"Invalid JSON response: {e}")
                 return []
                 
         except Exception as e:
@@ -579,10 +586,19 @@ class Memory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Step 3: Let LLM decide memory actions
-        actions = self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
+        # Mapping UUIDs with integers for handling UUID hallucinations (mem0 compatibility)
+        temp_uuid_mapping = {}
+        for idx, item in enumerate(existing_memories):
+            temp_uuid_mapping[str(idx)] = item["id"]
+            existing_memories[idx]["id"] = str(idx)
         
-        logger.info(f"LLM decided on {len(actions)} memory actions")
+        # Step 3: Let LLM decide memory actions (only if we have new facts)
+        actions = []
+        if facts:
+            actions = self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
+            logger.info(f"LLM decided on {len(actions)} memory actions")
+        else:
+            logger.debug("No new facts, skipping LLM decision step")
         
         # Step 4: Execute actions
         results = []
@@ -624,37 +640,39 @@ class Memory(MemoryBase):
                     action_counts["ADD"] += 1
                     
                 elif event_type == "UPDATE":
-                    # Find the corresponding existing memory ID
-                    existing_mem = next((m for m in existing_memories if str(m.get("id")) == str(action_id)), None)
-                    if existing_mem:
-                        mem_id = existing_mem["id"]
+                    # Use UUID mapping to get the real memory ID
+                    real_memory_id = temp_uuid_mapping.get(str(action_id))
+                    if real_memory_id:
                         self._update_memory(
-                            memory_id=mem_id,
+                            memory_id=real_memory_id,
                             content=action_text,
                             user_id=user_id,
                             agent_id=agent_id,
                             existing_embeddings=fact_embeddings
                         )
                         results.append({
-                            "id": mem_id,
+                            "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type,
                             "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response
                         })
                         action_counts["UPDATE"] += 1
+                    else:
+                        logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "DELETE":
-                    # Find the corresponding existing memory ID
-                    existing_mem = next((m for m in existing_memories if str(m.get("id")) == str(action_id)), None)
-                    if existing_mem:
-                        mem_id = existing_mem["id"]
-                        self.delete(mem_id, user_id, agent_id)
+                    # Use UUID mapping to get the real memory ID
+                    real_memory_id = temp_uuid_mapping.get(str(action_id))
+                    if real_memory_id:
+                        self.delete(real_memory_id, user_id, agent_id)
                         results.append({
-                            "id": mem_id,
+                            "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type
                         })
                         action_counts["DELETE"] += 1
+                    else:
+                        logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "NONE":
                     logger.debug("No action needed for memory")
