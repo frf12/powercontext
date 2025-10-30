@@ -383,7 +383,7 @@ class Memory(MemoryBase):
         scope: Optional[str] = None,
         memory_type: Optional[str] = None,
         prompt: Optional[str] = None,
-        infer: bool = False,
+        infer: bool = True,
     ) -> Dict[str, Any]:
         """Add a new memory with optional intelligent processing."""
         try:

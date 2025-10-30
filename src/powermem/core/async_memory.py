@@ -216,7 +216,7 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
-        infer: bool = False,
+        infer: bool = True,
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
         try:
@@ -225,10 +225,10 @@ class AsyncMemory(MemoryBase):
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
             # Check if intelligent memory should be used
-            use_intel = infer and isinstance(messages, list) and len(messages) > 0
+            use_infer = infer and isinstance(messages, list) and len(messages) > 0
             
             # If not using intelligent memory, fall back to simple mode
-            if not use_intel:
+            if not use_infer:
                 return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
             
             # Intelligent memory mode: extract facts, search similar memories, and consolidate
