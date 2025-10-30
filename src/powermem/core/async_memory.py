@@ -196,6 +196,7 @@ class AsyncMemory(MemoryBase):
             
             # Parse response
             try:
+                response = remove_code_blocks(response)
                 actions_data = json.loads(response)
                 actions = actions_data.get("memory", [])
                 return actions
