@@ -469,7 +469,7 @@ class Memory(MemoryBase):
                 agent_id=agent_id,
                 run_id=run_id,
                 filters=filters,
-                limit=3,  # Reduced from 5 to 3 to reduce token usage
+                limit=5,
                 query=fact  # Enable hybrid search
             )
             existing_memories.extend(similar)
