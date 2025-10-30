@@ -317,7 +317,7 @@ class AsyncMemory(MemoryBase):
             "user_id": user_id,
             "agent_id": agent_id,
             "content_length": len(content)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
         # Capture telemetry
         self.telemetry.capture_event("memory.add", {
@@ -498,7 +498,7 @@ class AsyncMemory(MemoryBase):
             "facts_count": len(facts),
             "action_counts": action_counts,
             "results_count": len(results)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
         # Add to graph store and get relations (only if graph store is enabled)
         graph_result = None
@@ -715,7 +715,7 @@ class AsyncMemory(MemoryBase):
                 "user_id": user_id,
                 "agent_id": agent_id,
                 "results_count": len(transformed_results)
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             # Capture telemetry
             self.telemetry.capture_event("memory.search", {
@@ -758,7 +758,7 @@ class AsyncMemory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -800,7 +800,7 @@ class AsyncMemory(MemoryBase):
                 "memory_id": memory_id,
                 "user_id": user_id,
                 "agent_id": agent_id
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -823,7 +823,7 @@ class AsyncMemory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -850,7 +850,7 @@ class AsyncMemory(MemoryBase):
                 "limit": limit,
                 "offset": offset,
                 "results_count": len(results)
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             return results
             
@@ -871,7 +871,7 @@ class AsyncMemory(MemoryBase):
                 await self.audit.log_event_async("memory.clear", {
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -894,7 +894,7 @@ class AsyncMemory(MemoryBase):
                     "user_id": user_id,
                     "agent_id": agent_id,
                     "run_id": run_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
                 
                 self.telemetry.capture_event("memory.delete_all", {
                     "user_id": user_id,

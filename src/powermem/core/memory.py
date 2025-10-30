@@ -488,7 +488,7 @@ class Memory(MemoryBase):
             "user_id": user_id,
             "agent_id": agent_id,
             "content_length": len(content)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
         # Capture telemetry
         self.telemetry.capture_event("memory.add", {
@@ -669,7 +669,7 @@ class Memory(MemoryBase):
             "facts_count": len(facts),
             "action_counts": action_counts,
             "results_count": len(results)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
         # Add to graph store and get relations
         graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
@@ -882,7 +882,7 @@ class Memory(MemoryBase):
                 "user_id": user_id,
                 "agent_id": agent_id,
                 "results_count": len(transformed_results)
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             # Capture telemetry
             self.telemetry.capture_event("memory.search", {
@@ -933,7 +933,7 @@ class Memory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -973,7 +973,7 @@ class Memory(MemoryBase):
                 "memory_id": memory_id,
                 "user_id": user_id,
                 "agent_id": agent_id
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -997,7 +997,7 @@ class Memory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -1020,7 +1020,7 @@ class Memory(MemoryBase):
                     "user_id": user_id,
                     "agent_id": agent_id,
                     "run_id": run_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
                 
                 self.telemetry.capture_event("memory.delete_all", {
                     "user_id": user_id,
@@ -1058,7 +1058,7 @@ class Memory(MemoryBase):
                 "limit": limit,
                 "offset": offset,
                 "results_count": len(results)
-            })
+            }, user_id=user_id, agent_id=agent_id)
 
             # get from graph store
             if self.enable_graph:
@@ -1086,7 +1086,7 @@ class Memory(MemoryBase):
                 self.audit.log_event("memory.clear", {
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
 
             if self.enable_graph:
                 filters = {"user_id": user_id, "agent_id": agent_id}
