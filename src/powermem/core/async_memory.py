@@ -21,7 +21,7 @@ from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
-from ..utils.utils import remove_code_blocks
+from ..utils.utils import remove_code_blocks, parse_vision_messages
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -231,6 +231,25 @@ class AsyncMemory(MemoryBase):
             # Handle messages parameter (mem0 compatibility)
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
+            
+            # Normalize input format (mem0-compatible)
+            if isinstance(messages, str):
+                messages = [{"role": "user", "content": messages}]
+            elif isinstance(messages, dict):
+                messages = [messages]
+            elif not isinstance(messages, list):
+                raise ValueError("messages must be str, dict, or list[dict]")
+            
+            # Vision-aware message processing (mem0-compatible behavior)
+            llm_cfg = {}
+            try:
+                llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
+            except Exception:
+                llm_cfg = {}
+            if llm_cfg.get("enable_vision"):
+                messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"))
+            else:
+                messages = parse_vision_messages(messages)
             
             # Check if intelligent memory should be used
             use_infer = infer and isinstance(messages, list) and len(messages) > 0
