@@ -651,6 +651,7 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
+        threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search for memories asynchronously."""
         try:
@@ -691,10 +692,16 @@ class AsyncMemory(MemoryBase):
             # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
+                score = result.get("score", 0.0)
+                # Apply threshold filtering (mem0 compatible)
+                # Only include results if threshold is None or score >= threshold
+                if threshold is not None and score < threshold:
+                    continue
+                
                 transformed_result = {
                     "memory": result.get("content", ""),  # Map "content" to "memory"
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
-                    "score": result.get("score", 0.0),
+                    "score": score,
                 }
                 # Preserve other fields if needed
                 for key in ["id", "created_at", "updated_at", "user_id", "agent_id", "run_id"]:
@@ -707,14 +714,15 @@ class AsyncMemory(MemoryBase):
                 "query": query,
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "results_count": len(processed_results)
+                "results_count": len(transformed_results)
             })
             
             # Capture telemetry
             self.telemetry.capture_event("memory.search", {
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "results_count": len(processed_results)
+                "results_count": len(transformed_results),
+                "threshold": threshold
             })
             
             # Return in benchmark expected format
