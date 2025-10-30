@@ -877,27 +877,6 @@ class AsyncMemory(MemoryBase):
             logger.error(f"Failed to get all memories: {e}")
             raise
     
-    async def clear(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-    ) -> bool:
-        """Clear all memories for a user or agent asynchronously."""
-        try:
-            result = await self.storage.clear_memories_async(user_id, agent_id)
-            
-            if result:
-                await self.audit.log_event_async("memory.clear", {
-                    "user_id": user_id,
-                    "agent_id": agent_id
-                }, user_id=user_id, agent_id=agent_id)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Failed to clear memories: {e}")
-            raise
-    
     async def delete_all(
         self,
         user_id: Optional[str] = None,
@@ -925,6 +904,42 @@ class AsyncMemory(MemoryBase):
             
         except Exception as e:
             logger.error(f"Failed to delete all memories: {e}")
+            raise
+
+    async def reset(self):
+        """
+        Reset the memory store asynchronously by:
+            Deletes the vector store collection
+            Resets the database
+            Recreates the vector store with a new client
+        """
+        logger.warning("Resetting all memories")
+        
+        try:
+            # Reset vector store asynchronously
+            if hasattr(self.storage.vector_store, "reset"):
+                await asyncio.to_thread(self.storage.vector_store.reset)
+            else:
+                logger.warning("Vector store does not support reset. Skipping.")
+                await asyncio.to_thread(self.storage.vector_store.delete_col)
+                # Recreate vector store
+                from ..storage.factory import VectorStoreFactory
+                vector_store_config = self._get_component_config('vector_store')
+                self.storage.vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+                # Update storage adapter
+                self.storage = StorageAdapter(self.storage.vector_store, self.embedding)
+            
+            # Reset graph store if enabled
+            if self.enable_graph and hasattr(self.graph_store, "reset"):
+                await asyncio.to_thread(self.graph_store.reset)
+            
+            # Log telemetry event
+            self.telemetry.capture_event("memory.reset", {"sync_type": "async"})
+            
+            logger.info("Memory store reset completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to reset memory store: {e}")
             raise
 
     # No internal helpers are needed in core now; logic resides in plugin

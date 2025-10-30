@@ -155,19 +155,11 @@ class MemoryBase(ABC):
         pass
     
     @abstractmethod
-    def clear(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-    ) -> bool:
+    def reset(self) -> None:
         """
-        Clear all memories for a user or agent.
-        
-        Args:
-            user_id: Clear memories for specific user
-            agent_id: Clear memories for specific agent
-            
-        Returns:
-            True if cleared successfully, False otherwise
+        Reset the memory store by:
+            Deletes the vector store collection
+            Resets the database
+            Recreates the vector store with a new client
         """
         pass
