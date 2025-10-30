@@ -216,7 +216,7 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
-        use_intelligent_memory: bool = False,
+        infer: bool = False,
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
         try:
@@ -225,7 +225,7 @@ class AsyncMemory(MemoryBase):
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
             # Check if intelligent memory should be used
-            use_intel = use_intelligent_memory and isinstance(messages, list) and len(messages) > 0
+            use_intel = infer and isinstance(messages, list) and len(messages) > 0
             
             # If not using intelligent memory, fall back to simple mode
             if not use_intel:
@@ -326,8 +326,10 @@ class AsyncMemory(MemoryBase):
             "agent_id": agent_id
         })
         
-        # Add to graph store and get relations
-        graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
+        # Add to graph store and get relations (only if graph store is enabled)
+        graph_result = None
+        if self.enable_graph:
+            graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
         
         result = {
             "results": [{
@@ -465,7 +467,7 @@ class AsyncMemory(MemoryBase):
                             "id": mem_id,
                             "memory": action_text,
                             "event": event_type,
-                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response<｜place▁holder▁no▁303｜>
+                            "previous_memory": action.get("old_memory") 
                         })
                         action_counts["UPDATE"] += 1
                         
@@ -498,10 +500,12 @@ class AsyncMemory(MemoryBase):
             "results_count": len(results)
         })
         
-        # Add to graph store and get relations
-        graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
+        # Add to graph store and get relations (only if graph store is enabled)
+        graph_result = None
+        if self.enable_graph:
+            graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
         
-        # Log and return - match mem0 v1.1+ API format: {"results": [...]}
+        # API format: {"results": [...]}
         if results:
             result = {"results": results}
             if graph_result:

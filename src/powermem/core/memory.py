@@ -383,7 +383,7 @@ class Memory(MemoryBase):
         scope: Optional[str] = None,
         memory_type: Optional[str] = None,
         prompt: Optional[str] = None,
-        use_intelligent_memory: bool = False,
+        infer: bool = False,
     ) -> Dict[str, Any]:
         """Add a new memory with optional intelligent processing."""
         try:
@@ -392,10 +392,10 @@ class Memory(MemoryBase):
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
             # Check if intelligent memory should be used
-            use_intel = use_intelligent_memory and isinstance(messages, list) and len(messages) > 0
+            use_infer = infer and isinstance(messages, list) and len(messages) > 0
             
             # If not using intelligent memory, fall back to simple mode
-            if not use_intel:
+            if not use_infer:
                 return self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
             
             # Intelligent memory mode: extract facts, search similar memories, and consolidate
