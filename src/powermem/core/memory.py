@@ -861,7 +861,7 @@ class Memory(MemoryBase):
         """Search for memories."""
         try:
             # Generate query embedding
-            query_embedding = self.embedding.embed(query)
+            query_embedding = self.embedding.embed(query, memory_action="search")
             
 
             # Search in storage - pass query text to enable hybrid search

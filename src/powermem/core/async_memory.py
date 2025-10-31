@@ -694,7 +694,7 @@ class AsyncMemory(MemoryBase):
         """Search for memories asynchronously."""
         try:
             # Generate query embedding asynchronously
-            query_embedding = await self.embedding.embed_async(query)
+            query_embedding = await asyncio.to_thread(self.embedding.embed, query, memory_action="search")
             
 
             # Search in storage asynchronously - pass query text to enable hybrid search
