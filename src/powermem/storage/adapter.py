@@ -182,7 +182,7 @@ class StorageAdapter:
             
             memory = {
                 "id": memory_id,
-                "content": content,
+                "memory": content, 
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "score": score,
@@ -194,7 +194,8 @@ class StorageAdapter:
             # in vector_store.search(), so all returned results should already match the filters
             memories.append(memory)
         
-        return memories[:limit]
+        # Vector store already applied limit, no need to slice again
+        return memories
     
     def get_memory(
         self,
