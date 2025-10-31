@@ -118,17 +118,30 @@ class StorageAdapter:
                 # Result with payload attribute
                 payload = result.payload
                 memory_id = result.id
-                score = getattr(result, 'score', 1.0)
+                # Extract score - use 0.0 as default instead of 1.0 to avoid false high scores
+                # Score should always exist from vector search, but handle None case gracefully
+                score = getattr(result, 'score', None)
+                if score is None:
+                    logger.warning(f"Result {memory_id} missing score, using 0.0")
+                    score = 0.0
             elif hasattr(result, 'payload') and isinstance(result.payload, dict):
                 # Result with dict payload
                 payload = result.payload
                 memory_id = result.id
-                score = getattr(result, 'score', 1.0)
+                # Extract score - use 0.0 as default instead of 1.0
+                score = getattr(result, 'score', None)
+                if score is None:
+                    logger.warning(f"Result {memory_id} missing score, using 0.0")
+                    score = 0.0
             elif isinstance(result, dict):
                 # Direct dict result
                 payload = result
                 memory_id = result.get("id")
-                score = result.get("score", 1.0)
+                # Extract score - use 0.0 as default instead of 1.0
+                score = result.get("score")
+                if score is None:
+                    logger.warning(f"Result {memory_id} missing score, using 0.0")
+                    score = 0.0
             else:
                 continue
             
