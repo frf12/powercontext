@@ -55,13 +55,18 @@ class QwenEmbedding(EmbeddingBase):
         text = text.replace("\n", " ").strip()
 
         # Determine embedding type based on memory action
-        embedding_type = None
-        if memory_action == "add" and self.config.memory_add_embedding_type:
-            embedding_type = self.config.memory_add_embedding_type
-        elif memory_action == "search" and self.config.memory_search_embedding_type:
-            embedding_type = self.config.memory_search_embedding_type
-        elif memory_action == "update" and self.config.memory_update_embedding_type:
-            embedding_type = self.config.memory_update_embedding_type
+        # Default values for DashScope text-embedding-v4:
+        # - "document" for add/update (RETRIEVAL_DOCUMENT equivalent)
+        # - "query" for search (RETRIEVAL_QUERY equivalent)
+        if memory_action == "add":
+            embedding_type = self.config.memory_add_embedding_type or "document"
+        elif memory_action == "search":
+            embedding_type = self.config.memory_search_embedding_type or "query"
+        elif memory_action == "update":
+            embedding_type = self.config.memory_update_embedding_type or "document"
+        else:
+            # Default to "document" if memory_action is None or unknown
+            embedding_type = "document"
 
         try:
             # Prepare parameters
@@ -74,9 +79,8 @@ class QwenEmbedding(EmbeddingBase):
             if hasattr(self.config, 'embedding_dims') and self.config.embedding_dims:
                 params["dimension"] = self.config.embedding_dims
 
-            # Add embedding type if specified
-            if embedding_type:
-                params["text_type"] = embedding_type
+            # Add embedding type (always set, either from config or default)
+            params["text_type"] = embedding_type
 
             # Call the API
             response = TextEmbedding.call(**params)

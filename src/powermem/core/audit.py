@@ -52,7 +52,6 @@ class AuditLogger:
         details: Dict[str, Any],
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
     ) -> None:
         """
         Log an audit event.
@@ -62,7 +61,6 @@ class AuditLogger:
             details: Event details
             user_id: User ID associated with the event
             agent_id: Agent ID associated with the event
-            ip_address: IP address of the client
         """
         if not self.enabled:
             return
@@ -73,7 +71,6 @@ class AuditLogger:
                 "event_type": event_type,
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "ip_address": ip_address,
                 "details": details,
                 "version": "0.1.0",
             }
@@ -94,7 +91,6 @@ class AuditLogger:
         details: Dict[str, Any],
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
     ) -> None:
         """
         Log an audit event asynchronously.
@@ -104,11 +100,10 @@ class AuditLogger:
             details: Event details
             user_id: User ID associated with the event
             agent_id: Agent ID associated with the event
-            ip_address: IP address of the client
         """
         # For now, just call the sync version
         # In a real implementation, this would use async file I/O
-        self.log_event(event_type, details, user_id, agent_id, ip_address)
+        self.log_event(event_type, details, user_id, agent_id)
     
     def log_access(
         self,
@@ -118,7 +113,6 @@ class AuditLogger:
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         success: bool = True,
-        ip_address: Optional[str] = None,
     ) -> None:
         """
         Log access to resources.
@@ -130,7 +124,6 @@ class AuditLogger:
             user_id: User ID
             agent_id: Agent ID
             success: Whether the action was successful
-            ip_address: IP address of the client
         """
         self.log_event(
             "access",
@@ -142,7 +135,6 @@ class AuditLogger:
             },
             user_id=user_id,
             agent_id=agent_id,
-            ip_address=ip_address,
         )
     
     def log_security_event(
@@ -152,7 +144,6 @@ class AuditLogger:
         details: Dict[str, Any],
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
     ) -> None:
         """
         Log security-related events.
@@ -163,7 +154,6 @@ class AuditLogger:
             details: Event details
             user_id: User ID
             agent_id: Agent ID
-            ip_address: IP address of the client
         """
         self.log_event(
             "security",
@@ -174,7 +164,6 @@ class AuditLogger:
             },
             user_id=user_id,
             agent_id=agent_id,
-            ip_address=ip_address,
         )
     
     def log_data_change(

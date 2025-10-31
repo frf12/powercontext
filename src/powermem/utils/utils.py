@@ -246,6 +246,82 @@ def remove_code_blocks(content: str) -> str:
     return match.group(1).strip() if match else content.strip()
 
 
+def get_image_description(image_obj: Any, llm: Any, vision_details: Any) -> str:
+    """
+    - image_obj can be a URL string, or a prebuilt multimodal message (list/dict).
+    - vision_details can be "auto" or a dict; when dict we use detail = dict.get("detail", "auto").
+    """
+    # Normalize detail to a simple value as mem0 does
+    detail = vision_details
+    if isinstance(vision_details, dict):
+        detail = vision_details.get("detail", "auto")
+    if detail is None:
+        detail = "auto"
+
+    if isinstance(image_obj, str):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "A user is providing an image. Provide a high level description of the image and do not include any additional text.",
+                    },
+                    {"type": "image_url", "image_url": {"url": image_obj, "detail": detail}},
+                ],
+            },
+        ]
+    else:
+        messages = [image_obj]
+
+    return llm.generate_response(messages=messages)
+
+
+def parse_vision_messages(messages: List[Dict[str, Any]], llm: Any = None, vision_details: Any = "auto") -> List[Dict[str, Any]]:
+    """
+    mem0-compatible vision message parser.
+    
+    Assumes input is already a list of message dicts with 'role' and 'content' fields.
+    This matches mem0's design where input normalization happens before calling this function.
+
+    Rules (mirrors mem0.memory.utils.parse_vision_messages):
+    - Keep system messages unchanged.
+    - If message.content is a list (multimodal blocks), call get_image_description and replace content with returned text.
+    - If message.content is a dict with type == "image_url", call get_image_description(url, ...) and replace content with returned text.
+    - Otherwise keep the original message (regular text).
+    - When llm is None, behave as pass-through for all messages.
+    """
+    returned_messages: List[Dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict) or "role" not in msg or "content" not in msg:
+            continue
+
+        if msg["role"] == "system":
+            returned_messages.append(msg)
+            continue
+
+        # If LLM not provided, passthrough without image description
+        if llm is None:
+            returned_messages.append(msg)
+            continue
+
+        content = msg["content"]
+        if isinstance(content, list):
+            description = get_image_description(msg, llm, vision_details)
+            returned_messages.append({"role": msg["role"], "content": description})
+        elif isinstance(content, dict) and content.get("type") == "image_url":
+            image_url = content.get("image_url", {}).get("url")
+            try:
+                description = get_image_description(image_url, llm, vision_details)
+                returned_messages.append({"role": msg["role"], "content": description})
+            except Exception:
+                raise Exception(f"Error while downloading {image_url}.")
+        else:
+            returned_messages.append(msg)
+
+    return returned_messages
+
+
 def load_config_from_env() -> Dict[str, Any]:
     """
     Load configuration from environment variables.

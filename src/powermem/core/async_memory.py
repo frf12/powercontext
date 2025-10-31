@@ -21,7 +21,7 @@ from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
-from ..utils.utils import remove_code_blocks
+from ..utils.utils import remove_code_blocks, parse_vision_messages
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -64,6 +64,14 @@ class AsyncMemory(MemoryBase):
         vector_store = VectorStoreFactory.create(storage_type, self.config)
         self.llm = LLMFactory.create(llm_provider, self.config)
         self.embedding = EmbedderFactory.create(embedding_provider, self.config)
+        
+        # Extract graph_store config (simplified version for dict config)
+        graph_store_cfg = self.config.get('graph_store', {})
+        self.enable_graph = graph_store_cfg.get('enabled', False) if isinstance(graph_store_cfg, dict) else False
+        self.graph_store = None
+        if self.enable_graph:
+            graph_store_config = graph_store_cfg.get('config', {}) if isinstance(graph_store_cfg, dict) else {}
+            self.graph_store = GraphStoreFactory.create(storage_type, graph_store_config)
         
         # Use StorageAdapter like Memory class
         self.storage = StorageAdapter(vector_store, self.embedding)
@@ -119,14 +127,18 @@ class AsyncMemory(MemoryBase):
             user_prompt = f"Input:\n{conversation}"
             
             # Call LLM to extract facts asynchronously
-            response = await asyncio.to_thread(
-                self.llm.generate_response,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"}
-            )
+            try:
+                response = await asyncio.to_thread(
+                    self.llm.generate_response,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+            except Exception as e:
+                logger.error(f"Error in fact extraction: {e}")
+                response = ""
             
             # Parse response
             try:
@@ -136,8 +148,8 @@ class AsyncMemory(MemoryBase):
                 facts = facts_data.get("facts", [])
                 logger.debug(f"Extracted {len(facts)} facts: {facts}")
                 return facts
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse LLM response as JSON: {response}")
+            except Exception as e:
+                logger.error(f"Error in new_retrieved_facts: {e}")
                 return []
                 
         except Exception as e:
@@ -180,20 +192,24 @@ class AsyncMemory(MemoryBase):
             update_prompt = get_memory_update_prompt(old_memory, new_facts)
             
             # Call LLM asynchronously
-            response = await asyncio.to_thread(
-                self.llm.generate_response,
-                messages=[{"role": "user", "content": update_prompt}],
-                response_format={"type": "json_object"}
-            )
+            try:
+                response = await asyncio.to_thread(
+                    self.llm.generate_response,
+                    messages=[{"role": "user", "content": update_prompt}],
+                    response_format={"type": "json_object"}
+                )
+            except Exception as e:
+                logger.error(f"Error in new memory actions response: {e}")
+                response = ""
             
             # Parse response
             try:
+                response = remove_code_blocks(response)
                 actions_data = json.loads(response)
                 actions = actions_data.get("memory", [])
                 return actions
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse memory actions JSON: {e}")
-                logger.debug(f"Response was: {response}")
+            except Exception as e:
+                logger.error(f"Invalid JSON response: {e}")
                 return []
                 
         except Exception as e:
@@ -208,7 +224,7 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
-        use_intelligent_memory: bool = True,
+        infer: bool = True,
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
         try:
@@ -216,11 +232,30 @@ class AsyncMemory(MemoryBase):
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
+            # Normalize input format (mem0-compatible)
+            if isinstance(messages, str):
+                messages = [{"role": "user", "content": messages}]
+            elif isinstance(messages, dict):
+                messages = [messages]
+            elif not isinstance(messages, list):
+                raise ValueError("messages must be str, dict, or list[dict]")
+            
+            # Vision-aware message processing (mem0-compatible behavior)
+            llm_cfg = {}
+            try:
+                llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
+            except Exception:
+                llm_cfg = {}
+            if llm_cfg.get("enable_vision"):
+                messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"))
+            else:
+                messages = parse_vision_messages(messages)
+            
             # Check if intelligent memory should be used
-            use_intel = use_intelligent_memory and isinstance(messages, list) and len(messages) > 0
+            use_infer = infer and isinstance(messages, list) and len(messages) > 0
             
             # If not using intelligent memory, fall back to simple mode
-            if not use_intel:
+            if not use_infer:
                 return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
             
             # Intelligent memory mode: extract facts, search similar memories, and consolidate
@@ -257,7 +292,7 @@ class AsyncMemory(MemoryBase):
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
         # Generate embedding asynchronously
-        embedding = await self.embedding.embed_async(content)
+        embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -309,7 +344,7 @@ class AsyncMemory(MemoryBase):
             "user_id": user_id,
             "agent_id": agent_id,
             "content_length": len(content)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
         # Capture telemetry
         self.telemetry.capture_event("memory.add", {
@@ -318,15 +353,26 @@ class AsyncMemory(MemoryBase):
             "agent_id": agent_id
         })
         
-        return {
-            "id": memory_id,
-            "content": content,
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "run_id": run_id,
-            "metadata": enhanced_metadata,
-            "created_at": memory_data["created_at"],
+        # Add to graph store and get relations (only if graph store is enabled)
+        graph_result = None
+        if self.enable_graph:
+            graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
+        
+        result = {
+            "results": [{
+                "id": memory_id,
+                "memory": content,
+                "event": "ADD",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "metadata": enhanced_metadata,
+                "created_at": memory_data["created_at"],
+            }]
         }
+        if graph_result:
+            result["relations"] = graph_result
+        return result
     
     async def _intelligent_add_async(
         self,
@@ -353,7 +399,7 @@ class AsyncMemory(MemoryBase):
         fact_embeddings = {}
         
         for fact in facts:
-            fact_embedding = await self.embedding.embed_async(fact)
+            fact_embedding = await asyncio.to_thread(self.embedding.embed, fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
             
             # Search for similar memories with reduced limit to reduce noise
@@ -388,18 +434,27 @@ class AsyncMemory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Step 3: Let LLM decide memory actions
-        actions = await self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
+        # Mapping UUIDs with integers for handling UUID hallucinations (mem0 compatibility)
+        temp_uuid_mapping = {}
+        for idx, item in enumerate(existing_memories):
+            temp_uuid_mapping[str(idx)] = item["id"]
+            existing_memories[idx]["id"] = str(idx)
         
-        logger.info(f"LLM decided on {len(actions)} memory actions")
+        # Step 3: Let LLM decide memory actions (only if we have new facts)
+        actions = []
+        if facts:
+            actions = await self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
+            logger.info(f"LLM decided on {len(actions)} memory actions")
+        else:
+            logger.debug("No new facts, skipping LLM decision step")
         
         # Step 4: Execute actions
         results = []
         action_counts = {"ADD": 0, "UPDATE": 0, "DELETE": 0, "NONE": 0}
         
         if not actions:
-            logger.warning("No actions returned from LLM, falling back to simple mode")
-            return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+            logger.debug("No actions to execute, returning empty results")
+            return {"results": []}
         
         for action in actions:
             action_text = action.get("text", "") or action.get("memory", "")
@@ -433,37 +488,39 @@ class AsyncMemory(MemoryBase):
                     action_counts["ADD"] += 1
                     
                 elif event_type == "UPDATE":
-                    # Find the corresponding existing memory ID
-                    existing_mem = next((m for m in existing_memories if str(m.get("id")) == str(action_id)), None)
-                    if existing_mem:
-                        mem_id = existing_mem["id"]
+                    # Use UUID mapping to get the real memory ID
+                    real_memory_id = temp_uuid_mapping.get(str(action_id))
+                    if real_memory_id:
                         await self._update_memory_async(
-                            memory_id=mem_id,
+                            memory_id=real_memory_id,
                             content=action_text,
                             user_id=user_id,
                             agent_id=agent_id,
                             existing_embeddings=fact_embeddings
                         )
                         results.append({
-                            "id": mem_id,
+                            "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type,
-                            "old_memory": action.get("old_memory")
+                            "previous_memory": action.get("old_memory")
                         })
                         action_counts["UPDATE"] += 1
+                    else:
+                        logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "DELETE":
-                    # Find the corresponding existing memory ID
-                    existing_mem = next((m for m in existing_memories if str(m.get("id")) == str(action_id)), None)
-                    if existing_mem:
-                        mem_id = existing_mem["id"]
-                        await self.delete_async(mem_id, user_id, agent_id)
+                    # Use UUID mapping to get the real memory ID
+                    real_memory_id = temp_uuid_mapping.get(str(action_id))
+                    if real_memory_id:
+                        await self.delete_async(real_memory_id, user_id, agent_id)
                         results.append({
-                            "id": mem_id,
+                            "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type
                         })
                         action_counts["DELETE"] += 1
+                    else:
+                        logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "NONE":
                     logger.debug("No action needed for memory")
@@ -479,16 +536,63 @@ class AsyncMemory(MemoryBase):
             "facts_count": len(facts),
             "action_counts": action_counts,
             "results_count": len(results)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
-        # Log and return
+        # Add to graph store and get relations (only if graph store is enabled)
+        graph_result = None
+        if self.enable_graph:
+            graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
+        
+        # API format: {"results": [...]}
         if results:
-            result = results[0]  # Return the first result for compatibility
+            result = {"results": results}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
         else:
             # Fallback to simple mode
             return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+    
+    async def _add_to_graph_async(
+        self,
+        messages,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Add messages to graph store and return relations asynchronously.
+        Matches mem0's _add_to_graph behavior.
         
-        return result
+        Returns:
+            dict with added_entities and deleted_entities, or None if graph store is disabled
+        """
+        if not self.enable_graph:
+            return None
+        
+        # Extract content from messages for graph processing (matching mem0)
+        if isinstance(messages, str):
+            data = messages
+        elif isinstance(messages, dict):
+            data = messages.get("content", "")
+        elif isinstance(messages, list):
+            data = "\n".join([
+                msg.get("content", "") 
+                for msg in messages 
+                if isinstance(msg, dict) and msg.get("content") and msg.get("role") != "system"
+            ])
+        else:
+            data = ""
+        
+        if not data:
+            return None
+        
+        graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+        if graph_filters.get("user_id") is None:
+            graph_filters["user_id"] = "user"
+        
+        return self.graph_store.add(data, graph_filters)
     
     async def _create_memory_async(
         self,
@@ -509,7 +613,7 @@ class AsyncMemory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = await self.embedding.embed_async(content)
+            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -561,7 +665,7 @@ class AsyncMemory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = await self.embedding.embed_async(content)
+            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -585,11 +689,12 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
+        threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search for memories asynchronously."""
         try:
             # Generate query embedding asynchronously
-            query_embedding = await self.embedding.embed_async(query)
+            query_embedding = await asyncio.to_thread(self.embedding.embed, query, memory_action="search")
             
 
             # Search in storage asynchronously - pass query text to enable hybrid search
@@ -625,10 +730,16 @@ class AsyncMemory(MemoryBase):
             # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
+                score = result.get("score", 0.0)
+                # Apply threshold filtering (mem0 compatible)
+                # Only include results if threshold is None or score >= threshold
+                if threshold is not None and score < threshold:
+                    continue
+                
                 transformed_result = {
                     "memory": result.get("content", ""),  # Map "content" to "memory"
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
-                    "score": result.get("score", 0.0),
+                    "score": score,
                 }
                 # Preserve other fields if needed
                 for key in ["id", "created_at", "updated_at", "user_id", "agent_id", "run_id"]:
@@ -641,14 +752,15 @@ class AsyncMemory(MemoryBase):
                 "query": query,
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "results_count": len(processed_results)
-            })
+                "results_count": len(transformed_results)
+            }, user_id=user_id, agent_id=agent_id)
             
             # Capture telemetry
             self.telemetry.capture_event("memory.search", {
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "results_count": len(processed_results)
+                "results_count": len(transformed_results),
+                "threshold": threshold
             })
             
             # Return in benchmark expected format
@@ -684,7 +796,7 @@ class AsyncMemory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -703,7 +815,7 @@ class AsyncMemory(MemoryBase):
         """Update an existing memory asynchronously."""
         try:
             # Generate new embedding asynchronously
-            embedding = await self.embedding.embed_async(content)
+            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
             
             # Disabled LLM-based importance evaluation to save tokens
             # Process with intelligence manager
@@ -726,7 +838,7 @@ class AsyncMemory(MemoryBase):
                 "memory_id": memory_id,
                 "user_id": user_id,
                 "agent_id": agent_id
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -749,7 +861,7 @@ class AsyncMemory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -776,33 +888,12 @@ class AsyncMemory(MemoryBase):
                 "limit": limit,
                 "offset": offset,
                 "results_count": len(results)
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             return results
             
         except Exception as e:
             logger.error(f"Failed to get all memories: {e}")
-            raise
-    
-    async def clear(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-    ) -> bool:
-        """Clear all memories for a user or agent asynchronously."""
-        try:
-            result = await self.storage.clear_memories_async(user_id, agent_id)
-            
-            if result:
-                await self.audit.log_event_async("memory.clear", {
-                    "user_id": user_id,
-                    "agent_id": agent_id
-                })
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Failed to clear memories: {e}")
             raise
     
     async def delete_all(
@@ -820,7 +911,7 @@ class AsyncMemory(MemoryBase):
                     "user_id": user_id,
                     "agent_id": agent_id,
                     "run_id": run_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
                 
                 self.telemetry.capture_event("memory.delete_all", {
                     "user_id": user_id,
@@ -832,6 +923,42 @@ class AsyncMemory(MemoryBase):
             
         except Exception as e:
             logger.error(f"Failed to delete all memories: {e}")
+            raise
+
+    async def reset(self):
+        """
+        Reset the memory store asynchronously by:
+            Deletes the vector store collection
+            Resets the database
+            Recreates the vector store with a new client
+        """
+        logger.warning("Resetting all memories")
+        
+        try:
+            # Reset vector store asynchronously
+            if hasattr(self.storage.vector_store, "reset"):
+                await asyncio.to_thread(self.storage.vector_store.reset)
+            else:
+                logger.warning("Vector store does not support reset. Skipping.")
+                await asyncio.to_thread(self.storage.vector_store.delete_col)
+                # Recreate vector store
+                from ..storage.factory import VectorStoreFactory
+                vector_store_config = self._get_component_config('vector_store')
+                self.storage.vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+                # Update storage adapter
+                self.storage = StorageAdapter(self.storage.vector_store, self.embedding)
+            
+            # Reset graph store if enabled
+            if self.enable_graph and hasattr(self.graph_store, "reset"):
+                await asyncio.to_thread(self.graph_store.reset)
+            
+            # Log telemetry event
+            self.telemetry.capture_event("memory.reset", {"sync_type": "async"})
+            
+            logger.info("Memory store reset completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to reset memory store: {e}")
             raise
 
     # No internal helpers are needed in core now; logic resides in plugin

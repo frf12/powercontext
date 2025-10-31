@@ -441,6 +441,177 @@ def demonstrate_unified_api():
             print(f"  ❌ {mode}: Error - {e}")
 
 
+def demonstrate_delete_all():
+    """Demonstrate delete_all functionality."""
+    print("\n🗑️ Delete All Memories Demo")
+    print("=" * 50)
+    
+    config = load_oceanbase_config()
+    agent_memory = AgentMemory(config, mode='multi_user')
+    
+    print("📝 Adding memories for different users...")
+    
+    # Add memories for Alice
+    agent_memory.add(
+        "Alice likes Python programming",
+        user_id="alice",
+        metadata={"category": "preference"}
+    )
+    
+    agent_memory.add(
+        "Alice prefers email notifications",
+        user_id="alice",
+        metadata={"category": "preference"}
+    )
+    
+    # Add memories for Bob
+    agent_memory.add(
+        "Bob prefers Java programming",
+        user_id="bob",
+        metadata={"category": "preference"}
+    )
+    
+    print("✅ Memories added successfully!")
+    
+    # Check memories before deletion
+    print("\n🔍 Checking memories before deletion...")
+    alice_memories = agent_memory.get_all(user_id="alice")
+    bob_memories = agent_memory.get_all(user_id="bob")
+    all_memories = agent_memory.get_all()
+    
+    print(f"  Alice has {len(alice_memories)} memories")
+    print(f"  Bob has {len(bob_memories)} memories")
+    print(f"  Total memories: {len(all_memories)}")
+    
+    # Delete all memories for Alice
+    print("\n🗑️ Testing delete_all for user 'alice'...")
+    try:
+        deleted_alice = agent_memory.delete_all(user_id="alice")
+        print(f"  ✅ Delete all for Alice: {'Success' if deleted_alice else 'Failed'}")
+    except Exception as e:
+        print(f"  ❌ Error during delete_all: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Verify deletion
+    print("\n🔍 Verifying deletion...")
+    alice_memories_after = agent_memory.get_all(user_id="alice")
+    bob_memories_after = agent_memory.get_all(user_id="bob")
+    all_memories_after = agent_memory.get_all()
+    
+    print(f"  Alice has {len(alice_memories_after)} memories (deleted: {len(alice_memories) - len(alice_memories_after)})")
+    print(f"  Bob has {len(bob_memories_after)} memories (unchanged: {len(bob_memories) == len(bob_memories_after)})")
+    print(f"  Total memories: {len(all_memories_after)} (reduced by {len(all_memories) - len(all_memories_after)})")
+    
+    # Test delete_all with agent_id
+    print("\n🗑️ Testing delete_all with agent_id...")
+    agent_memory.add(
+        "Test memory with agent_id",
+        user_id="test_user",
+        agent_id="test_agent",
+        metadata={"test": True}
+    )
+    
+    memories_before = agent_memory.get_all(agent_id="test_agent")
+    print(f"  Memories with test_agent before: {len(memories_before)}")
+    
+    try:
+        deleted_agent = agent_memory.delete_all(agent_id="test_agent")
+        print(f"  ✅ Delete all for test_agent: {'Success' if deleted_agent else 'Failed'}")
+    except Exception as e:
+        print(f"  ❌ Error during delete_all with agent_id: {e}")
+    
+    memories_after = agent_memory.get_all(agent_id="test_agent")
+    print(f"  Memories with test_agent after: {len(memories_after)}")
+    
+    print("\n✅ Delete all demonstration completed!")
+
+
+def demonstrate_reset():
+    """Demonstrate reset functionality."""
+    print("\n🔄 Reset Memory Store Demo")
+    print("=" * 50)
+    
+    config = load_oceanbase_config()
+    agent_memory = AgentMemory(config, mode='auto')
+    
+    print("📝 Adding memories before reset...")
+    
+    # Add various memories
+    agent_memory.add(
+        "Important memory: User prefers dark mode",
+        user_id="user1",
+        agent_id="agent1",
+        metadata={"priority": "high"}
+    )
+    
+    agent_memory.add(
+        "Another memory: Customer budget is $5000",
+        user_id="user2",
+        agent_id="agent2",
+        metadata={"priority": "medium"}
+    )
+    
+    agent_memory.add(
+        "Third memory: System configuration details",
+        user_id="user3",
+        agent_id="agent3",
+        metadata={"priority": "low"}
+    )
+    
+    print("✅ Memories added successfully!")
+    
+    # Check statistics before reset
+    print("\n📊 Statistics before reset:")
+    stats_before = agent_memory.get_statistics()
+    all_memories_before = agent_memory.get_all()
+    
+    print(f"  Total memories: {len(all_memories_before)}")
+    print(f"  Statistics: {stats_before}")
+    
+    # Perform reset
+    print("\n🔄 Resetting memory store...")
+    try:
+        agent_memory.reset()
+        print("  ✅ Reset completed successfully!")
+    except Exception as e:
+        print(f"  ❌ Error during reset: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+    
+    # Verify reset
+    print("\n🔍 Verifying reset...")
+    all_memories_after = agent_memory.get_all()
+    stats_after = agent_memory.get_statistics()
+    
+    print(f"  Total memories after reset: {len(all_memories_after)}")
+    print(f"  Statistics after reset: {stats_after}")
+    
+    if len(all_memories_after) == 0:
+        print("  ✅ Reset successful - all memories cleared!")
+    else:
+        print(f"  ⚠️ Warning: {len(all_memories_after)} memories still exist after reset")
+    
+    # Add new memory after reset to verify system still works
+    print("\n📝 Adding new memory after reset...")
+    try:
+        new_memory = agent_memory.add(
+            "New memory after reset",
+            user_id="new_user",
+            metadata={"test": "after_reset"}
+        )
+        print(f"  ✅ New memory added successfully: {new_memory.get('id', 'N/A')}")
+        
+        # Verify new memory can be retrieved
+        search_results = agent_memory.search("new memory", user_id="new_user")
+        print(f"  ✅ Found {len(search_results)} memories after reset")
+    except Exception as e:
+        print(f"  ❌ Error adding memory after reset: {e}")
+    
+    print("\n✅ Reset demonstration completed!")
+
+
 def main():
     """Main function to run the unified agent memory demo."""
     print("🚀 Unified Agent Memory Management Demo")
@@ -459,6 +630,8 @@ def main():
         demonstrate_intelligent_memory()
         demonstrate_ebbinghaus_algorithm()
         demonstrate_unified_api()
+        demonstrate_delete_all()
+        demonstrate_reset()
         
         print("\n🎉 Unified Agent Memory Demo Completed Successfully!")
         print("=" * 60)
@@ -472,6 +645,8 @@ def main():
         print("  • Detailed Ebbinghaus forgetting curve demonstration")
         print("  • Review schedule generation and decay calculation")
         print("  • Unified API across all modes")
+        print("  • Delete all memories functionality")
+        print("  • Reset memory store functionality")
         print("  • Simple, consistent interface")
         print("  • No mem0 dependencies")
         

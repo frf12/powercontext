@@ -74,7 +74,7 @@ def scenario_1_initial_addition(memory, user_id="user_001"):
         messages=messages,
         user_id=user_id,
         agent_id="demo_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Added memory with ID: {result['id']}")
@@ -110,7 +110,7 @@ def scenario_2_duplicate_detection(memory, user_id="user_001"):
         messages=messages,
         user_id=user_id,
         agent_id="demo_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Processed with ID: {result['id']}")
@@ -145,7 +145,7 @@ def scenario_3_information_update(memory, user_id="user_001"):
         messages=messages,
         user_id=user_id,
         agent_id="demo_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Processed with ID: {result['id']}")
@@ -186,7 +186,7 @@ def scenario_4_new_information(memory, user_id="user_001"):
         messages=messages,
         user_id=user_id,
         agent_id="demo_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Processed with ID: {result['id']}")
@@ -224,7 +224,7 @@ def scenario_5_conflict_resolution(memory, user_id="user_001"):
         messages=messages,
         user_id=user_id,
         agent_id="demo_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Processed with ID: {result['id']}")
@@ -264,7 +264,7 @@ def scenario_6_memory_consolidation(memory, user_id="user_001"):
         messages=messages,
         user_id=user_id,
         agent_id="demo_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Processed with ID: {result['id']}")
@@ -345,7 +345,7 @@ async def demo_async_memory_operations():
         messages=messages,
         user_id="user_002",
         agent_id="async_agent",
-        use_intelligent_memory=True
+        infer=True
     )
     
     print(f"\n✅ Async memory added with ID: {result['id']}")
@@ -385,12 +385,12 @@ def compare_modes():
     ]
     
     # Simple mode
-    print("\n1️⃣ SIMPLE MODE (use_intelligent_memory=False):")
+    print("\n1️⃣ SIMPLE MODE (infer=False):")
     for i, msg in enumerate(test_messages, 1):
         result = memory.add(
             messages=[msg],
             user_id="test_user",
-            use_intelligent_memory=False
+            infer=False
         )
         print(f"   Add {i}: Memory ID {result['id']}")
     
@@ -401,12 +401,12 @@ def compare_modes():
     memory.delete_all(user_id="test_user")
     
     # Intelligent mode
-    print("\n2️⃣ INTELLIGENT MODE (use_intelligent_memory=True):")
+    print("\n2️⃣ INTELLIGENT MODE (infer=True):")
     for i, msg in enumerate(test_messages, 1):
         result = memory.add(
             messages=[msg],
             user_id="test_user",
-            use_intelligent_memory=True
+            infer=True
         )
         print(f"   Add {i}: Memory ID {result['id']}")
     

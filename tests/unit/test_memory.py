@@ -94,7 +94,7 @@ class TestMemory:
         memory.add("Memory 2", user_id="test_user")
         
         # Clear memories
-        cleared = memory.clear(user_id="test_user")
+        cleared = memory.delete_all(user_id="test_user")
         
         assert cleared is True
         

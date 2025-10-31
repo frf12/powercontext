@@ -21,7 +21,7 @@ from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
-from ..utils.utils import remove_code_blocks, convert_config_object_to_dict
+from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -290,13 +290,17 @@ class Memory(MemoryBase):
             user_prompt = f"Input:\n{conversation}"
             
             # Call LLM to extract facts
-            response = self.llm.generate_response(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"}
-            )
+            try:
+                response = self.llm.generate_response(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+            except Exception as e:
+                logger.error(f"Error in fact extraction: {e}")
+                response = ""
             
             # Parse response
             try:
@@ -309,8 +313,8 @@ class Memory(MemoryBase):
                 logger.debug(f"Extracted {len(facts)} facts: {facts}")
                 
                 return facts
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse LLM response as JSON: {response}")
+            except Exception as e:
+                logger.error(f"Error in new_retrieved_facts: {e}")
                 return []
                 
         except Exception as e:
@@ -353,19 +357,23 @@ class Memory(MemoryBase):
             update_prompt = get_memory_update_prompt(old_memory, new_facts)
             
             # Call LLM
-            response = self.llm.generate_response(
-                messages=[{"role": "user", "content": update_prompt}],
-                response_format={"type": "json_object"}
-            )
+            try:
+                response = self.llm.generate_response(
+                    messages=[{"role": "user", "content": update_prompt}],
+                    response_format={"type": "json_object"}
+                )
+            except Exception as e:
+                logger.error(f"Error in new memory actions response: {e}")
+                response = ""
             
             # Parse response
             try:
+                response = remove_code_blocks(response)
                 actions_data = json.loads(response)
                 actions = actions_data.get("memory", [])
                 return actions
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse memory actions JSON: {e}")
-                logger.debug(f"Response was: {response}")
+            except Exception as e:
+                logger.error(f"Invalid JSON response: {e}")
                 return []
                 
         except Exception as e:
@@ -383,7 +391,7 @@ class Memory(MemoryBase):
         scope: Optional[str] = None,
         memory_type: Optional[str] = None,
         prompt: Optional[str] = None,
-        use_intelligent_memory: bool = True,
+        infer: bool = True,
     ) -> Dict[str, Any]:
         """Add a new memory with optional intelligent processing."""
         try:
@@ -391,11 +399,30 @@ class Memory(MemoryBase):
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
+            # Normalize input format (mem0-compatible)
+            if isinstance(messages, str):
+                messages = [{"role": "user", "content": messages}]
+            elif isinstance(messages, dict):
+                messages = [messages]
+            elif not isinstance(messages, list):
+                raise ValueError("messages must be str, dict, or list[dict]")
+            
+            # Vision-aware message processing (mem0-compatible behavior)
+            llm_cfg = {}
+            try:
+                llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
+            except Exception:
+                llm_cfg = {}
+            if llm_cfg.get("enable_vision"):
+                messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"))
+            else:
+                messages = parse_vision_messages(messages)
+            
             # Check if intelligent memory should be used
-            use_intel = use_intelligent_memory and isinstance(messages, list) and len(messages) > 0
+            use_infer = infer and isinstance(messages, list) and len(messages) > 0
             
             # If not using intelligent memory, fall back to simple mode
-            if not use_intel:
+            if not use_infer:
                 return self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
             
             # Intelligent memory mode: extract facts, search similar memories, and consolidate
@@ -435,7 +462,7 @@ class Memory(MemoryBase):
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
         # Generate embedding
-        embedding = self.embedding.embed(content)
+        embedding = self.embedding.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -482,18 +509,13 @@ class Memory(MemoryBase):
         
         memory_id = self.storage.add_memory(memory_data)
         
-        # Add to graph store
-        if self.enable_graph:
-            graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
-            self.graph_store.add(content, graph_filters)
-        
         # Log audit event
         self.audit.log_event("memory.add", {
             "memory_id": memory_id,
             "user_id": user_id,
             "agent_id": agent_id,
             "content_length": len(content)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
         # Capture telemetry
         self.telemetry.capture_event("memory.add", {
@@ -502,15 +524,23 @@ class Memory(MemoryBase):
             "agent_id": agent_id
         })
         
-        return {
-            "id": memory_id,
-            "content": content,
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "run_id": run_id,
-            "metadata": metadata,
-            "created_at": memory_data["created_at"].isoformat() if isinstance(memory_data["created_at"], datetime) else memory_data["created_at"],
+        graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
+        
+        result = {
+            "results": [{
+                "id": memory_id,
+                "memory": content,
+                "event": "ADD",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "metadata": metadata,
+                "created_at": memory_data["created_at"].isoformat() if isinstance(memory_data["created_at"], datetime) else memory_data["created_at"],
+            }]
         }
+        if graph_result:
+            result["relations"] = graph_result
+        return result
     
     def _intelligent_add(
         self,
@@ -540,7 +570,7 @@ class Memory(MemoryBase):
         fact_embeddings = {}
         
         for fact in facts:
-            fact_embedding = self.embedding.embed(fact)
+            fact_embedding = self.embedding.embed(fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
             
             # Search for similar memories with reduced limit to reduce noise
@@ -575,10 +605,19 @@ class Memory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Step 3: Let LLM decide memory actions
-        actions = self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
+        # Mapping UUIDs with integers for handling UUID hallucinations (mem0 compatibility)
+        temp_uuid_mapping = {}
+        for idx, item in enumerate(existing_memories):
+            temp_uuid_mapping[str(idx)] = item["id"]
+            existing_memories[idx]["id"] = str(idx)
         
-        logger.info(f"LLM decided on {len(actions)} memory actions")
+        # Step 3: Let LLM decide memory actions (only if we have new facts)
+        actions = []
+        if facts:
+            actions = self._decide_memory_actions(facts, existing_memories, user_id, agent_id)
+            logger.info(f"LLM decided on {len(actions)} memory actions")
+        else:
+            logger.debug("No new facts, skipping LLM decision step")
         
         # Step 4: Execute actions
         results = []
@@ -620,37 +659,39 @@ class Memory(MemoryBase):
                     action_counts["ADD"] += 1
                     
                 elif event_type == "UPDATE":
-                    # Find the corresponding existing memory ID
-                    existing_mem = next((m for m in existing_memories if str(m.get("id")) == str(action_id)), None)
-                    if existing_mem:
-                        mem_id = existing_mem["id"]
+                    # Use UUID mapping to get the real memory ID
+                    real_memory_id = temp_uuid_mapping.get(str(action_id))
+                    if real_memory_id:
                         self._update_memory(
-                            memory_id=mem_id,
+                            memory_id=real_memory_id,
                             content=action_text,
                             user_id=user_id,
                             agent_id=agent_id,
                             existing_embeddings=fact_embeddings
                         )
                         results.append({
-                            "id": mem_id,
+                            "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type,
-                            "old_memory": action.get("old_memory")
+                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response
                         })
                         action_counts["UPDATE"] += 1
+                    else:
+                        logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "DELETE":
-                    # Find the corresponding existing memory ID
-                    existing_mem = next((m for m in existing_memories if str(m.get("id")) == str(action_id)), None)
-                    if existing_mem:
-                        mem_id = existing_mem["id"]
-                        self.delete(mem_id, user_id, agent_id)
+                    # Use UUID mapping to get the real memory ID
+                    real_memory_id = temp_uuid_mapping.get(str(action_id))
+                    if real_memory_id:
+                        self.delete(real_memory_id, user_id, agent_id)
                         results.append({
-                            "id": mem_id,
+                            "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type
                         })
                         action_counts["DELETE"] += 1
+                    else:
+                        logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "NONE":
                     logger.debug("No action needed for memory")
@@ -666,16 +707,59 @@ class Memory(MemoryBase):
             "facts_count": len(facts),
             "action_counts": action_counts,
             "results_count": len(results)
-        })
+        }, user_id=user_id, agent_id=agent_id)
         
-        # Log and return
+        # Add to graph store and get relations
+        graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
         if results:
-            result = results[0]  # Return the first result for compatibility
+            result = {"results": results}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
         else:
             # Fallback to simple mode
             return self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
+    
+    def _add_to_graph(
+        self,
+        messages,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Add messages to graph store and return relations.
+        Matches mem0's _add_to_graph behavior.
         
-        return result
+        Returns:
+            dict with added_entities and deleted_entities, or None if graph store is disabled
+        """
+        if not self.enable_graph:
+            return None
+        
+        # Extract content from messages for graph processing (matching mem0)
+        if isinstance(messages, str):
+            data = messages
+        elif isinstance(messages, dict):
+            data = messages.get("content", "")
+        elif isinstance(messages, list):
+            data = "\n".join([
+                msg.get("content", "") 
+                for msg in messages 
+                if isinstance(msg, dict) and msg.get("content") and msg.get("role") != "system"
+            ])
+        else:
+            data = ""
+        
+        if not data:
+            return None
+        
+        graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+        if graph_filters.get("user_id") is None:
+            graph_filters["user_id"] = "user"
+        
+        return self.graph_store.add(data, graph_filters)
     
     def _create_memory(
         self,
@@ -696,7 +780,7 @@ class Memory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content)
+            embedding = self.embedding.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -729,11 +813,6 @@ class Memory(MemoryBase):
         
         memory_id = self.storage.add_memory(memory_data)
         
-        # Add to graph store
-        if self.enable_graph:
-            graph_filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
-            self.graph_store.add(content, graph_filters)
-        
         return memory_id
     
     def _update_memory(
@@ -753,7 +832,7 @@ class Memory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content)
+            embedding = self.embedding.embed(content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -777,11 +856,12 @@ class Memory(MemoryBase):
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 10,
+        threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search for memories."""
         try:
             # Generate query embedding
-            query_embedding = self.embedding.embed(query)
+            query_embedding = self.embedding.embed(query, memory_action="search")
             
 
             # Search in storage - pass query text to enable hybrid search
@@ -817,10 +897,16 @@ class Memory(MemoryBase):
             # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
+                score = result.get("score", 0.0)
+                # Apply threshold filtering (mem0 compatible)
+                # Only include results if threshold is None or score >= threshold
+                if threshold is not None and score < threshold:
+                    continue
+                
                 transformed_result = {
                     "memory": result.get("content", ""),  # Map "content" to "memory"
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
-                    "score": result.get("score", 0.0),
+                    "score": score,
                 }
                 # Preserve other fields if needed
                 for key in ["id", "created_at", "updated_at", "user_id", "agent_id", "run_id"]:
@@ -833,14 +919,15 @@ class Memory(MemoryBase):
                 "query": query,
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "results_count": len(processed_results)
-            })
+                "results_count": len(transformed_results)
+            }, user_id=user_id, agent_id=agent_id)
             
             # Capture telemetry
             self.telemetry.capture_event("memory.search", {
                 "user_id": user_id,
                 "agent_id": agent_id,
-                "results_count": len(processed_results)
+                "results_count": len(transformed_results),
+                "threshold": threshold
             })
 
             # Search in graph store
@@ -884,7 +971,7 @@ class Memory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -903,7 +990,7 @@ class Memory(MemoryBase):
         """Update an existing memory."""
         try:
             # Generate new embedding
-            embedding = self.embedding.embed(content)
+            embedding = self.embedding.embed(content, memory_action="update")
             
             # Process with intelligence manager
             processed_content = self.intelligence.process_content(content, metadata)
@@ -924,7 +1011,7 @@ class Memory(MemoryBase):
                 "memory_id": memory_id,
                 "user_id": user_id,
                 "agent_id": agent_id
-            })
+            }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -948,7 +1035,7 @@ class Memory(MemoryBase):
                     "memory_id": memory_id,
                     "user_id": user_id,
                     "agent_id": agent_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
             
             return result
             
@@ -971,7 +1058,7 @@ class Memory(MemoryBase):
                     "user_id": user_id,
                     "agent_id": agent_id,
                     "run_id": run_id
-                })
+                }, user_id=user_id, agent_id=agent_id)
                 
                 self.telemetry.capture_event("memory.delete_all", {
                     "user_id": user_id,
@@ -1009,7 +1096,7 @@ class Memory(MemoryBase):
                 "limit": limit,
                 "offset": offset,
                 "results_count": len(results)
-            })
+            }, user_id=user_id, agent_id=agent_id)
 
             # get from graph store
             if self.enable_graph:
@@ -1024,29 +1111,40 @@ class Memory(MemoryBase):
             logger.error(f"Failed to get all memories: {e}")
             raise
     
-    def clear(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-    ) -> bool:
-        """Clear all memories for a user or agent."""
+    def reset(self):
+        """
+        Reset the memory store by:
+            Deletes the vector store collection
+            Resets the database
+            Recreates the vector store with a new client
+        """
+        logger.warning("Resetting all memories")
+        
         try:
-            result = self.storage.clear_memories(user_id, agent_id)
+            # Reset vector store
+            if hasattr(self.storage.vector_store, "reset"):
+                self.storage.vector_store.reset()
+            else:
+                logger.warning("Vector store does not support reset. Skipping.")
+                self.storage.vector_store.delete_col()
+                # Recreate vector store
+                from ..storage.factory import VectorStoreFactory
+                vector_store_config = self._get_component_config('vector_store')
+                self.storage.vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+                # Update storage adapter
+                self.storage = StorageAdapter(self.storage.vector_store, self.embedding)
             
-            if result:
-                self.audit.log_event("memory.clear", {
-                    "user_id": user_id,
-                    "agent_id": agent_id
-                })
-
-            if self.enable_graph:
-                filters = {"user_id": user_id, "agent_id": agent_id}
-                self.graph_store.delete_all(filters)
-
-            return result
+            # Reset graph store if enabled
+            if self.enable_graph and hasattr(self.graph_store, "reset"):
+                self.graph_store.reset()
+            
+            # Log telemetry event
+            self.telemetry.capture_event("memory.reset", {"sync_type": "sync"})
+            
+            logger.info("Memory store reset completed successfully")
             
         except Exception as e:
-            logger.error(f"Failed to clear memories: {e}")
+            logger.error(f"Failed to reset memory store: {e}")
             raise
     
     @classmethod
