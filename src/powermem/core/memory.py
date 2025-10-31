@@ -462,7 +462,7 @@ class Memory(MemoryBase):
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
         # Generate embedding
-        embedding = self.embedding.embed(content)
+        embedding = self.embedding.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -570,7 +570,7 @@ class Memory(MemoryBase):
         fact_embeddings = {}
         
         for fact in facts:
-            fact_embedding = self.embedding.embed(fact)
+            fact_embedding = self.embedding.embed(fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
             
             # Search for similar memories with reduced limit to reduce noise
@@ -780,7 +780,7 @@ class Memory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content)
+            embedding = self.embedding.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -832,7 +832,7 @@ class Memory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content)
+            embedding = self.embedding.embed(content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -990,7 +990,7 @@ class Memory(MemoryBase):
         """Update an existing memory."""
         try:
             # Generate new embedding
-            embedding = self.embedding.embed(content)
+            embedding = self.embedding.embed(content, memory_action="update")
             
             # Process with intelligence manager
             processed_content = self.intelligence.process_content(content, metadata)

@@ -292,7 +292,7 @@ class AsyncMemory(MemoryBase):
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
         # Generate embedding asynchronously
-        embedding = await self.embedding.embed_async(content)
+        embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -399,7 +399,7 @@ class AsyncMemory(MemoryBase):
         fact_embeddings = {}
         
         for fact in facts:
-            fact_embedding = await self.embedding.embed_async(fact)
+            fact_embedding = await asyncio.to_thread(self.embedding.embed, fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
             
             # Search for similar memories with reduced limit to reduce noise
@@ -613,7 +613,7 @@ class AsyncMemory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = await self.embedding.embed_async(content)
+            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -665,7 +665,7 @@ class AsyncMemory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = await self.embedding.embed_async(content)
+            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -815,7 +815,7 @@ class AsyncMemory(MemoryBase):
         """Update an existing memory asynchronously."""
         try:
             # Generate new embedding asynchronously
-            embedding = await self.embedding.embed_async(content)
+            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
             
             # Disabled LLM-based importance evaluation to save tokens
             # Process with intelligence manager
