@@ -589,6 +589,89 @@ class AgentMemory:
             logger.error(f"Failed to delete memory {memory_id}: {e}")
             raise
     
+    def delete_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None
+    ) -> bool:
+        """
+        Delete all memories matching the provided identifiers.
+        
+        Args:
+            user_id: Optional user ID filter
+            agent_id: Optional agent ID (defaults to 'default' if not provided)
+            
+        Returns:
+            True if all deletions succeeded (or nothing to delete), False otherwise
+        """
+        if not self._initialized:
+            raise RuntimeError("AgentMemory not initialized")
+        
+        try:
+            # Require manager capabilities for listing and deleting
+            if not hasattr(self._agent_manager, 'get_memories') or not hasattr(self._agent_manager, 'delete_memory'):
+                raise RuntimeError("Delete all not supported by current manager")
+            
+            filters: Dict[str, Any] = {}
+            if user_id:
+                filters['user_id'] = user_id
+            
+            # Fetch memories to delete
+            results = self._agent_manager.get_memories(
+                agent_id=agent_id or 'default',
+                filters=filters
+            )
+            
+            if not results:
+                return True
+            
+            all_ok = True
+            for item in results:
+                mem_id = item.get('id') or item.get('memory_id')
+                if not mem_id:
+                    continue
+                resp = self._agent_manager.delete_memory(
+                    memory_id=mem_id,
+                    agent_id=agent_id or 'default'
+                )
+                ok = bool(resp.get('success', False)) if isinstance(resp, dict) else bool(resp)
+                all_ok = all_ok and ok
+            return all_ok
+        
+        except Exception as e:
+            logger.error(f"Failed to delete all memories: {e}")
+            raise
+    
+    def reset(self) -> None:
+        """
+        Reset the memory store by clearing all data.
+        
+        This method resets the underlying memory storage, including:
+        - Vector store collections
+        - Database tables
+        - Graph store (if enabled)
+        
+        WARNING: This will delete ALL memories and cannot be undone.
+        """
+        if not self._initialized:
+            raise RuntimeError("AgentMemory not initialized")
+        
+        try:
+            # Try to access the underlying Memory instance through the agent manager
+            if hasattr(self._agent_manager, '_memory_instance'):
+                self._agent_manager._memory_instance.reset()
+                logger.info("Memory store reset completed successfully")
+            else:
+                # Fallback: try to reset through agent manager if it has a reset method
+                if hasattr(self._agent_manager, 'reset'):
+                    self._agent_manager.reset()
+                    logger.info("Memory store reset completed successfully")
+                else:
+                    raise RuntimeError("Reset not supported by current manager - no memory instance or reset method available")
+        except Exception as e:
+            logger.error(f"Failed to reset memory store: {e}")
+            raise
+
     # Agent-specific methods (for multi-agent mode)
     
     def create_agent(self, agent_id: str, agent_name: Optional[str] = None) -> 'AgentMemory':
