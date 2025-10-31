@@ -115,7 +115,7 @@ class StorageAdapter:
         try:
             # Try OceanBase format first - pass query text for hybrid search
             search_query = query if query else ""
-            results = self.vector_store.search(search_query, vectors=[query_vector], limit=limit, filters=effective_filters)
+            results = self.vector_store.search(search_query, vectors=query_vector, limit=limit, filters=effective_filters)
         except TypeError:
             # Fallback to SQLite format (doesn't support query text parameter)
             results = self.vector_store.search(query_vector, vectors=[query_vector], limit=limit)
