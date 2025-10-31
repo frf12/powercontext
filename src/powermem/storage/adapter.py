@@ -100,12 +100,22 @@ class StorageAdapter:
             logger.warning("No query embedding provided for search")
             return []
         
+        # Merge user_id/agent_id/run_id into filters to ensure consistency
+        # This ensures filters are applied at the database level, avoiding redundant filtering
+        effective_filters = filters.copy() if filters else {}
+        if user_id is not None:
+            effective_filters["user_id"] = user_id
+        if agent_id is not None:
+            effective_filters["agent_id"] = agent_id
+        if run_id is not None:
+            effective_filters["run_id"] = run_id
+        
         # Unified search method - try OceanBase format first, fallback to SQLite
         # Pass query text to enable hybrid search (vector + full-text search)
         try:
             # Try OceanBase format first - pass query text for hybrid search
             search_query = query if query else ""
-            results = self.vector_store.search(search_query, vectors=[query_vector], limit=limit, filters=filters)
+            results = self.vector_store.search(search_query, vectors=[query_vector], limit=limit, filters=effective_filters)
         except TypeError:
             # Fallback to SQLite format (doesn't support query text parameter)
             results = self.vector_store.search(query_vector, vectors=[query_vector], limit=limit)
@@ -180,14 +190,8 @@ class StorageAdapter:
                 "metadata": user_metadata if user_metadata else {},  # Add user metadata
             }
             
-            # Apply filters
-            if user_id and memory.get("user_id") != user_id:
-                continue
-            if agent_id and memory.get("agent_id") != agent_id:
-                continue
-            if run_id and memory.get("run_id") != run_id:
-                continue
-            
+            # No need to apply filters here - filters are already applied at the database level
+            # in vector_store.search(), so all returned results should already match the filters
             memories.append(memory)
         
         return memories[:limit]
