@@ -855,7 +855,7 @@ class Memory(MemoryBase):
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10,
+        limit: int = 30,
         threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search for memories."""

@@ -88,7 +88,7 @@ class StorageAdapter:
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10,
+        limit: int = 30,
         query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Search for memories."""
@@ -454,7 +454,7 @@ class StorageAdapter:
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10,
+        limit: int = 30,
         query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Search for memories asynchronously."""
