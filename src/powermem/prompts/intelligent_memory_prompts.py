@@ -28,6 +28,17 @@ Types of Information to Remember:
 6. Store Professional Details: Remember job titles, work habits, career goals, and other professional information.
 7. Miscellaneous Information Management: Keep track of favorite books, movies, brands, and other miscellaneous details that the user shares.
 
+CRITICAL: Temporal Information Extraction
+- ALWAYS extract temporal information (dates, times, relative time references like "yesterday", "last week", "two months ago")
+- Include temporal context in facts when available (e.g., "Went to Hawaii in May 2023" not just "Went to Hawaii")
+- For relative time references, preserve the context so it can be calculated later based on conversation timestamp
+- Separate facts by different time periods if they refer to different events
+
+CRITICAL: Fact Completeness
+- Extract complete, self-contained facts that can be understood without additional context
+- Include relevant details like locations, people involved, specific items mentioned
+- When multiple related facts are mentioned, extract them separately to improve searchability
+
 Here are some few shot examples:
 
 Input: Hi.
@@ -40,7 +51,13 @@ Input: Hi, I am looking for a restaurant in San Francisco.
 Output: {{"facts" : ["Looking for a restaurant in San Francisco"]}}
 
 Input: Yesterday, I had a meeting with John at 3pm. We discussed the new project.
-Output: {{"facts" : ["Had a meeting with John at 3pm", "Discussed the new project"]}}
+Output: {{"facts" : ["Had a meeting with John at 3pm yesterday", "Discussed the new project with John"]}}
+
+Input: Last May, I went to India for a vacation. I visited Mumbai and Goa.
+Output: {{"facts" : ["Went to India in May for vacation", "Visited Mumbai during vacation", "Visited Goa during vacation"]}}
+
+Input: I met Sarah last year and we became friends. We went to the movies together last month.
+Output: {{"facts" : ["Met Sarah last year and became friends", "Went to the movies with Sarah last month"]}}
 
 Input: Hi, my name is John. I am a software engineer.
 Output: {{"facts" : ["Name is John", "Is a Software engineer"]}}
@@ -58,6 +75,9 @@ Remember the following:
 - If you do not find anything relevant in the below conversation, you can return an empty list corresponding to the "facts" key.
 - Create the facts based on the user and assistant messages only. Do not pick anything from the system messages.
 - Make sure to return the response in the format mentioned in the examples. The response should be in json with a key as "facts" and corresponding value will be a list of strings.
+- EXTRACT TEMPORAL INFORMATION: Always include time references (dates, relative times) in facts when mentioned. This is critical for answering time-based questions.
+- EXTRACT COMPLETE FACTS: Make each fact self-contained and complete. Include who, what, when, where when available.
+- SEPARATE RELATED FACTS: If multiple distinct facts are mentioned (even about the same topic), extract them separately for better searchability.
 
 Following is a conversation between the user and the assistant. You have to extract the relevant facts and preferences about the user, if any, from the conversation and return them in the json format as shown above.
 You should detect the language of the user input and record the facts in the same language."""
@@ -110,6 +130,18 @@ There are specific guidelines to select which operation to perform:
 If the retrieved fact contains information that conveys the same thing as the elements present in the memory, then you have to keep the fact which has the most information. 
 Example (a) -- if the memory contains "User likes to play cricket" and the retrieved fact is "Loves to play cricket with friends", then update the memory with the retrieved facts.
 Example (b) -- if the memory contains "Likes cheese pizza" and the retrieved fact is "Loves cheese pizza", then you do not need to update it because they convey the same information.
+
+**Temporal Update Rules**:
+- If a fact has temporal information (dates, times) and the new fact has more specific or recent temporal information, UPDATE the memory to include the more complete temporal context.
+- If temporal information conflicts (e.g., "Went to Hawaii in 2022" vs "Went to Hawaii in 2023"), prioritize the MORE RECENT information and UPDATE the memory.
+- When updating temporal information, combine all relevant details (e.g., if memory says "Went to Hawaii" and new fact says "Went to Hawaii in May 2023", update to "Went to Hawaii in May 2023").
+
+**Merge Similar Facts**:
+- When multiple facts refer to the same event or concept, merge them into a single, more complete fact. For example:
+  * Memory: "Met Sarah last year"
+  * New fact: "Met Sarah last year and became friends"
+  * Action: UPDATE to keep the more complete version "Met Sarah last year and became friends"
+
 If the direction is to update the memory, then you have to update it.
 Please keep in mind while updating you have to keep the same ID.
 Please note to return the IDs in the output from the input IDs only and do not generate any new ID.
@@ -155,6 +187,12 @@ Please note to return the IDs in the output from the input IDs only and do not g
 
 
 3. **Delete**: If the retrieved facts contain information that contradicts the information present in the memory, then you have to delete it. Or if the direction is to delete the memory, then you have to delete it.
+
+**Temporal Conflict Handling**:
+- If temporal information strongly contradicts (e.g., "Went to Hawaii in 2022" vs "Never went to Hawaii"), treat as contradiction and DELETE the old memory only if the new information is clearly more recent or authoritative.
+- Generally, prefer UPDATE over DELETE when temporal information conflicts - update to the more recent information.
+- Only DELETE when the contradiction is clear and the new information is definitively more accurate.
+
 Please note to return the IDs in the output from the input IDs only and do not generate any new ID.
 - **Example**:
     - Old Memory:
