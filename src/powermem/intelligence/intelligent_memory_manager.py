@@ -36,6 +36,12 @@ class IntelligentMemoryManager:
         self.config = config or {}
         self.intelligent_config = self.config.get("intelligent_memory", {})
         
+        # Merge top-level custom_importance_evaluation_prompt into intelligent_config
+        # so it can be passed to ImportanceEvaluator
+        if "custom_importance_evaluation_prompt" in self.config:
+            self.intelligent_config = self.intelligent_config.copy() if isinstance(self.intelligent_config, dict) else {}
+            self.intelligent_config["custom_importance_evaluation_prompt"] = self.config["custom_importance_evaluation_prompt"]
+        
         # Initialize components
         self.importance_evaluator = ImportanceEvaluator(
             self.intelligent_config,

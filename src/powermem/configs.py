@@ -198,6 +198,10 @@ class MemoryConfig(BaseModel):
         description="Custom prompt for the update memory",
         default=None,
     )
+    custom_importance_evaluation_prompt: Optional[str] = Field(
+        description="Custom prompt for importance evaluation",
+        default=None,
+    )
     agent_memory: Optional[AgentMemoryConfig] = Field(
         description="Configuration for agent memory management",
         default=None,

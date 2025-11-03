@@ -116,6 +116,25 @@ class GraphPrompts(PromptTemplates):
             config: Configuration dictionary
         """
         super().__init__(config)
+        # Store custom prompts from config if provided
+        self._custom_update_graph_prompt = None
+        self._custom_extract_relations_prompt = None
+        self._custom_delete_relations_prompt = None
+        
+        if config:
+            # Support both graph_store config structure and direct config
+            graph_store_config = config.get("graph_store", {})
+            if isinstance(graph_store_config, dict):
+                self._custom_update_graph_prompt = graph_store_config.get("custom_update_graph_prompt")
+                self._custom_extract_relations_prompt = graph_store_config.get("custom_extract_relations_prompt") or graph_store_config.get("custom_prompt")
+                self._custom_delete_relations_prompt = graph_store_config.get("custom_delete_relations_prompt")
+            # Also support direct config keys
+            if not self._custom_update_graph_prompt:
+                self._custom_update_graph_prompt = config.get("custom_update_graph_prompt")
+            if not self._custom_extract_relations_prompt:
+                self._custom_extract_relations_prompt = config.get("custom_extract_relations_prompt") or config.get("custom_prompt")
+            if not self._custom_delete_relations_prompt:
+                self._custom_delete_relations_prompt = config.get("custom_delete_relations_prompt")
     
     def get_update_graph_prompt(self, existing_memories: str, new_memories: str) -> str:
         """
@@ -128,10 +147,22 @@ class GraphPrompts(PromptTemplates):
         Returns:
             Formatted prompt
         """
-        return UPDATE_GRAPH_PROMPT.format(
-            existing_memories=existing_memories, 
-            new_memories=new_memories
-        )
+        # Use custom prompt if provided, otherwise use default
+        prompt_template = self._custom_update_graph_prompt or UPDATE_GRAPH_PROMPT
+        try:
+            return prompt_template.format(
+                existing_memories=existing_memories, 
+                new_memories=new_memories
+            )
+        except KeyError:
+            # If custom prompt doesn't have format placeholders, return as-is or append
+            if "{existing_memories}" not in prompt_template or "{new_memories}" not in prompt_template:
+                logger.warning("Custom update graph prompt missing format placeholders, appending data")
+                return f"{prompt_template}\n\nExisting Memories:\n{existing_memories}\n\nNew Memories:\n{new_memories}"
+            return prompt_template.format(
+                existing_memories=existing_memories, 
+                new_memories=new_memories
+            )
     
     def get_extract_relations_prompt(self, text: str) -> str:
         """
@@ -143,7 +174,9 @@ class GraphPrompts(PromptTemplates):
         Returns:
             Formatted prompt
         """
-        return EXTRACT_RELATIONS_PROMPT.replace("USER_ID", "USER_ID")
+        # Use custom prompt if provided, otherwise use default
+        prompt = self._custom_extract_relations_prompt or EXTRACT_RELATIONS_PROMPT
+        return prompt.replace("USER_ID", "USER_ID")
     
     def get_delete_relations_prompt(self, existing_memories: str, new_text: str, user_id: str = "USER_ID") -> tuple[str, str]:
         """
@@ -157,7 +190,9 @@ class GraphPrompts(PromptTemplates):
         Returns:
             Tuple of (system_prompt, user_prompt)
         """
-        system_prompt = DELETE_RELATIONS_SYSTEM_PROMPT.replace("USER_ID", user_id)
+        # Use custom prompt if provided, otherwise use default
+        system_prompt = self._custom_delete_relations_prompt or DELETE_RELATIONS_SYSTEM_PROMPT
+        system_prompt = system_prompt.replace("USER_ID", user_id)
         user_prompt = f"Here are the existing memories: {existing_memories} \n\n New Information: {new_text}"
         
         return system_prompt, user_prompt
@@ -173,8 +208,10 @@ class GraphPrompts(PromptTemplates):
             System prompt
         """
         if prompt_type == "extract_relations":
-            return EXTRACT_RELATIONS_PROMPT
+            # Use custom prompt if provided, otherwise use default
+            return self._custom_extract_relations_prompt or EXTRACT_RELATIONS_PROMPT
         elif prompt_type == "delete_relations":
-            return DELETE_RELATIONS_SYSTEM_PROMPT
+            # Use custom prompt if provided, otherwise use default
+            return self._custom_delete_relations_prompt or DELETE_RELATIONS_SYSTEM_PROMPT
         else:
-            return EXTRACT_RELATIONS_PROMPT
+            return self._custom_extract_relations_prompt or EXTRACT_RELATIONS_PROMPT
