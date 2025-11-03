@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
-
+from concurrent.futures import ThreadPoolExecutor
 from powermem.storage.base import VectorStoreBase, OutputData
 
 try:
@@ -630,7 +630,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 score = float(distance)
 
             search_results.append(self._create_output_data(vector_id, text_content, score, metadata))
-        logger.info(f"_vector_search results, len : {len(search_results)}, search_results : {search_results}")
+        logger.debug(f"_vector_search results, len : {len(search_results)}")
         return search_results
 
     def _fulltext_search(self, query: str, limit: int = 5, filters: Optional[Dict] = None) -> list[OutputData]:
@@ -762,18 +762,20 @@ class OceanBaseVectorStore(VectorStoreBase):
     def _hybrid_search(self, query: str, vectors: List[List[float]], limit: int = 5, filters: Optional[Dict] = None,
                        fusion_method: str = "rrf", k: int = 60):
         """Perform hybrid search combining vector and full-text search."""
-
-        # Perform vector search
-        vector_results = self._vector_search(query, vectors, limit, filters)
-
-        # Perform full-text search
-        fts_results = self._fulltext_search(query, limit, filters)
+        # Perform vector search and full-text search in parallel for better performance
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both searches concurrently
+            vector_future = executor.submit(self._vector_search, query, vectors, limit, filters)
+            fts_future = executor.submit(self._fulltext_search, query, limit, filters)
+            # Wait for both to complete and get results
+            vector_results = vector_future.result()
+            fts_results = fts_future.result()
 
         # Combine and rerank results using specified fusion method
         hybrid_results = self._combine_search_results(
             vector_results, fts_results, limit, fusion_method, k
         )
-        logger.info(f"_hybrid_search results, len : {len(hybrid_results)}, hybrid_results : {hybrid_results}")
+        logger.debug(f"_hybrid_search results, len : {len(hybrid_results)}")
         return hybrid_results
 
     def _combine_search_results(self, vector_results: List[OutputData], fts_results: List[OutputData],

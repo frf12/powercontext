@@ -855,7 +855,7 @@ class Memory(MemoryBase):
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 10,
+        limit: int = 30,
         threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Search for memories."""
@@ -875,8 +875,11 @@ class Memory(MemoryBase):
                 query=query  # Pass query text for hybrid search (vector + full-text)
             )
             
-            # Process results with intelligence manager
-            processed_results = self.intelligence.process_search_results(results, query)
+            # Process results with intelligence manager (only if enabled to avoid unnecessary calls)
+            if self.intelligence.enabled:
+                processed_results = self.intelligence.process_search_results(results, query)
+            else:
+                processed_results = results
 
             # Intelligent plugin lifecycle management on search
             if self._intelligence_plugin and self._intelligence_plugin.enabled:
@@ -904,7 +907,7 @@ class Memory(MemoryBase):
                     continue
                 
                 transformed_result = {
-                    "memory": result.get("content", ""),  # Map "content" to "memory"
+                    "memory": result.get("memory", ""),  # Already in mem0 format from adapter
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
                     "score": score,
                 }
