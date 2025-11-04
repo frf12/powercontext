@@ -83,12 +83,35 @@ class SQLiteVectorStore(VectorStoreBase):
             # Fallback for backward compatibility
             query_vector = query if isinstance(query, list) else [0.1] * 10
         
-        with self._lock:
-            cursor = self.connection.execute(f"""
-                SELECT id, vector, payload FROM {self.collection_name}
-            """)
+        # Build query with filters
+        query_sql = f"SELECT id, vector, payload FROM {self.collection_name}"
+        query_params = []
+        
+        # Apply filters if provided
+        if filters:
+            conditions = []
+            for key, value in filters.items():
+                # Filter by JSON field in payload
+                conditions.append(f"json_extract(payload, '$.{key}') = ?")
+                query_params.append(value)
             
+            if conditions:
+                query_sql += " WHERE " + " AND ".join(conditions)
+                logger.info(f"SQLite search with filters: {query_sql}, params: {query_params}")
+            else:
+                logger.debug("SQLite search: filters provided but empty after processing")
+        else:
+            logger.debug("SQLite search: no filters provided")
+        
+        with self._lock:
+            if query_params:
+                cursor = self.connection.execute(query_sql, query_params)
+            else:
+                cursor = self.connection.execute(query_sql)
+            
+            row_count = 0
             for row in cursor.fetchall():
+                row_count += 1
                 vector_id, vector_str, payload_str = row
                 vector = json.loads(vector_str)
                 payload = json.loads(payload_str)
@@ -187,15 +210,30 @@ class SQLiteVectorStore(VectorStoreBase):
             }
     
     def list(self, filters=None, limit=None) -> List[OutputData]:
-        """List all memories."""
+        """List all memories with optional filtering."""
         query = f"SELECT id, vector, payload FROM {self.collection_name}"
+        query_params = []
+        
+        # Apply filters if provided
+        if filters:
+            conditions = []
+            for key, value in filters.items():
+                # Filter by JSON field in payload
+                conditions.append(f"json_extract(payload, '$.{key}') = ?")
+                query_params.append(value)
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
         
         if limit:
             query += f" LIMIT {limit}"
         
         results = []
         with self._lock:
-            cursor = self.connection.execute(query)
+            if query_params:
+                cursor = self.connection.execute(query, query_params)
+            else:
+                cursor = self.connection.execute(query)
             
             for row in cursor.fetchall():
                 vector_id, vector_str, payload_str = row

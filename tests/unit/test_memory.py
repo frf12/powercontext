@@ -22,9 +22,13 @@ class TestMemory:
         memory = Memory()
         result = memory.add("Test memory content", user_id="test_user")
         
-        assert "id" in result
-        assert result["content"] == "Test memory content"
-        assert result["user_id"] == "test_user"
+        assert "results" in result
+        assert len(result["results"]) > 0
+        memory_item = result["results"][0]
+        assert "id" in memory_item
+        assert memory_item.get("memory") == "Test memory content"
+        # Check user_id from memory item or metadata
+        assert memory_item.get("user_id") == "test_user" or result.get("user_id") == "test_user"
     
     def test_search_memories(self):
         """Test searching memories."""
@@ -46,14 +50,14 @@ class TestMemory:
         
         # Add a memory
         result = memory.add("Test memory", user_id="test_user")
-        memory_id = result["id"]
+        memory_id = result["results"][0]["id"]
         
         # Get the memory
         retrieved = memory.get(memory_id, user_id="test_user")
         
         assert retrieved is not None
         assert retrieved["id"] == memory_id
-        assert retrieved["content"] == "Test memory"
+        assert retrieved.get("memory") == "Test memory"
     
     def test_update_memory(self):
         """Test updating a memory."""
@@ -61,12 +65,12 @@ class TestMemory:
         
         # Add a memory
         result = memory.add("Original content", user_id="test_user")
-        memory_id = result["id"]
+        memory_id = result["results"][0]["id"]
         
         # Update the memory
         updated = memory.update(memory_id, "Updated content", user_id="test_user")
         
-        assert updated["content"] == "Updated content"
+        assert updated.get("memory") == "Updated content"
     
     def test_delete_memory(self):
         """Test deleting a memory."""

@@ -67,7 +67,7 @@ memory.add("User likes coffee", user_id="user123")
 # Search memories
 memories = memory.search("user preferences", user_id="user123")
 for memory in memories:
-    print(f"- {memory['content']}")
+    print(f"- {memory.get('memory')}")
 ```
 
 **Programmatic Configuration**:
@@ -209,7 +209,7 @@ support_results = support_memory.search(
     agent_id="support_agent"
 )
 for result in support_results:
-    print(f"- {result['content']}")
+    print(f"- {result.get('memory')}")
 
 # Cross-agent search (all agents)
 print("\nCross-Agent Search:")
@@ -229,7 +229,7 @@ tech_results = tech_memory.search(
     metadata_filter={"category": "technical_info"}
 )
 for result in tech_results:
-    print(f"- {result['content']}")
+    print(f"- {result.get('memory')}")
 ```
 
 ### Multi-Agent Collaboration Example

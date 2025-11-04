@@ -7,6 +7,7 @@ with the interface expected by the Memory class.
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from powermem.storage.base import VectorStoreBase
@@ -118,7 +119,8 @@ class StorageAdapter:
             results = self.vector_store.search(search_query, vectors=query_vector, limit=limit, filters=effective_filters)
         except TypeError:
             # Fallback to SQLite format (doesn't support query text parameter)
-            results = self.vector_store.search(query_vector, vectors=[query_vector], limit=limit)
+            # Still pass filters for SQLite
+            results = self.vector_store.search(query_vector, vectors=[query_vector], limit=limit, filters=effective_filters)
         
         # Convert results to unified format
         memories = []
@@ -190,8 +192,15 @@ class StorageAdapter:
                 "metadata": user_metadata if user_metadata else {},  # Add user metadata
             }
             
-            # No need to apply filters here - filters are already applied at the database level
-            # in vector_store.search(), so all returned results should already match the filters
+            # Apply filters (as double-check if database didn't filter)
+            # Even if filters were applied at database level, apply them here as a safety measure
+            if user_id and memory.get("user_id") != user_id:
+                continue
+            if agent_id and memory.get("agent_id") != agent_id:
+                continue
+            if run_id and memory.get("run_id") != run_id:
+                continue
+            
             memories.append(memory)
         
         # Vector store already applied limit, no need to slice again
@@ -209,7 +218,7 @@ class StorageAdapter:
         if result and result.payload:
             memory = {
                 "id": result.id,
-                "content": result.payload.get("content", ""),
+                "memory": result.payload.get("data", ""),  # Use 'memory' field name for consistency
                 "user_id": result.payload.get("user_id"),
                 "agent_id": result.payload.get("agent_id"),
                 "run_id": result.payload.get("run_id"),
@@ -235,11 +244,17 @@ class StorageAdapter:
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update a memory."""
-        # Get existing record from vector store directly
+        """Update a memory with access control checks."""
+        # Get existing record and check access control
+        existing = self.get_memory(memory_id, user_id, agent_id)
+        if not existing:
+            logger.warning(f"Memory {memory_id} not found or access denied (user_id={user_id}, agent_id={agent_id})")
+            return None
+        
+        # Get existing payload from vector store
         existing_result = self.vector_store.get(memory_id)
         if not existing_result or not existing_result.payload:
-            logger.warning(f"Memory {memory_id} not found")
+            logger.warning(f"Memory {memory_id} not found in vector store")
             return None
         
         # Get existing payload
@@ -259,9 +274,18 @@ class StorageAdapter:
         # Update other fields
         updated_payload.update(update_data)
         
+        # Ensure datetime fields are serialized as ISO format strings
+        if "updated_at" in updated_payload:
+            updated_at = updated_payload["updated_at"]
+            if isinstance(updated_at, datetime):
+                updated_payload["updated_at"] = updated_at.isoformat()
+        if "created_at" in updated_payload:
+            created_at = updated_payload["created_at"]
+            if isinstance(created_at, datetime):
+                updated_payload["created_at"] = created_at.isoformat()
+        
         # Update updated_at if not provided
         if "updated_at" not in updated_payload:
-            from datetime import datetime
             updated_payload["updated_at"] = datetime.utcnow().isoformat()
         
         # Update in vector store with proper payload
@@ -348,7 +372,7 @@ class StorageAdapter:
             
             memory = {
                 "id": memory_id,
-                "content": payload.get("data", ""),  # Unified field name
+                "memory": payload.get("data", ""),  # Extract from "data" field, return as "memory"
                 "user_id": payload.get("user_id"),
                 "agent_id": payload.get("agent_id"),
                 "run_id": payload.get("run_id"),
