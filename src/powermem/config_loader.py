@@ -104,6 +104,7 @@ def load_config_from_env() -> Dict[str, Any]:
         # SQLite configuration (default)
         db_config = {
             'database_path': os.getenv('DATABASE_PATH', './data/powermem_dev.db'),
+            'collection_name': os.getenv('DATABASE_COLLECTION_NAME', 'memories'),
             'enable_wal': os.getenv('DATABASE_ENABLE_WAL', 'true').lower() == 'true',
             'timeout': int(os.getenv('DATABASE_TIMEOUT', '30'))
         }
