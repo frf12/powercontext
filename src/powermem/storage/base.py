@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 class OutputData(BaseModel):
-    id: Optional[str]  # memory id
+    id: Optional[int]  # memory id (auto-incrementing integer)
     score: Optional[float]  # distance
     payload: Optional[Dict]  # metadata
 

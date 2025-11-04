@@ -71,7 +71,7 @@ class MemoryBase(ABC):
     @abstractmethod
     def get(
         self,
-        memory_id: str,
+        memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -91,7 +91,7 @@ class MemoryBase(ABC):
     @abstractmethod
     def update(
         self,
-        memory_id: str,
+        memory_id: int,
         content: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -115,7 +115,7 @@ class MemoryBase(ABC):
     @abstractmethod
     def delete(
         self,
-        memory_id: str,
+        memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> bool:

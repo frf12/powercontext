@@ -817,7 +817,7 @@ class Memory(MemoryBase):
     
     def _update_memory(
         self,
-        memory_id: str,
+        memory_id: int,
         content: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -949,7 +949,7 @@ class Memory(MemoryBase):
     
     def get(
         self,
-        memory_id: str,
+        memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -984,7 +984,7 @@ class Memory(MemoryBase):
     
     def update(
         self,
-        memory_id: str,
+        memory_id: int,
         content: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -1024,7 +1024,7 @@ class Memory(MemoryBase):
     
     def delete(
         self,
-        memory_id: str,
+        memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> bool:
