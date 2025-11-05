@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 class OutputData(BaseModel):
-    id: Optional[int]  # memory id (auto-incrementing integer)
+    id: Optional[int]  # memory id (Snowflake ID - 64-bit integer)
     score: Optional[float]  # distance
     payload: Optional[Dict]  # metadata
 
