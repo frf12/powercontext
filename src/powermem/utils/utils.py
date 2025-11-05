@@ -251,7 +251,6 @@ def get_image_description(image_obj: Any, llm: Any, vision_details: Any) -> str:
     - image_obj can be a URL string, or a prebuilt multimodal message (list/dict).
     - vision_details can be "auto" or a dict; when dict we use detail = dict.get("detail", "auto").
     """
-    # Normalize detail to a simple value as mem0 does
     detail = vision_details
     if isinstance(vision_details, dict):
         detail = vision_details.get("detail", "auto")
@@ -279,12 +278,8 @@ def get_image_description(image_obj: Any, llm: Any, vision_details: Any) -> str:
 
 def parse_vision_messages(messages: List[Dict[str, Any]], llm: Any = None, vision_details: Any = "auto") -> List[Dict[str, Any]]:
     """
-    mem0-compatible vision message parser.
-    
-    Assumes input is already a list of message dicts with 'role' and 'content' fields.
-    This matches mem0's design where input normalization happens before calling this function.
 
-    Rules (mirrors mem0.memory.utils.parse_vision_messages):
+    Assumes input is already a list of message dicts with 'role' and 'content' fields.
     - Keep system messages unchanged.
     - If message.content is a list (multimodal blocks), call get_image_description and replace content with returned text.
     - If message.content is a dict with type == "image_url", call get_image_description(url, ...) and replace content with returned text.

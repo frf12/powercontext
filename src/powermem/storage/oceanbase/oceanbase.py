@@ -33,7 +33,7 @@ from powermem.storage.oceanbase import constants
 logger = logging.getLogger(__name__)
 
 class OceanBaseVectorStore(VectorStoreBase):
-    """OceanBase vector store implementation for mem0."""
+    """OceanBase vector store implementation"""
 
     def __init__(
             self,
@@ -192,7 +192,6 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _create_table_with_index_by_embedding_model_dims(self) -> None:
         """Create table with vector index based on embedding dimension."""
-        # Create columns following mem0 standard schema
         cols = [
             # Primary key
             Column(
@@ -204,7 +203,6 @@ class OceanBaseVectorStore(VectorStoreBase):
             Column(self.text_field, LONGTEXT),
             # Metadata field (JSON)
             Column(self.metadata_field, JSON),
-            # mem0 standard fields for filtering
             Column("user_id", String(128)),  # User identifier
             Column("agent_id", String(128)),  # Agent identifier
             Column("run_id", String(128)),  # Run identifier
@@ -566,7 +564,6 @@ class OceanBaseVectorStore(VectorStoreBase):
                        limit: int = 5,
                        filters: Optional[Dict] = None) -> list[OutputData]:
         """Perform pure vector search."""
-        # mem0 passes a single vector as 'vectors' parameter, but we expect List[List[float]]
         # Handle both cases: single vector or list of vectors
         # If vectors is a single vector (list of floats), use it directly
         if isinstance(vectors, list) and len(vectors) > 0 and isinstance(vectors[0], (int, float)):

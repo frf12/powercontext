@@ -34,15 +34,15 @@ logger = logging.getLogger(__name__)
 
 def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Convert legacy powermem config to mem0 format for compatibility.
+    Convert legacy powermem config to format for compatibility.
     
-    Now powermem uses mem0-style field names directly.
+    Now powermem uses field names directly.
     
     Args:
-        config: Configuration dictionary (legacy or mem0 format)
+        config: Configuration dictionary (legacy format)
         
     Returns:
-        mem0-style configuration dictionary
+        configuration dictionary
     """
     if not config:
         return config
@@ -77,10 +77,9 @@ def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
                 "config": {}
             }
         
-        logger.info("Converted legacy powermem config to mem0 format")
+        logger.info("Converted legacy powermem config format")
         return converted
     
-    # Already in mem0 format (has embedder or vector_store)
     return config
 
 
@@ -103,11 +102,10 @@ class Memory(MemoryBase):
         Initialize the memory manager.
 
         Compatible with both dict config and MemoryConfig object.
-        Supports both mem0 and powermem config formats.
 
         Args:
             config: Configuration dictionary or MemoryConfig object containing all settings.
-                   Dict format supports both mem0 style (llm, embedder, vector_store)
+                   Dict format supports style (llm, embedder, vector_store)
                    and powermem style (database, llm, embedding)
             storage_type: Type of storage backend to use (overrides config)
             llm_provider: LLM provider to use (overrides config)
@@ -131,7 +129,7 @@ class Memory(MemoryBase):
                 "llm": {"provider": "qwen", "config": {...}},
             })
 
-            # Method 3: Using dict (mem0 style - auto-converted)
+            # Method 3: Using dict
             memory = Memory({
                 "llm": {"provider": "openai", "config": {...}},
                 "embedder": {"provider": "openai", "config": {...}},
@@ -285,7 +283,6 @@ class Memory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use FACT_RETRIEVAL_PROMPT (mem0 compatible)
             system_prompt = FACT_RETRIEVAL_PROMPT
             user_prompt = f"Input:\n{conversation}"
             
@@ -397,11 +394,11 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Add a new memory with optional intelligent processing."""
         try:
-            # Handle messages parameter (mem0 compatibility)
+            # Handle messages parameter 
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
-            # Normalize input format (mem0-compatible)
+            # Normalize input format
             if isinstance(messages, str):
                 messages = [{"role": "user", "content": messages}]
             elif isinstance(messages, dict):
@@ -409,7 +406,7 @@ class Memory(MemoryBase):
             elif not isinstance(messages, list):
                 raise ValueError("messages must be str, dict, or list[dict]")
             
-            # Vision-aware message processing (mem0-compatible behavior)
+            # Vision-aware message processing
             llm_cfg = {}
             try:
                 llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
@@ -607,7 +604,7 @@ class Memory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Mapping UUIDs with integers for handling UUID hallucinations (mem0 compatibility)
+        # Mapping UUIDs with integers for handling UUID hallucinations
         temp_uuid_mapping = {}
         for idx, item in enumerate(existing_memories):
             temp_uuid_mapping[str(idx)] = item["id"]
@@ -675,7 +672,7 @@ class Memory(MemoryBase):
                             "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type,
-                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response
+                            "previous_memory": action.get("old_memory") 
                         })
                         action_counts["UPDATE"] += 1
                     else:
@@ -742,7 +739,6 @@ class Memory(MemoryBase):
     ) -> Optional[Dict[str, Any]]:
         """
         Add messages to graph store and return relations.
-        Matches mem0's _add_to_graph behavior.
         
         Returns:
             dict with added_entities and deleted_entities, or None if graph store is disabled
@@ -750,7 +746,7 @@ class Memory(MemoryBase):
         if not self.enable_graph:
             return None
         
-        # Extract content from messages for graph processing (matching mem0)
+        # Extract content from messages for graph processing
         if isinstance(messages, str):
             data = messages
         elif isinstance(messages, dict):
@@ -909,17 +905,16 @@ class Memory(MemoryBase):
             
             # Transform results to match benchmark expected format
             # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
-            # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
                 score = result.get("score", 0.0)
-                # Apply threshold filtering (mem0 compatible)
+                # Apply threshold filtering
                 # Only include results if threshold is None or score >= threshold
                 if threshold is not None and score < threshold:
                     continue
                 
                 transformed_result = {
-                    "memory": result.get("memory", ""),  # Already in mem0 format from adapter
+                    "memory": result.get("memory", ""),
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
                     "score": score,
                 }
@@ -1165,12 +1160,10 @@ class Memory(MemoryBase):
     @classmethod
     def from_config(cls, config: Optional[Dict[str, Any]] = None, **kwargs):
         """
-        Create Memory instance from configuration (mem0-compatible style).
-        
-        Compatible with mem0's initialization pattern.
+        Create Memory instance from configuration.
         
         Args:
-            config: Configuration dictionary (mem0 or powermem format)
+            config: Configuration dictionary
             **kwargs: Additional parameters
         
         Returns:
@@ -1178,7 +1171,6 @@ class Memory(MemoryBase):
             
         Example:
             ```python
-            # mem0-style config
             memory = Memory.from_config({
                 "llm": {"provider": "openai", "config": {"api_key": "..."}},
                 "embedder": {"provider": "openai", "config": {"api_key": "..."}},
@@ -1191,7 +1183,6 @@ class Memory(MemoryBase):
             from ..config_loader import auto_config
             config = auto_config()
         
-        # Convert legacy config to mem0 format if needed
         converted_config = _auto_convert_config(config)
         
         return cls(config=converted_config, **kwargs)

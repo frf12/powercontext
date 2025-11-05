@@ -110,7 +110,7 @@ def load_config_from_env() -> Dict[str, Any]:
         }
     
     config = {
-        'vector_store': {  # Use mem0 field name
+        'vector_store': {
             'provider': db_provider,
             'config': db_config
         },
@@ -127,7 +127,7 @@ def load_config_from_env() -> Dict[str, Any]:
                 'enable_search': os.getenv('LLM_ENABLE_SEARCH', 'false').lower() == 'true'
             }
         },
-        'embedder': {  # Use mem0 field name
+        'embedder': {
             'provider': os.getenv('EMBEDDING_PROVIDER', 'qwen'),
             'config': {
                 'api_key': os.getenv('EMBEDDING_API_KEY'),
@@ -209,7 +209,7 @@ def create_config(
         ```
     """
     config = {
-        'vector_store': {  # Use mem0 field name
+        'vector_store': {
             'provider': database_provider,
             'config': kwargs.get('database_config', {})
         },
@@ -223,7 +223,7 @@ def create_config(
                 **{k: v for k, v in kwargs.items() if k.startswith('llm_') and k != 'llm_api_key' and k != 'llm_model' and k != 'llm_temperature' and k != 'llm_max_tokens'}
             }
         },
-        'embedder': {  # Use mem0 field name
+        'embedder': {
             'provider': embedding_provider,
             'config': {
                 'api_key': kwargs.get('embedding_api_key'),
@@ -255,7 +255,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
             print("Configuration is valid!")
         ```
     """
-    required_sections = ['vector_store', 'llm', 'embedder']  # mem0 field names
+    required_sections = ['vector_store', 'llm', 'embedder']
     
     for section in required_sections:
         if section not in config:

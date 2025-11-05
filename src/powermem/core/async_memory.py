@@ -122,7 +122,7 @@ class AsyncMemory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use FACT_RETRIEVAL_PROMPT (mem0 compatible)
+            # Use FACT_RETRIEVAL_PROMPT
             system_prompt = FACT_RETRIEVAL_PROMPT
             user_prompt = f"Input:\n{conversation}"
             
@@ -230,11 +230,11 @@ class AsyncMemory(MemoryBase):
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
         try:
-            # Handle messages parameter (mem0 compatibility)
+            # Handle messages parameter
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
-            # Normalize input format (mem0-compatible)
+            # Normalize input format
             if isinstance(messages, str):
                 messages = [{"role": "user", "content": messages}]
             elif isinstance(messages, dict):
@@ -242,7 +242,7 @@ class AsyncMemory(MemoryBase):
             elif not isinstance(messages, list):
                 raise ValueError("messages must be str, dict, or list[dict]")
             
-            # Vision-aware message processing (mem0-compatible behavior)
+            # Vision-aware message processing
             llm_cfg = {}
             try:
                 llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
@@ -436,7 +436,7 @@ class AsyncMemory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Mapping UUIDs with integers for handling UUID hallucinations (mem0 compatibility)
+        # Mapping UUIDs with integers for handling UUID hallucinations
         temp_uuid_mapping = {}
         for idx, item in enumerate(existing_memories):
             temp_uuid_mapping[str(idx)] = item["id"]
@@ -573,7 +573,6 @@ class AsyncMemory(MemoryBase):
     ) -> Optional[Dict[str, Any]]:
         """
         Add messages to graph store and return relations asynchronously.
-        Matches mem0's _add_to_graph behavior.
         
         Returns:
             dict with added_entities and deleted_entities, or None if graph store is disabled
@@ -581,7 +580,7 @@ class AsyncMemory(MemoryBase):
         if not self.enable_graph:
             return None
         
-        # Extract content from messages for graph processing (matching mem0)
+        # Extract content from messages for graph processing
         if isinstance(messages, str):
             data = messages
         elif isinstance(messages, dict):
@@ -740,17 +739,16 @@ class AsyncMemory(MemoryBase):
             
             # Transform results to match benchmark expected format
             # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
-            # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
                 score = result.get("score", 0.0)
-                # Apply threshold filtering (mem0 compatible)
+                # Apply threshold filtering
                 # Only include results if threshold is None or score >= threshold
                 if threshold is not None and score < threshold:
                     continue
                 
                 transformed_result = {
-                    "memory": result.get("memory", ""),  # Already in mem0 format from adapter
+                    "memory": result.get("memory", ""), 
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
                     "score": score,
                 }

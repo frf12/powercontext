@@ -1,8 +1,7 @@
 """
 Setup utilities for powermem
 
-This module provides setup functions compatible with mem0-style initialization,
-making it easy for mem0 users to migrate to powermem.
+This module provides setup functions compatible with initialization,
 """
 
 import json
@@ -13,7 +12,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Set up the directory path (compatible with mem0)
+# Set up the directory path
 VECTOR_ID = str(uuid.uuid4())
 home_dir = os.path.expanduser("~")
 powermem_dir = os.environ.get("POWERMEM_DIR") or os.path.join(home_dir, ".powermem")
@@ -21,7 +20,7 @@ os.makedirs(powermem_dir, exist_ok=True)
 
 
 def setup_config():
-    """Setup configuration file (compatible with mem0)."""
+    """Setup configuration file."""
     config_path = os.path.join(powermem_dir, "config.json")
     if not os.path.exists(config_path):
         user_id = str(uuid.uuid4())
@@ -31,7 +30,7 @@ def setup_config():
 
 
 def get_user_id() -> str:
-    """Get or create user ID (compatible with mem0)."""
+    """Get or create user ID."""
     config_path = os.path.join(powermem_dir, "config.json")
     if not os.path.exists(config_path):
         setup_config()
@@ -47,12 +46,12 @@ def get_user_id() -> str:
 
 def from_config(config: Optional[Dict[str, Any]] = None, **kwargs):
     """
-    Create Memory instance from configuration (mem0-style).
+    Create Memory instance from configuration.
     
-    powermem now uses mem0 field names natively: 'embedder' and 'vector_store'.
+    powermem now uses field names natively: 'embedder' and 'vector_store'.
     
     Args:
-        config: Configuration dictionary (mem0 format)
+        config: Configuration dictionary
                - llm: LLM provider configuration
                - embedder: Embedder configuration
                - vector_store: Vector store config (uses OceanBase)
@@ -61,11 +60,10 @@ def from_config(config: Optional[Dict[str, Any]] = None, **kwargs):
     Returns:
         Memory instance
         
-    Example (mem0-compatible):
+    Example:
         ```python
         from powermem import from_config
         
-        # mem0-style config - works directly!
         memory = from_config({
             "llm": {"provider": "openai", "config": {"api_key": "..."}},
             "embedder": {"provider": "openai", "config": {"api_key": "..."}},
@@ -80,29 +78,26 @@ def from_config(config: Optional[Dict[str, Any]] = None, **kwargs):
         from ..config_loader import auto_config
         config = auto_config()
     
-    # Convert legacy config to mem0 format if needed
-    converted_config = _convert_legacy_to_mem0_config(config)
+    converted_config = _convert_legacy_to_mem_config(config)
     
     return Memory(config=converted_config, **kwargs)
 
 
-def _convert_legacy_to_mem0_config(config: Dict[str, Any]) -> Dict[str, Any]:
+def _convert_legacy_to_mem_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Convert legacy powermem config to mem0 format.
+    Convert legacy powermem config format.
     
-    Now powermem uses mem0-style field names natively, so we only convert legacy format.
+    Now powermem uses field names natively, so we only convert legacy format.
     
     Args:
         config: Legacy powermem configuration dictionary
         
     Returns:
-        mem0-style configuration dictionary
+        configuration dictionary
     """
-    # If already in mem0 format (has embedder or vector_store), return as-is
     if "embedder" in config or "vector_store" in config:
         return config
     
-    # Convert legacy powermem format to mem0 format
     converted = {}
     
     # LLM stays the same
@@ -131,7 +126,7 @@ def _convert_legacy_to_mem0_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_or_create_user_id(vector_store=None) -> str:
     """
-    Store user_id in vector store and return it (compatible with mem0).
+    Store user_id in vector store and return it.
     
     Args:
         vector_store: Optional vector store instance
