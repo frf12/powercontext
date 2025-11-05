@@ -4,7 +4,7 @@ Storage configuration management
 This module handles storage configuration and validation.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -98,7 +98,7 @@ class GraphStoreConfig(BaseModel):
         description="Provider of the data store (e.g., 'oceanbase')",
         default="oceanbase",
     )
-    config: Optional[Dict] = Field(
+    config: Optional[Union[Dict, OceanBaseGraphConfig]] = Field(
         description="Configuration for the specific data store",
         default=None
     )
@@ -121,8 +121,13 @@ class GraphStoreConfig(BaseModel):
             self.config = {}
             return self
 
+        # If config is a Pydantic BaseModel instance, convert it to dict
+        if isinstance(self.config, BaseModel):
+            self.config = self.config.model_dump()
+
         if not isinstance(self.config, dict):
-            raise ValueError(f"Config must be a dictionary, got {type(self.config)}")
+            raise ValueError(f"Config must be a dictionary or BaseModel instance, got {type(self.config)}")
+
 
         # Validate config based on provider
         provider = self.provider

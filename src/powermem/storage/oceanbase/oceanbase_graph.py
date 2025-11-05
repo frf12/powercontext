@@ -54,25 +54,33 @@ class MemoryGraph(GraphStoreBase):
         # Get OceanBase config
         ob_config = self.config.graph_store.config
 
+        # Helper function to get config value (supports both dict and object)
+        def get_config_value(key: str, default: Any = None) -> Any:
+            if isinstance(ob_config, dict):
+                return ob_config.get(key, default)
+            else:
+                return getattr(ob_config, key, default)
+
         # Get embedding_model_dims (required)
-        if (not hasattr(ob_config, "embedding_model_dims") or
-                ob_config.embedding_model_dims is None):
+        embedding_model_dims = get_config_value("embedding_model_dims")
+        if embedding_model_dims is None:
             raise ValueError(
                 "embedding_model_dims is required for OceanBase graph operations. "
                 "Please configure embedding_model_dims in your OceanBaseGraphConfig."
             )
-        self.embedding_dims = ob_config.embedding_model_dims
+        self.embedding_dims = embedding_model_dims
 
         # Get vidx parameters with defaults.
-        self.index_type = getattr(ob_config, "index_type", constants.DEFAULT_INDEX_TYPE)
-        self.vidx_metric_type = getattr(ob_config, "vidx_metric_type", constants.DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE)
-        self.vidx_name = getattr(ob_config, "vidx_name", constants.DEFAULT_VIDX_NAME)
+        self.index_type = get_config_value("index_type", constants.DEFAULT_INDEX_TYPE)
+        self.vidx_metric_type = get_config_value("vidx_metric_type",
+                                                 constants.DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE)
+        self.vidx_name = get_config_value("vidx_name", constants.DEFAULT_VIDX_NAME)
 
         # Get graph search parameters
-        self.max_hops = getattr(ob_config, "max_hops", 3)
+        self.max_hops = get_config_value("max_hops", 3)
 
         # Set vidx_algo_params with defaults based on index_type.
-        self.vidx_algo_params = getattr(ob_config, "vidx_algo_params", None)
+        self.vidx_algo_params = get_config_value("vidx_algo_params", None)
         if not self.vidx_algo_params:
             # Set default parameters based on index type.
             self.vidx_algo_params = constants.get_default_build_params(self.index_type)
@@ -85,11 +93,17 @@ class MemoryGraph(GraphStoreBase):
         )
 
         # Initialize OceanBase client
+        host = get_config_value("host", "localhost")
+        port = get_config_value("port", "2881")
+        user = get_config_value("user", "root")
+        password = get_config_value("password", "")
+        db_name = get_config_value("db_name", "test")
+
         self.client = ObVecClient(
-            uri=f"{ob_config.host}:{ob_config.port}",
-            user=ob_config.user,
-            password=ob_config.password,
-            db_name=ob_config.db_name,
+            uri=f"{host}:{port}",
+            user=user,
+            password=password,
+            db_name=db_name,
         )
         self.engine = self.client.engine
         self.metadata = MetaData()
