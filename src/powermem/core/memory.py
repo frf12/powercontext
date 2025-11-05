@@ -634,8 +634,8 @@ class Memory(MemoryBase):
         # Maps temporary string indices to real Snowflake IDs (integers)
         temp_uuid_mapping = {}
         for idx, item in enumerate(existing_memories):
-            temp_uuid_mapping[str(idx)] = item["id"]  # Store real Snowflake ID (integer)
-            existing_memories[idx]["id"] = str(idx)   # Replace with string index for LLM
+            temp_uuid_mapping[str(idx)] = item["id"]
+            existing_memories[idx]["id"] = str(idx)
         
         # Step 3: Let LLM decide memory actions (only if we have new facts)
         actions = []
