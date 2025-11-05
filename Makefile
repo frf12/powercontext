@@ -13,7 +13,7 @@ install-dev: ## Install development dependencies
 	pip install -e ".[dev]"
 
 install-test: ## Install test dependencies
-	pip install -e ".[dev,test]"
+	pip install -e ".[dev,test,llm,vector_stores]"
 
 # Test commands
 test: ## Run all tests

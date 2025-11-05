@@ -196,7 +196,7 @@ class TestEndToEndScenarios:
         # 2. Verify memory was added
         retrieved = memory.get(memory_id, user_id=user_id)
         assert retrieved is not None
-        assert memory_id in retrieved.get("id", "")
+        assert retrieved.get("id") == memory_id
         
         # 3. Update memory
         updated = memory.update(memory_id, "User loves Python programming and uses it daily", user_id=user_id)

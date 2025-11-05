@@ -616,9 +616,14 @@ class AgentMemory:
             if user_id:
                 filters['user_id'] = user_id
             
+            # Determine the agent_id to use for deletion
+            # In multi_user mode, user_id should be used as agent_id for permission checks
+            # In multi_agent mode, agent_id should be provided explicitly
+            deletion_agent_id = agent_id or user_id or 'default'
+            
             # Fetch memories to delete
             results = self._agent_manager.get_memories(
-                agent_id=agent_id or 'default',
+                agent_id=deletion_agent_id,
                 filters=filters
             )
             
@@ -632,7 +637,7 @@ class AgentMemory:
                     continue
                 resp = self._agent_manager.delete_memory(
                     memory_id=mem_id,
-                    agent_id=agent_id or 'default'
+                    agent_id=deletion_agent_id
                 )
                 ok = bool(resp.get('success', False)) if isinstance(resp, dict) else bool(resp)
                 all_ok = all_ok and ok

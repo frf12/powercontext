@@ -82,6 +82,8 @@ class StorageAdapter:
         
         # Insert and get auto-generated ID
         generated_ids = self.vector_store.insert([vector], [payload])
+        if not generated_ids:
+            raise ValueError("Failed to insert memory: no ID returned from vector store")
         memory_id = generated_ids[0]  # Get the first (and only) generated ID
         return memory_id
     
