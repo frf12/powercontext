@@ -650,7 +650,7 @@ class AsyncMemory(MemoryBase):
     
     async def _update_memory_async(
         self,
-        memory_id: str,
+        memory_id: int,
         content: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -776,7 +776,7 @@ class AsyncMemory(MemoryBase):
     
     async def get(
         self,
-        memory_id: str,
+        memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -809,7 +809,7 @@ class AsyncMemory(MemoryBase):
     
     async def update(
         self,
-        memory_id: str,
+        memory_id: int,
         content: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -851,7 +851,7 @@ class AsyncMemory(MemoryBase):
     
     async def delete(
         self,
-        memory_id: str,
+        memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> bool:
