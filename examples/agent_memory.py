@@ -648,7 +648,6 @@ def main():
         print("  • Delete all memories functionality")
         print("  • Reset memory store functionality")
         print("  • Simple, consistent interface")
-        print("  • No mem0 dependencies")
         
     except Exception as e:
         print(f"❌ Error during demo: {e}")

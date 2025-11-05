@@ -183,9 +183,11 @@ class AsyncMemory(MemoryBase):
             # Format existing memories for prompt
             old_memory = []
             for mem in existing_memories:
+                # Storage returns "memory" field, not "content"
+                content = mem.get("memory", "") or mem.get("content", "")
                 old_memory.append({
                     "id": mem.get("id", "unknown"),
-                    "text": mem.get("content", "")
+                    "text": content
                 })
             
             # Generate update prompt
@@ -461,12 +463,12 @@ class AsyncMemory(MemoryBase):
             event_type = action.get("event", "NONE")
             action_id = action.get("id", "")
             
-            # Validate action text
-            if not action_text:
+            # Skip actions with empty text UNLESS it's a NONE event (duplicates may have empty text)
+            if not action_text and event_type != "NONE":
                 logger.warning(f"Skipping action with empty text: {action}")
                 continue
             
-            logger.debug(f"Processing action: {event_type} - '{action_text[:50]}...' (id: {action_id})")
+            logger.debug(f"Processing action: {event_type} - '{action_text[:50] if action_text else 'NONE'}...' (id: {action_id})")
             
             try:
                 if event_type == "ADD":
@@ -523,7 +525,7 @@ class AsyncMemory(MemoryBase):
                         logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "NONE":
-                    logger.debug("No action needed for memory")
+                    logger.debug("No action needed for memory (duplicate detected)")
                     action_counts["NONE"] += 1
                     
             except Exception as e:
@@ -549,8 +551,16 @@ class AsyncMemory(MemoryBase):
             if graph_result:
                 result["relations"] = graph_result
             return result
+        # If we processed actions but they were all NONE (duplicates detected), return empty results
+        elif action_counts.get("NONE", 0) > 0:
+            logger.info(f"All actions were NONE (duplicates detected), returning empty results")
+            result = {"results": []}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
+        # Only fall back to simple mode if we had no actions at all
         else:
-            # Fallback to simple mode
+            logger.warning("No actions returned from LLM, falling back to simple mode")
             return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
     
     async def _add_to_graph_async(

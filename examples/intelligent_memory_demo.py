@@ -25,11 +25,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from powermem import Memory, AsyncMemory, auto_config
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# logging.basicConfig(
+#     level=logging.ERROR,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
+# logger = logging.getLogger(__name__)
 
 
 def load_config():
@@ -77,7 +77,13 @@ def scenario_1_initial_addition(memory, user_id="user_001"):
         infer=True
     )
     
-    print(f"\n✅ Added memory with ID: {result['id']}")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Added {len(results)} memories:")
+        for i, mem in enumerate(results, 1):
+            print(f"   {i}. ID: {mem.get('id', 'N/A')}, Memory: {mem.get('memory', '')}, Event: {mem.get('event', 'N/A')}")
+    else:
+        print(f"\n✅ Processed (no new memories added)")
     print(f"Facts extracted: ['Name is Alice', 'Is a software engineer at Google', 'Loves Python programming', 'Loves machine learning']")
     
     # Search to verify
@@ -113,8 +119,13 @@ def scenario_2_duplicate_detection(memory, user_id="user_001"):
         infer=True
     )
     
-    print(f"\n✅ Processed with ID: {result['id']}")
-    print(f"Action: Most likely 'NONE' (no change needed - duplicate detected)")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Processed {len(results)} memories:")
+        for i, mem in enumerate(results, 1):
+            print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {mem.get('event', 'N/A')}")
+    else:
+        print(f"\n✅ Processed: No new memories (duplicate detected, NONE operation)")
     
     # Verify still the same count
     results = memory.search("What is Alice's name?", user_id=user_id, limit=5)
@@ -148,10 +159,19 @@ def scenario_3_information_update(memory, user_id="user_001"):
         infer=True
     )
     
-    print(f"\n✅ Processed with ID: {result['id']}")
-    print(f"Action: 'UPDATE' (job information changed)")
-    print(f"Old: 'Is a software engineer at Google'")
-    print(f"New: 'Is a senior ML engineer at Meta'")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Processed {len(results)} memories:")
+        for i, mem in enumerate(results, 1):
+            event = mem.get('event', 'N/A')
+            if event == 'UPDATE':
+                print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {event}")
+                print(f"      Old: {mem.get('previous_memory', 'N/A')}")
+                print(f"      New: {mem.get('memory', 'N/A')}")
+            else:
+                print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {event}, Memory: {mem.get('memory', '')}")
+    else:
+        print(f"\n✅ Processed (no changes)")
     
     # Search to verify the update
     results = memory.search("Where does Alice work?", user_id=user_id, limit=5)
@@ -189,8 +209,13 @@ def scenario_4_new_information(memory, user_id="user_001"):
         infer=True
     )
     
-    print(f"\n✅ Processed with ID: {result['id']}")
-    print(f"Action: 'ADD' (new facts added)")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Added {len(results)} new memories:")
+        for i, mem in enumerate(results, 1):
+            print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {mem.get('event', 'N/A')}, Memory: {mem.get('memory', '')}")
+    else:
+        print(f"\n✅ Processed (no new memories)")
     print(f"New facts: ['Likes to drink coffee every morning', 'Has two cats', 'Cats named Fluffy and Whiskers']")
     
     # Search to verify new facts
@@ -227,10 +252,18 @@ def scenario_5_conflict_resolution(memory, user_id="user_001"):
         infer=True
     )
     
-    print(f"\n✅ Processed with ID: {result['id']}")
-    print(f"Action: 'DELETE' for old coffee preference, 'ADD' for tea preference")
-    print(f"Old: 'Likes to drink coffee every morning' → DELETE")
-    print(f"New: 'Prefers tea' → ADD")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Processed {len(results)} memories:")
+        for i, mem in enumerate(results, 1):
+            event = mem.get('event', 'N/A')
+            print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {event}")
+            if event == 'DELETE':
+                print(f"      Deleted: {mem.get('memory', 'N/A')}")
+            elif event == 'ADD':
+                print(f"      Added: {mem.get('memory', 'N/A')}")
+    else:
+        print(f"\n✅ Processed (no changes)")
     
     # Search to verify conflict resolution
     results = memory.search("What does Alice drink?", user_id=user_id, limit=5)
@@ -267,10 +300,19 @@ def scenario_6_memory_consolidation(memory, user_id="user_001"):
         infer=True
     )
     
-    print(f"\n✅ Processed with ID: {result['id']}")
-    print(f"Action: 'UPDATE' (more detailed information)")
-    print(f"Old: 'Loves Python programming'")
-    print(f"New: 'Loves Python, especially for deep learning with TensorFlow and PyTorch'")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Processed {len(results)} memories:")
+        for i, mem in enumerate(results, 1):
+            event = mem.get('event', 'N/A')
+            if event == 'UPDATE':
+                print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {event}")
+                print(f"      Old: {mem.get('previous_memory', 'N/A')}")
+                print(f"      New: {mem.get('memory', 'N/A')}")
+            else:
+                print(f"   {i}. ID: {mem.get('id', 'N/A')}, Event: {event}, Memory: {mem.get('memory', '')}")
+    else:
+        print(f"\n✅ Processed (no changes)")
     
     return result
 
@@ -303,10 +345,11 @@ def demo_memory_operations():
     print("=" * 80)
     
     all_memories = memory.get_all(user_id="user_001", limit=20)
-    print(f"\n📚 Total memories: {len(all_memories)}")
+    memories_list = all_memories.get('results', [])
+    print(f"\n📚 Total memories: {len(memories_list)}")
     print("\nFinal memory contents:")
-    for i, mem in enumerate(all_memories, 1):
-        print(f"   {i}. {mem.get('content', '')}")
+    for i, mem in enumerate(memories_list, 1):
+        print(f"   {i}. {mem.get('memory', mem.get('content', ''))}")
     
     print("\n" + "=" * 80)
     print("INTELLIGENT MEMORY DEMO COMPLETED!")
@@ -348,7 +391,13 @@ async def demo_async_memory_operations():
         infer=True
     )
     
-    print(f"\n✅ Async memory added with ID: {result['id']}")
+    results = result.get('results', [])
+    if results:
+        print(f"\n✅ Async memory added: {len(results)} memories")
+        for i, mem in enumerate(results, 1):
+            print(f"   {i}. ID: {mem.get('id', 'N/A')}, Memory: {mem.get('memory', '')}")
+    else:
+        print(f"\n✅ Async memory processed (no new memories)")
     
     # Search asynchronously
     results = await async_memory.search(
@@ -392,10 +441,15 @@ def compare_modes():
             user_id="test_user",
             infer=False
         )
-        print(f"   Add {i}: Memory ID {result['id']}")
+        results = result.get('results', [])
+        if results:
+            print(f"   Add {i}: Memory ID {results[0].get('id', 'N/A')}")
+        else:
+            print(f"   Add {i}: No memory created")
     
     all_simple = memory.get_all(user_id="test_user")
-    print(f"\n   Total memories: {len(all_simple)} (includes duplicates)")
+    simple_list = all_simple.get('results', [])
+    print(f"\n   Total memories: {len(simple_list)} (includes duplicates)")
     
     # Clean up
     memory.delete_all(user_id="test_user")
@@ -408,17 +462,22 @@ def compare_modes():
             user_id="test_user",
             infer=True
         )
-        print(f"   Add {i}: Memory ID {result['id']}")
+        results = result.get('results', [])
+        if results:
+            print(f"   Add {i}: Memory ID {results[0].get('id', 'N/A')}")
+        else:
+            print(f"   Add {i}: No memory created (duplicate detected)")
     
     all_intelligent = memory.get_all(user_id="test_user")
-    print(f"\n   Total memories: {len(all_intelligent)} (duplicates removed)")
+    intelligent_list = all_intelligent.get('results', [])
+    print(f"\n   Total memories: {len(intelligent_list)} (duplicates removed)")
     
     print("\n" + "=" * 80)
     print("SUMMARY:")
     print("=" * 80)
-    print(f"  Simple mode:    {len(all_simple)} memories (with duplicates)")
-    print(f"  Intelligent:    {len(all_intelligent)} memories (deduplicated)")
-    print(f"  Difference:     {len(all_simple) - len(all_intelligent)} duplicates removed")
+    print(f"  Simple mode:    {len(simple_list)} memories (with duplicates)")
+    print(f"  Intelligent:    {len(intelligent_list)} memories (deduplicated)")
+    print(f"  Difference:     {len(simple_list) - len(intelligent_list)} duplicates removed")
     print("=" * 80)
 
 
@@ -440,13 +499,14 @@ def run_all_scenarios():
     
     # Final summary
     all_memories = memory.get_all(user_id="user_001", limit=20)
+    memories_list = all_memories.get('results', [])
     print("\n" + "=" * 80)
     print("FINAL RESULTS")
     print("=" * 80)
-    print(f"📚 Total memories: {len(all_memories)}")
+    print(f"📚 Total memories: {len(memories_list)}")
     print("\nAll memory contents:")
-    for i, mem in enumerate(all_memories, 1):
-        print(f"   {i}. {mem.get('content', '')}")
+    for i, mem in enumerate(memories_list, 1):
+        print(f"   {i}. {mem.get('memory', mem.get('content', ''))}")
 
 
 if __name__ == "__main__":

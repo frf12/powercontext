@@ -215,7 +215,7 @@ def demonstrate_basic_multi_agent():
     # Support agent search
     print("📞 Support Agent searching for 'customer preferences':")
     support_results = support_memory.search("customer preferences", user_id=customer_id, agent_id="support_agent")
-    for i, result in enumerate(support_results[:3], 1):
+    for i, result in enumerate(support_results.get("results", [])[:3], 1):
         content = result.get('memory')
         print(f"  {i}. {content}")
         print(f"     Metadata: {result.get('metadata', {})}")
@@ -223,7 +223,7 @@ def demonstrate_basic_multi_agent():
     # Sales agent search
     print("\n💰 Sales Agent searching for 'budget and pricing':")
     sales_results = sales_memory.search("budget and pricing", user_id=customer_id, agent_id="sales_agent")
-    for i, result in enumerate(sales_results[:3], 1):
+    for i, result in enumerate(sales_results.get("results", [])[:3], 1):
         content = result.get('memory')
         print(f"  {i}. {content}")
         print(f"     Metadata: {result.get('metadata', {})}")
@@ -231,7 +231,7 @@ def demonstrate_basic_multi_agent():
     # Technical agent search
     print("\n🔧 Technical Agent searching for 'technical requirements':")
     tech_results = tech_memory.search("technical requirements", user_id=customer_id, agent_id="tech_agent")
-    for i, result in enumerate(tech_results[:3], 1):
+    for i, result in enumerate(tech_results.get("results", [])[:3], 1):
         content = result.get('memory')
         print(f"  {i}. {content}")
         print(f"     Metadata: {result.get('metadata', {})}")
@@ -240,8 +240,9 @@ def demonstrate_basic_multi_agent():
     print("\n🌐 Cross-Agent Search (All Agents):")
     print("-" * 40)
     all_results = support_memory.search("customer information", user_id=customer_id)
-    print(f"Found {len(all_results)} total memories across all agents:")
-    for i, result in enumerate(all_results[:5], 1):
+    all_results_list = all_results.get("results", [])
+    print(f"Found {len(all_results_list)} total memories across all agents:")
+    for i, result in enumerate(all_results_list[:5], 1):
         agent_id = result.get('agent_id', 'Unknown')
         content = result.get('memory')
         print(f"  {i}. [{agent_id}] {content}")
@@ -359,8 +360,9 @@ def demonstrate_advanced_multi_agent():
         user_id="alice_dev",
         agent_id="alice_dev"
     )
-    for i, result in enumerate(dev_results[:3], 1):
-        print(f"  {i}. {result['content']}")
+    for i, result in enumerate(dev_results.get("results", [])[:3], 1):
+        content = result.get('memory', '')
+        print(f"  {i}. {content}")
         print(f"     Agent: {result.get('agent_id')}, Scope: {result.get('metadata', {}).get('scope')}")
     
     # Testing scope search
@@ -370,8 +372,9 @@ def demonstrate_advanced_multi_agent():
         user_id="charlie_qa",
         agent_id="charlie_qa"
     )
-    for i, result in enumerate(qa_results[:3], 1):
-        print(f"  {i}. {result['content']}")
+    for i, result in enumerate(qa_results.get("results", [])[:3], 1):
+        content = result.get('memory', '')
+        print(f"  {i}. {content}")
         print(f"     Agent: {result.get('agent_id')}, Scope: {result.get('metadata', {}).get('scope')}")
     
     # Project-wide search
@@ -380,8 +383,9 @@ def demonstrate_advanced_multi_agent():
         "project status and progress",
         run_id=project_id
     )
-    print(f"Found {len(project_results)} memories across the project:")
-    for i, result in enumerate(project_results[:5], 1):
+    project_results_list = project_results.get("results", [])
+    print(f"Found {len(project_results_list)} memories across the project:")
+    for i, result in enumerate(project_results_list[:5], 1):
         agent_id = result.get('agent_id', 'Unknown')
         scope = result.get('metadata', {}).get('scope', 'Unknown')
         content = result.get('memory')
@@ -394,10 +398,12 @@ def demonstrate_advanced_multi_agent():
         "collaboration and teamwork",
         run_id=project_id
     )
-    for result in collaboration_results:
+    collaboration_results_list = collaboration_results.get("results", [])
+    for result in collaboration_results_list:
         if 'collaboration' in result.get('metadata', {}):
             collaborators = result['metadata']['collaboration']
-            print(f"  🤝 {result['content']}")
+            content = result.get('memory', '')
+            print(f"  🤝 {content}")
             print(f"     Collaborators: {', '.join(collaborators)}")
 
 
@@ -464,7 +470,7 @@ def demonstrate_memory_management():
         user_id="admin",
         agent_id="memory_manager"
     )
-    for i, result in enumerate(critical_results[:3], 1):
+    for i, result in enumerate(critical_results.get("results", [])[:3], 1):
         importance = result.get('metadata', {}).get('importance', 'Unknown')
         category = result.get('metadata', {}).get('category', 'Unknown')
         content = result.get('memory')
@@ -477,7 +483,7 @@ def demonstrate_memory_management():
         user_id="admin",
         agent_id="memory_manager"
     )
-    for i, result in enumerate(security_results[:3], 1):
+    for i, result in enumerate(security_results.get("results", [])[:3], 1):
         importance = result.get('metadata', {}).get('importance', 'Unknown')
         category = result.get('metadata', {}).get('category', 'Unknown')
         content = result.get('memory')

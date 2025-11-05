@@ -55,9 +55,7 @@ def main():
     results = search_response.get('results', [])
     print(f"Found {len(results)} results:")
     for result in results:
-        # Search returns {"memory": "content", "metadata": {...}, "score": ...}
-        content = result.get('memory', result.get('content', 'No content'))
-        print(f"- {content}")
+        print(f"- {result['memory']}")
     
     # Get all memories
     all_memories = memory.get_all(user_id="user123")
