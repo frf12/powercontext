@@ -281,7 +281,7 @@ def get_all_memories(
 
 
 @app.get("/memories/{memory_id}", summary="Get a memory")
-def get_memory(memory_id: str):
+def get_memory(memory_id: int):
     """Retrieve a specific memory by ID."""
     try:
         return MEMORY_INSTANCE.get(memory_id)
@@ -302,11 +302,11 @@ def search_memories(search_req: SearchRequest):
 
 
 @app.put("/memories/{memory_id}", summary="Update a memory")
-def update_memory(memory_id: str, updated_memory: Dict[str, Any]):
+def update_memory(memory_id: int, updated_memory: Dict[str, Any]):
     """Update an existing memory with new content.
 
     Args:
-        memory_id (str): ID of the memory to update
+        memory_id (int): ID of the memory to update
         updated_memory (str): New content to update the memory with
 
     Returns:
@@ -320,7 +320,7 @@ def update_memory(memory_id: str, updated_memory: Dict[str, Any]):
 
 
 @app.get("/memories/{memory_id}/history", summary="Get memory history")
-def memory_history(memory_id: str):
+def memory_history(memory_id: int):
     """Retrieve memory history."""
     try:
         return MEMORY_INSTANCE.history(memory_id=memory_id)
@@ -330,7 +330,7 @@ def memory_history(memory_id: str):
 
 
 @app.delete("/memories/{memory_id}", summary="Delete a memory")
-def delete_memory(memory_id: str):
+def delete_memory(memory_id: int):
     """Delete a specific memory by ID."""
     try:
         MEMORY_INSTANCE.delete(memory_id=memory_id)

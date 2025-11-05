@@ -336,7 +336,7 @@ class MCPServer:
                     "type": "object",
                     "properties": {
                         "memory_id": {
-                            "type": "string",
+                            "type": "integer",
                             "description": "The unique identifier of the memory to retrieve"
                         },
                         "user_id": {
@@ -358,7 +358,7 @@ class MCPServer:
                     "type": "object",
                     "properties": {
                         "memory_id": {
-                            "type": "string",
+                            "type": "integer",
                             "description": "The unique identifier of the memory to update"
                         },
                         "content": {
@@ -388,7 +388,7 @@ class MCPServer:
                     "type": "object",
                     "properties": {
                         "memory_id": {
-                            "type": "string",
+                            "type": "integer",
                             "description": "The unique identifier of the memory to delete"
                         },
                         "user_id": {
@@ -736,6 +736,12 @@ class MCPServer:
                 if not memory_id:
                     raise ValueError("memory_id parameter is required")
                 
+                # Convert to int to ensure type compatibility
+                try:
+                    memory_id = int(memory_id)
+                except (ValueError, TypeError):
+                    raise ValueError(f"memory_id must be a valid integer, got: {memory_id}")
+                
                 # Auto-provide user_id if not specified
                 user_id = self.get_user_id_from_args(arguments)
                 result = self.memory.get(
@@ -780,6 +786,12 @@ class MCPServer:
                 if not memory_id or not content:
                     raise ValueError("memory_id and content parameters are required")
                 
+                # Convert to int to ensure type compatibility
+                try:
+                    memory_id = int(memory_id)
+                except (ValueError, TypeError):
+                    raise ValueError(f"memory_id must be a valid integer, got: {memory_id}")
+                
                 # Auto-provide user_id if not specified
                 user_id = self.get_user_id_from_args(arguments)
                 result = self.memory.update(
@@ -810,6 +822,12 @@ class MCPServer:
                 memory_id = arguments.get("memory_id")
                 if not memory_id:
                     raise ValueError("memory_id parameter is required")
+                
+                # Convert to int to ensure type compatibility
+                try:
+                    memory_id = int(memory_id)
+                except (ValueError, TypeError):
+                    raise ValueError(f"memory_id must be a valid integer, got: {memory_id}")
                 
                 # Auto-provide user_id if not specified
                 user_id = self.get_user_id_from_args(arguments)

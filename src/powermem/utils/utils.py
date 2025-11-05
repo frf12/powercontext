@@ -336,6 +336,26 @@ def load_config_from_env() -> Dict[str, Any]:
     return _load_config_from_env()
 
 
+def serialize_datetime(value: Any) -> Any:
+    """
+    Convert datetime objects to ISO format strings for JSON serialization.
+    Recursively handles dictionaries and lists.
+    
+    Args:
+        value: Value to serialize (can be datetime, dict, list, or primitive)
+    
+    Returns:
+        Serialized value with datetime objects converted to ISO format strings
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    elif isinstance(value, dict):
+        return {k: serialize_datetime(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [serialize_datetime(item) for item in value]
+    return value
+
+
 def convert_config_object_to_dict(obj: Any) -> Any:
     """
     Recursively convert ConfigObject instances to dictionaries.
