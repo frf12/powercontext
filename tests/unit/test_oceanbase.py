@@ -68,7 +68,7 @@ import os
 import importlib.util
 
 # Get the constants file path
-constants_file = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'mem', 'storage', 'oceanbase', 'constants.py')
+constants_file = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'powermem', 'storage', 'oceanbase', 'constants.py')
 
 # Load the constants module directly
 spec = importlib.util.spec_from_file_location("constants", constants_file)
@@ -88,12 +88,6 @@ OCEANBASE_SUPPORTED_FULLTEXT_PARSERS = constants_module.OCEANBASE_SUPPORTED_FULL
 OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES = constants_module.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES
 OCEANBASE_BUILD_PARAMS_MAPPING = constants_module.OCEANBASE_BUILD_PARAMS_MAPPING
 DEFAULT_OCEANBASE_CONNECTION = constants_module.DEFAULT_OCEANBASE_CONNECTION
-
-# Mock all the oceanbase modules to avoid import issues (except constants)
-sys.modules['mem'] = MagicMock()
-sys.modules['powermem.storage'] = MagicMock()
-sys.modules['powermem.storage.oceanbase'] = MagicMock()
-sys.modules['powermem.storage.base'] = MagicMock()
 
 # Create a mock class that behaves like OceanBaseVectorStore
 class MockOceanBaseVectorStore:

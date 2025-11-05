@@ -999,18 +999,48 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Update an existing memory."""
         try:
+            # Validate content is not empty
+            if not content or not content.strip():
+                raise ValueError(f"Cannot update memory with empty content: '{content}'")
+            
             # Generate new embedding
             embedding = self.embedding.embed(content, memory_action="update")
             
-            # Process with intelligence manager
-            processed_content = self.intelligence.process_content(content, metadata)
+            # Process metadata with intelligence manager (if enabled)
+            # Disabled LLM-based importance evaluation to save tokens (consistent with add method)
+            # enhanced_metadata = self.intelligence.process_metadata(content, metadata)
+            enhanced_metadata = metadata  # Use original metadata without LLM evaluation
             
+            # Intelligent plugin annotations
+            extra_fields = {}
+            if self._intelligence_plugin and self._intelligence_plugin.enabled:
+                # Get existing memory for context
+                existing_memory = self.get(memory_id, user_id=user_id)
+                if existing_memory:
+                    # Plugin can process update event
+                    extra_fields = self._intelligence_plugin.on_add(content=content, metadata=enhanced_metadata)
+            
+            # Generate content hash for deduplication
+            content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            
+            # Extract category from enhanced metadata if present
+            category = ""
+            if enhanced_metadata and isinstance(enhanced_metadata, dict):
+                category = enhanced_metadata.get("category", "")
+                # Remove category from metadata to avoid duplication
+                enhanced_metadata = {k: v for k, v in enhanced_metadata.items() if k != "category"}
+            
+            # Merge extra fields from intelligence plugin
+            if extra_fields and isinstance(extra_fields, dict):
+                enhanced_metadata = {**(enhanced_metadata or {}), **extra_fields}
 
             # Update in storage
             update_data = {
-                "content": processed_content,
+                "content": content,
                 "embedding": embedding,
-                "metadata": metadata,
+                "metadata": enhanced_metadata,
+                "hash": content_hash,  # Update hash
+                "category": category,
                 "updated_at": datetime.utcnow(),
             }
             

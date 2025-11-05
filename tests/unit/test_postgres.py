@@ -25,15 +25,15 @@ mock_psycopg2_extras.execute_values = mock_execute_values
 mock_psycopg2_extras.Json = mock_json
 mock_psycopg2_pool.ThreadedConnectionPool = mock_threaded_connection_pool
 
-sys.modules['psycopg2'] = MagicMock()
-sys.modules['psycopg2.extras'] = mock_psycopg2_extras
-sys.modules['psycopg2.pool'] = mock_psycopg2_pool
-sys.modules['psycopg2.sql'] = mock_psycopg2_sql
+# Note: We don't mock psycopg2 modules in sys.modules here to avoid import issues
+# Instead, we'll patch them in individual tests
 
-# Import and reload the module to pick up our mocks
-import mem.storage.pgvector.pgvector
-importlib.reload(mem.storage.pgvector.pgvector)
-from powermem.storage.pgvector.pgvector import PGVectorStore
+# Import PGVectorStore - we'll patch its dependencies in tests
+try:
+    from powermem.storage.pgvector.pgvector import PGVectorStore
+except ImportError:
+    # If import fails due to missing dependencies, we'll handle it in tests
+    PGVectorStore = None
 
 
 class TestPGVector(unittest.TestCase):
@@ -397,8 +397,8 @@ class TestPGVector(unittest.TestCase):
             'psycopg2.sql': mock_psycopg2_sql
         }):
             # Force reload of PostgresVectorStore to pick up the mocked modules
-            if 'powermem.storage.pgvector' in sys.modules:
-                importlib.reload(sys.modules['powermem.storage.pgvector'])
+            if 'powermem.storage.pgvector.pgvector' in sys.modules:
+                importlib.reload(sys.modules['powermem.storage.pgvector.pgvector'])
 
             mock_connection_pool.return_value = self.mock_pool_psycopg
             mock_get_cursor.return_value.__enter__.return_value = self.mock_cursor

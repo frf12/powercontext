@@ -348,9 +348,14 @@ class TestOceanBaseGraph(unittest.TestCase):
         ]
         self.mock_client.ann_search.return_value = mock_search_results
 
-        # Mock Table creation
-        with patch("powermem.storage.oceanbase.oceanbase_graph.Table") as mock_table_class:
+        # Mock Table creation and l2_distance
+        with patch("powermem.storage.oceanbase.oceanbase_graph.Table") as mock_table_class, \
+             patch("powermem.storage.oceanbase.oceanbase_graph.l2_distance") as mock_l2_distance:
             mock_table_class.return_value = mock_table
+            # Create a mock that supports comparison
+            mock_distance_expr = MagicMock()
+            mock_distance_expr.__lt__ = lambda self, other: True  # Always return True for comparison
+            mock_l2_distance.return_value = mock_distance_expr
 
             # Call the _search_node method with limit > 1
             result = self.memory_graph._search_node("alice", mock_embedding, self.test_filters, limit=2)
@@ -379,9 +384,14 @@ class TestOceanBaseGraph(unittest.TestCase):
         mock_search_results.fetchall.return_value = [("entity1", "alice", 0.5)]
         self.mock_client.ann_search.return_value = mock_search_results
 
-        # Mock Table creation
-        with patch("powermem.storage.oceanbase.oceanbase_graph.Table") as mock_table_class:
+        # Mock Table creation and l2_distance
+        with patch("powermem.storage.oceanbase.oceanbase_graph.Table") as mock_table_class, \
+             patch("powermem.storage.oceanbase.oceanbase_graph.l2_distance") as mock_l2_distance:
             mock_table_class.return_value = mock_table
+            # Create a mock that supports comparison
+            mock_distance_expr = MagicMock()
+            mock_distance_expr.__lt__ = lambda self, other: True  # Always return True for comparison
+            mock_l2_distance.return_value = mock_distance_expr
 
             # Call the _search_node method with limit = 1
             result = self.memory_graph._search_node("alice", mock_embedding, self.test_filters, limit=1)
@@ -407,9 +417,14 @@ class TestOceanBaseGraph(unittest.TestCase):
         mock_search_results.fetchall.return_value = []
         self.mock_client.ann_search.return_value = mock_search_results
 
-        # Mock Table creation
-        with patch("powermem.storage.oceanbase.oceanbase_graph.Table") as mock_table_class:
+        # Mock Table creation and l2_distance
+        with patch("powermem.storage.oceanbase.oceanbase_graph.Table") as mock_table_class, \
+             patch("powermem.storage.oceanbase.oceanbase_graph.l2_distance") as mock_l2_distance:
             mock_table_class.return_value = mock_table
+            # Create a mock that supports comparison
+            mock_distance_expr = MagicMock()
+            mock_distance_expr.__lt__ = lambda self, other: True  # Always return True for comparison
+            mock_l2_distance.return_value = mock_distance_expr
 
             # Call the _search_node method
             result = self.memory_graph._search_node("alice", mock_embedding, self.test_filters)
