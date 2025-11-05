@@ -174,7 +174,7 @@ if DB_TYPE == "oceanbase":
             "user": "root@ai_work",
             "password": "oceanbaseV5",
             "db_name": "ai_work",
-            "collection_name": "mem0_collection",
+            "collection_name": "powermem_collection",
             "embedding_model_dims": 1536,
             "index_type": "HNSW",
             "vidx_metric_type": "l2",
@@ -211,7 +211,7 @@ DEFAULT_CONFIG = {
 MEMORY_INSTANCE = Memory.from_config(DEFAULT_CONFIG)
 
 app = FastAPI(
-    title="Mem0 REST APIs",
+    title="PowerMem REST APIs",
     description="A REST API for managing and searching memories for your AI Agents and Apps.",
     version="1.0.0",
 )
@@ -238,7 +238,7 @@ class SearchRequest(BaseModel):
     filters: Optional[Dict[str, Any]] = None
 
 
-@app.post("/configure", summary="Configure Mem0")
+@app.post("/configure", summary="Configure PowerMem")
 def set_config(config: Dict[str, Any]):
     """Set memory configuration."""
     global MEMORY_INSTANCE

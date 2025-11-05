@@ -9,7 +9,7 @@ including:
 4. Conflict resolution (contradiction handling)
 5. Smart memory organization
 
-The demo shows how powermem intelligently manages memories similar to mem0.
+The demo shows how powermem intelligently manages memories.
 """
 
 import os
@@ -361,7 +361,6 @@ def demo_memory_operations():
     print("  ✓ New information addition")
     print("  ✓ Conflict resolution (contradiction handling)")
     print("  ✓ Memory consolidation and merging")
-    print("\nAll operations used mem0-compatible prompts and logic! 🎉")
 
 
 async def demo_async_memory_operations():

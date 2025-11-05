@@ -75,7 +75,7 @@ for memory in memories:
 ```python
 from powermem import Memory
 
-# Using mem0-compatible field names
+# Using field names
 config = {
     'llm': {
         'provider': 'qwen',  # or 'openai', 'anthropic', 'ollama'
@@ -84,14 +84,14 @@ config = {
             'model': 'qwen-plus'
         }
     },
-    'embedder': {  # mem0 field name
+    'embedder': {
         'provider': 'qwen',
         'config': {
             'api_key': 'your_api_key',
             'model': 'text-embedding-v4'
         }
     },
-    'vector_store': {  # mem0 field name (defaults to oceanbase)
+    'vector_store': {
         'provider': 'oceanbase',
         'config': {}
     }
