@@ -114,10 +114,10 @@ TABLE_ENTITIES = "graph_entities"
 TABLE_RELATIONSHIPS = "graph_relationships"
 
 # Graph search parameters
-DEFAULT_SIMILARITY_THRESHOLD = 0.9
+DEFAULT_SIMILARITY_THRESHOLD = 0.7
 DEFAULT_PATH_STRING_LENGTH = 500
 DEFAULT_SEARCH_LIMIT = 100
-DEFAULT_BM25_TOP_N = 5
+DEFAULT_BM25_TOP_N = 15
 
 
 # =============================================================================

@@ -28,6 +28,14 @@ from powermem.storage.oceanbase import constants
 
 logger = logging.getLogger(__name__)
 
+# Try to import jieba for better Chinese text segmentation
+try:
+    import jieba
+except ImportError:
+    logger.warning("jieba is not installed. Falling back to simple space-based tokenization. "
+                   "Install jieba for better Chinese text segmentation: pip install jieba")
+    jieba = None
+
 
 class MemoryGraph(GraphStoreBase):
     """OceanBase-based graph memory storage implementation."""
@@ -404,21 +412,59 @@ class MemoryGraph(GraphStoreBase):
         if not search_output:
             return []
 
-        search_outputs_sequence = [
-            [item["source"], item["relationship"], item["destination"]] for item in search_output
-        ]
+        # Tokenize search outputs for BM25 with improved segmentation
+        search_outputs_sequence = []
+        for item in search_output:
+            # Combine source, relationship, destination into a single text for better tokenization
+            combined_text = f"{item['source']} {item['relationship']} {item['destination']}"
+            tokenized_item = self._tokenize_text(combined_text)
+            search_outputs_sequence.append(tokenized_item)
+        
         bm25 = BM25Okapi(search_outputs_sequence)
 
-        tokenized_query = query.split(" ")
-        reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=constants.DEFAULT_BM25_TOP_N)
-
+        # Tokenize query using the same method
+        tokenized_query = self._tokenize_text(query)
+        
+        # Get top N results based on BM25 scores
+        scores = bm25.get_scores(tokenized_query)
+        # Get indices sorted by score (descending)
+        sorted_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        top_n_indices = sorted_indices[:constants.DEFAULT_BM25_TOP_N]
+        
+        # Build reranked results
         search_results = []
-        for item in reranked_results:
-            search_results.append({"source": item[0], "relationship": item[1], "destination": item[2]})
+        for idx in top_n_indices:
+            if idx < len(search_output):
+                item = search_output[idx]
+                search_results.append({
+                    "source": item["source"], 
+                    "relationship": item["relationship"], 
+                    "destination": item["destination"]
+                })
 
-        logger.info("Returned %d search results", len(search_results))
+        logger.info("Returned %d search results (from %d candidates)", len(search_results), len(search_output))
 
         return search_results
+    
+    def _tokenize_text(self, text: str) -> List[str]:
+        """Tokenize text using jieba for Chinese or simple split for other languages.
+        
+        Args:
+            text: Text to tokenize.
+            
+        Returns:
+            List of tokens.
+        """
+        if jieba is not None:
+            # Use jieba for Chinese text segmentation
+            # Convert to lowercase for better matching
+            tokens = list(jieba.cut(text.lower()))
+            # Filter out empty strings and single spaces
+            tokens = [t for t in tokens if t.strip()]
+            return tokens
+        else:
+            # Fallback to simple space-based tokenization
+            return text.lower().split()
 
     def delete_all(self, filters: Dict[str, Any]) -> None:
         """Delete all graph data for the given filters.
