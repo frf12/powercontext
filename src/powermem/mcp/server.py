@@ -51,22 +51,45 @@ def sanitize_for_json(data, _visited=None):
         _visited = set()
     
     # Prevent infinite recursion
-    if id(data) in _visited:
+    obj_id = id(data)
+    if obj_id in _visited:
         return data
-    _visited.add(id(data))
+    _visited.add(obj_id)
     
     try:
         # First check for datetime/date (before other type checks)
         if isinstance(data, (datetime, date)):
             return data.isoformat()
         
+        # Check for datetime-like objects that might have isoformat method
+        if hasattr(data, 'isoformat') and callable(getattr(data, 'isoformat', None)):
+            try:
+                # Try to call isoformat if it exists (handles datetime subclasses)
+                if isinstance(data, (datetime, date)):
+                    return data.isoformat()
+            except Exception:
+                pass
+        
         # Handle Pydantic models
         if hasattr(data, 'model_dump'):
             try:
                 data = data.model_dump(mode='json')  # Use mode='json' to auto-serialize dates
+                # Recursively sanitize the result to catch any datetime objects that might have been missed
+                # This is important because mode='json' might not always serialize nested datetime objects
+                if isinstance(data, dict):
+                    data = {k: sanitize_for_json(v, _visited) for k, v in data.items()}
+                elif isinstance(data, list):
+                    data = [sanitize_for_json(item, _visited) for item in data]
             except Exception:
                 try:
-                    data = data.model_dump()
+                    dumped = data.model_dump()
+                    # Recursively sanitize the dumped result
+                    if isinstance(dumped, dict):
+                        data = {k: sanitize_for_json(v, _visited) for k, v in dumped.items()}
+                    elif isinstance(dumped, list):
+                        data = [sanitize_for_json(item, _visited) for item in dumped]
+                    else:
+                        data = dumped
                 except Exception:
                     if hasattr(data, '__dict__'):
                         data = data.__dict__
@@ -88,16 +111,19 @@ def sanitize_for_json(data, _visited=None):
         if isinstance(data, dict):
             result = {}
             for k, v in data.items():
-                # Recursively sanitize values
-                sanitized_v = sanitize_for_json(v, _visited.copy())
+                # Recursively sanitize values (use same visited set)
+                sanitized_v = sanitize_for_json(v, _visited)
                 result[k] = sanitized_v
             return result
         elif isinstance(data, list):
             result = []
             for item in data:
-                # Recursively sanitize items
-                sanitized_item = sanitize_for_json(item, _visited.copy())
+                # Recursively sanitize items (use same visited set)
+                sanitized_item = sanitize_for_json(item, _visited)
                 result.append(sanitized_item)
+            return result
+        elif isinstance(data, tuple):
+            result = tuple(sanitize_for_json(item, _visited) for item in data)
             return result
         elif isinstance(data, (datetime, date)):
             # Double-check (shouldn't reach here but just in case)
@@ -105,7 +131,7 @@ def sanitize_for_json(data, _visited=None):
         else:
             return data
     finally:
-        _visited.discard(id(data))
+        _visited.discard(obj_id)
 
 
 def safe_json_dumps(obj: Any, **kwargs) -> str:
@@ -128,6 +154,13 @@ def safe_json_dumps(obj: Any, **kwargs) -> str:
         """Enhanced JSON serializer with fallbacks"""
         if isinstance(obj, (datetime, date)):
             return obj.isoformat()
+        # Handle datetime-like objects with isoformat method
+        if hasattr(obj, 'isoformat') and callable(getattr(obj, 'isoformat', None)):
+            try:
+                if isinstance(obj, (datetime, date)):
+                    return obj.isoformat()
+            except Exception:
+                pass
         # Handle other common non-serializable types
         if hasattr(obj, '__dict__'):
             try:
@@ -248,6 +281,10 @@ class MCPServer:
                         "memory_type": {
                             "type": "string",
                             "description": "Optional memory type classification"
+                        },
+                        "filters": {
+                            "type": "object",
+                            "description": "Optional filters dictionary for advanced filtering"
                         }
                     },
                     "required": ["messages"]
@@ -283,6 +320,10 @@ class MCPServer:
                         "filters": {
                             "type": "object",
                             "description": "Optional metadata filters for advanced search"
+                        },
+                        "threshold": {
+                            "type": "number",
+                            "description": "Optional similarity threshold (0.0-1.0) for filtering results"
                         }
                     },
                     "required": ["query"]
@@ -375,6 +416,10 @@ class MCPServer:
                         "agent_id": {
                             "type": "string",
                             "description": "Optional agent identifier to filter memories for deletion"
+                        },
+                        "run_id": {
+                            "type": "string",
+                            "description": "Optional run/thread identifier to filter memories for deletion"
                         }
                     }
                 }
@@ -393,10 +438,23 @@ class MCPServer:
                             "type": "string",
                             "description": "Optional agent identifier to filter memories"
                         },
+                        "run_id": {
+                            "type": "string",
+                            "description": "Optional run/thread identifier to filter memories"
+                        },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of results to return (default: 100)",
                             "default": 100
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Offset for pagination (default: 0)",
+                            "default": 0
+                        },
+                        "filters": {
+                            "type": "object",
+                            "description": "Optional metadata filters for advanced filtering"
                         }
                     }
                 }
@@ -549,6 +607,7 @@ class MCPServer:
                     agent_id=arguments.get("agent_id"),
                     run_id=arguments.get("run_id"),
                     metadata=arguments.get("metadata"),
+                    filters=arguments.get("filters"),
                     scope=arguments.get("scope"),
                     memory_type=arguments.get("memory_type")
                 )
@@ -581,7 +640,8 @@ class MCPServer:
                     agent_id=arguments.get("agent_id"),
                     run_id=arguments.get("run_id"),
                     filters=arguments.get("filters"),
-                    limit=arguments.get("limit", 10)
+                    limit=arguments.get("limit", 10),
+                    threshold=arguments.get("threshold")
                 )
                 
                 # Ensure all datetime objects and other non-serializable objects are serialized correctly
@@ -599,6 +659,8 @@ class MCPServer:
                     # Multiple passes to ensure all nested datetime objects are caught
                     cleaned_item = sanitize_for_json(item)
                     cleaned_item = sanitize_for_json(cleaned_item)  # Second pass
+                    # Final check for datetime objects
+                    cleaned_item = sanitize_for_json(cleaned_item)  # Third pass
                     final_results.append(cleaned_item)
                 
                 final_relations = []
@@ -606,6 +668,7 @@ class MCPServer:
                     for item in sanitized_relations:
                         cleaned_item = sanitize_for_json(item)
                         cleaned_item = sanitize_for_json(cleaned_item)  # Second pass
+                        cleaned_item = sanitize_for_json(cleaned_item)  # Third pass
                         final_relations.append(cleaned_item)
                 
                 # Final structure to return
@@ -622,18 +685,42 @@ class MCPServer:
                 final_response = sanitize_for_json(final_response)  # Third pass for safety
                 
                 # One more final check: manually walk through and convert any remaining datetime
-                def final_datetime_check(obj, path=""):
+                # Use a more robust approach with visited set to prevent infinite recursion
+                def final_datetime_check(obj, path="", visited=None):
                     """Final check for any datetime objects that might have been missed"""
-                    if isinstance(obj, (datetime, date)):
-                        logger.warning(f"Found datetime object at path {path}: {obj}, converting to ISO")
-                        return obj.isoformat()
-                    elif isinstance(obj, dict):
-                        return {k: final_datetime_check(v, f"{path}.{k}") for k, v in obj.items()}
-                    elif isinstance(obj, list):
-                        return [final_datetime_check(item, f"{path}[{i}]") for i, item in enumerate(obj)]
-                    return obj
+                    if visited is None:
+                        visited = set()
+                    
+                    obj_id = id(obj)
+                    if obj_id in visited:
+                        return obj
+                    visited.add(obj_id)
+                    
+                    try:
+                        if isinstance(obj, (datetime, date)):
+                            logger.warning(f"Found datetime object at path {path}: {obj}, converting to ISO")
+                            return obj.isoformat()
+                        elif isinstance(obj, dict):
+                            return {k: final_datetime_check(v, f"{path}.{k}", visited) for k, v in obj.items()}
+                        elif isinstance(obj, list):
+                            return [final_datetime_check(item, f"{path}[{i}]", visited) for i, item in enumerate(obj)]
+                        elif isinstance(obj, tuple):
+                            return tuple(final_datetime_check(item, f"{path}[{i}]", visited) for i, item in enumerate(obj))
+                        else:
+                            # Check if it's a datetime-like object that might have been missed
+                            if hasattr(obj, 'isoformat') and callable(getattr(obj, 'isoformat', None)):
+                                try:
+                                    return obj.isoformat()
+                                except Exception:
+                                    pass
+                            return obj
+                    finally:
+                        visited.discard(obj_id)
                 
                 final_response = final_datetime_check(final_response)
+                
+                # Final sanitization pass before JSON serialization
+                final_response = sanitize_for_json(final_response)
                 
                 return {
                     "content": [
@@ -750,7 +837,8 @@ class MCPServer:
                 user_id = self.get_user_id_from_args(arguments)
                 self.memory.delete_all(
                     user_id=user_id,
-                    agent_id=arguments.get("agent_id")
+                    agent_id=arguments.get("agent_id"),
+                    run_id=arguments.get("run_id")
                 )
                 
                 return {
@@ -771,7 +859,10 @@ class MCPServer:
                 result = self.memory.get_all(
                     user_id=user_id,
                     agent_id=arguments.get("agent_id"),
-                    limit=arguments.get("limit", 100)
+                    run_id=arguments.get("run_id"),
+                    limit=arguments.get("limit", 100),
+                    offset=arguments.get("offset", 0),
+                    filters=arguments.get("filters")
                 )
                 
                 # Sanitize result to handle datetime objects
