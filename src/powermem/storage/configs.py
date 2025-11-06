@@ -110,6 +110,18 @@ class GraphStoreConfig(BaseModel):
         description="Custom prompt to fetch entities from the given text",
         default=None
     )
+    custom_extract_relations_prompt: Optional[str] = Field(
+        description="Custom prompt for extracting relations from text",
+        default=None
+    )
+    custom_update_graph_prompt: Optional[str] = Field(
+        description="Custom prompt for updating graph memories",
+        default=None
+    )
+    custom_delete_relations_prompt: Optional[str] = Field(
+        description="Custom prompt for deleting relations",
+        default=None
+    )
 
     @model_validator(mode="after")
     def validate_config(self) -> "GraphStoreConfig":

@@ -98,7 +98,10 @@ def load_config_from_env() -> Dict[str, Any]:
             'user': os.getenv('DATABASE_USER', 'postgres'),
             'password': os.getenv('DATABASE_PASSWORD', 'password'),
             'database': os.getenv('DATABASE_NAME', 'powermem'),
-            'connection_timeout': int(os.getenv('DATABASE_TIMEOUT', '30'))
+            'connection_timeout': int(os.getenv('DATABASE_TIMEOUT', '30')),
+            'embedding_model_dims': int(os.getenv('DATABASE_EMBEDDING_MODEL_DIMS', '1536')),
+            'diskann': bool(os.getenv('DATABASE_DISKANN', 'True')),
+            'hnsw': bool(os.getenv('DATABASE_HNSW', 'True')),
         }
     else:
         # SQLite configuration (default)

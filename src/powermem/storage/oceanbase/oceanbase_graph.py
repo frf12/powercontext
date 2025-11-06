@@ -116,9 +116,23 @@ class MemoryGraph(GraphStoreBase):
         llm_config = self._get_llm_config()
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
 
-        # Initialize graph prompts and tools
-        self.graph_prompts = GraphPrompts()
-        self.graph_tools_prompts = GraphToolsPrompts()
+        # Initialize graph prompts and tools with config
+        # Pass graph_store config or full config to prompts
+        graph_config = {}
+        if self.config.graph_store:
+            # Convert GraphStoreConfig to dict if needed
+            if hasattr(self.config.graph_store, 'model_dump'):
+                graph_config = self.config.graph_store.model_dump()
+            elif isinstance(self.config.graph_store, dict):
+                graph_config = self.config.graph_store
+        # Also include full config for fallback
+        prompts_config = {"graph_store": graph_config}
+        # Merge top-level config if it's a dict
+        if isinstance(self.config, dict):
+            prompts_config.update(self.config)
+        
+        self.graph_prompts = GraphPrompts(prompts_config)
+        self.graph_tools_prompts = GraphToolsPrompts(prompts_config)
 
     def _get_llm_provider(self) -> str:
         """Get LLM provider from configuration with fallback.

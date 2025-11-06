@@ -28,9 +28,15 @@ class ImportanceEvaluationPrompts(PromptTemplates):
     
     def _load_importance_evaluation_templates(self) -> None:
         """Load importance evaluation specific templates."""
-        importance_templates = {
-            "system": {
-                "importance_evaluator": """You are an AI assistant that evaluates the importance of memory content on a scale from 0.0 to 1.0.
+        # Check for custom prompt in config
+        custom_prompt = self.config.get("custom_importance_evaluation_prompt")
+        
+        # Use custom prompt if provided, otherwise use default
+        if custom_prompt:
+            default_system_prompt = custom_prompt
+            logger.info("Using custom importance evaluation prompt from config")
+        else:
+            default_system_prompt = """You are an AI assistant that evaluates the importance of memory content on a scale from 0.0 to 1.0.
 
 Your task is to analyze memory content and assess its importance based on multiple criteria:
 - Relevance: How relevant is this information to the user's needs and interests?
@@ -41,6 +47,10 @@ Your task is to analyze memory content and assess its importance based on multip
 - Personal Significance: How personally important is this to the user?
 
 Always provide detailed reasoning for your evaluation and return results in structured JSON format."""
+        
+        importance_templates = {
+            "system": {
+                "importance_evaluator": default_system_prompt
             },
             
             "user": {

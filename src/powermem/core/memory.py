@@ -214,6 +214,14 @@ class Memory(MemoryBase):
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
 
+        # Save custom prompts from config (mem0 compatible)
+        if self.memory_config:
+            self.custom_fact_extraction_prompt = self.memory_config.custom_fact_extraction_prompt
+            self.custom_update_memory_prompt = self.memory_config.custom_update_memory_prompt
+        else:
+            self.custom_fact_extraction_prompt = self.config.get('custom_fact_extraction_prompt')
+            self.custom_update_memory_prompt = self.config.get('custom_update_memory_prompt')
+
         # Intelligent memory plugin (pluggable)
         merged_cfg = self._get_intelligent_memory_config()
 
@@ -288,12 +296,20 @@ class Memory(MemoryBase):
         """
         if self.memory_config and self.memory_config.intelligent_memory:
             # Use MemoryConfig's intelligent_memory
-            return self.memory_config.intelligent_memory.model_dump()
+            cfg = self.memory_config.intelligent_memory.model_dump()
+            # Merge custom_importance_evaluation_prompt from top level if present
+            if self.memory_config.custom_importance_evaluation_prompt:
+                cfg["custom_importance_evaluation_prompt"] = self.memory_config.custom_importance_evaluation_prompt
+            return cfg
         else:
             # Fallback to dict access
             intelligence_cfg = (self.config or {}).get("intelligence", {})
             intelligent_memory_cfg = (self.config or {}).get("intelligent_memory", {})
-            return {**intelligence_cfg, **intelligent_memory_cfg}
+            merged_cfg = {**intelligence_cfg, **intelligent_memory_cfg}
+            # Merge custom_importance_evaluation_prompt from top level if present
+            if "custom_importance_evaluation_prompt" in self.config:
+                merged_cfg["custom_importance_evaluation_prompt"] = self.config["custom_importance_evaluation_prompt"]
+            return merged_cfg
 
     def _extract_facts(self, messages: Any) -> List[str]:
         """
@@ -310,9 +326,13 @@ class Memory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use FACT_RETRIEVAL_PROMPT (mem0 compatible)
-            system_prompt = FACT_RETRIEVAL_PROMPT
-            user_prompt = f"Input:\n{conversation}"
+            # Use custom prompt if provided, otherwise use default (mem0 compatible)
+            if self.custom_fact_extraction_prompt:
+                system_prompt = self.custom_fact_extraction_prompt
+                user_prompt = f"Input:\n{conversation}"
+            else:
+                system_prompt = FACT_RETRIEVAL_PROMPT
+                user_prompt = f"Input:\n{conversation}"
             
             # Call LLM to extract facts
             try:
@@ -378,8 +398,11 @@ class Memory(MemoryBase):
                     "text": mem.get("content", "")
                 })
             
-            # Generate update prompt
-            update_prompt = get_memory_update_prompt(old_memory, new_facts)
+            # Generate update prompt with custom prompt if provided
+            custom_prompt = None
+            if hasattr(self, 'custom_update_memory_prompt') and self.custom_update_memory_prompt:
+                custom_prompt = self.custom_update_memory_prompt
+            update_prompt = get_memory_update_prompt(old_memory, new_facts, custom_prompt)
             
             # Call LLM
             try:
