@@ -170,8 +170,7 @@ class Memory(MemoryBase):
         vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
 
         # Extract graph_store config
-        # self.enable_graph = self._get_graph_enabled()
-        self.enable_graph = True
+        self.enable_graph = self._get_graph_enabled()
         self.graph_store = None
         if self.enable_graph:
             provider = self.config.get("graph_store").get("provider", "oceanbase")
