@@ -1259,3 +1259,42 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Refresh metadata
         self.obvector.refresh_metadata([self.collection_name])
+    
+    def execute_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Execute a raw SQL statement and return results.
+        
+        This method is used by SubStoreMigrationManager to manage migration status table.
+        
+        Args:
+            sql: SQL statement to execute
+            params: Optional parameters for the SQL statement
+            
+        Returns:
+            List of result rows as dictionaries
+        """
+        try:
+            with self.obvector.engine.connect() as conn:
+                if params:
+                    result = conn.execute(text(sql), params)
+                else:
+                    result = conn.execute(text(sql))
+                
+                # Commit for DDL/DML statements
+                conn.commit()
+                
+                # Try to fetch results (for SELECT queries)
+                try:
+                    rows = result.fetchall()
+                    # Convert rows to dictionaries
+                    if rows and result.keys():
+                        return [dict(zip(result.keys(), row)) for row in rows]
+                    return []
+                except Exception:
+                    # No results to fetch (for INSERT/UPDATE/DELETE/CREATE)
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"Failed to execute SQL: {e}")
+            logger.debug(f"SQL statement: {sql}")
+            raise
