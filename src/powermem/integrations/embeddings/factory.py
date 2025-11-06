@@ -34,6 +34,9 @@ class EmbedderFactory:
 
     @classmethod
     def create(cls, provider_name, config, vector_config: Optional[dict]):
+        # Handle mock provider directly
+        if provider_name == "mock":
+            return MockEmbeddings()
         if provider_name == "upstash_vector" and vector_config and vector_config.enable_embeddings:
             return MockEmbeddings()
         class_type = cls.provider_to_class.get(provider_name)

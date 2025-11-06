@@ -35,7 +35,7 @@ from powermem.storage.oceanbase import constants
 logger = logging.getLogger(__name__)
 
 class OceanBaseVectorStore(VectorStoreBase):
-    """OceanBase vector store implementation for mem0."""
+    """OceanBase vector store implementation"""
 
     def __init__(
             self,
@@ -194,7 +194,6 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _create_table_with_index_by_embedding_model_dims(self) -> None:
         """Create table with vector index based on embedding dimension."""
-        # Create columns following mem0 standard schema
         cols = [
             # Primary key - Snowflake ID (BIGINT without AUTO_INCREMENT)
             Column(self.primary_field, BigInteger, primary_key=True, autoincrement=False),
@@ -204,7 +203,6 @@ class OceanBaseVectorStore(VectorStoreBase):
             Column(self.text_field, LONGTEXT),
             # Metadata field (JSON)
             Column(self.metadata_field, JSON),
-            # mem0 standard fields for filtering
             Column("user_id", String(128)),  # User identifier
             Column("agent_id", String(128)),  # Agent identifier
             Column("run_id", String(128)),  # Run identifier

@@ -6,12 +6,13 @@ This module provides a simple SQLite-based vector store for development and test
 
 import json
 import logging
+import os
 import sqlite3
 import threading
-import uuid
 from typing import Any, Dict, List, Optional
 
 from powermem.storage.base import VectorStoreBase, OutputData
+from powermem.utils.utils import generate_snowflake_id
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,26 @@ class SQLiteVectorStore(VectorStoreBase):
         """
         self.db_path = database_path
         self.collection_name = collection_name
-        self.connection = sqlite3.connect(database_path, check_same_thread=False)
+        self.connection = None
         self._lock = threading.Lock()
+        
+        # Create directory if database path is not in-memory and directory doesn't exist
+        if database_path != ":memory:":
+            db_dir = os.path.dirname(os.path.abspath(database_path))
+            if db_dir and not os.path.exists(db_dir):
+                try:
+                    os.makedirs(db_dir, exist_ok=True)
+                    logger.info(f"Created database directory: {db_dir}")
+                except OSError as e:
+                    logger.error(f"Failed to create database directory {db_dir}: {e}")
+                    raise
+        
+        # Connect to database
+        try:
+            self.connection = sqlite3.connect(database_path, check_same_thread=False)
+        except Exception as e:
+            logger.error(f"Failed to connect to SQLite database at {database_path}: {e}")
+            raise
         
         # Create the table
         self.create_col()
@@ -44,7 +63,7 @@ class SQLiteVectorStore(VectorStoreBase):
         with self._lock:
             self.connection.execute(f"""
                 CREATE TABLE IF NOT EXISTS {table_name} (
-                    id TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY,
                     vector TEXT,  -- Store as JSON string
                     payload TEXT,  -- Store as JSON string
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -52,25 +71,37 @@ class SQLiteVectorStore(VectorStoreBase):
             """)
             self.connection.commit()
     
-    def insert(self, vectors: List[List[float]], payloads=None, ids=None) -> None:
-        """Insert vectors into the collection."""
-        if not vectors:
-            return
+    def insert(self, vectors: List[List[float]], payloads=None, ids=None) -> List[int]:
+        """
+        Insert vectors into the collection.
+        
+        Args:
+            vectors: List of vectors to insert
+            payloads: List of payload dictionaries
+            ids: Deprecated parameter (ignored), IDs are now generated using Snowflake algorithm
             
-        if ids is None:
-            ids = [str(uuid.uuid4()) for _ in vectors]
+        Returns:
+            List[int]: List of generated Snowflake IDs
+        """
+        if not vectors:
+            return []
         
         if payloads is None:
             payloads = [{} for _ in vectors]
         
+        # Generate Snowflake IDs for each vector
+        generated_ids = [generate_snowflake_id() for _ in range(len(vectors))]
+        
         with self._lock:
-            for i, (vector, payload, vector_id) in enumerate(zip(vectors, payloads, ids)):
+            for vector, payload, vector_id in zip(vectors, payloads, generated_ids):
                 self.connection.execute(f"""
-                    INSERT OR REPLACE INTO {self.collection_name} 
+                    INSERT INTO {self.collection_name} 
                     (id, vector, payload) VALUES (?, ?, ?)
                 """, (vector_id, json.dumps(vector), json.dumps(payload)))
             
             self.connection.commit()
+        
+        return generated_ids
     
     def search(self, query: str, vectors: List[List[float]] = None, limit: int = 5, filters=None) -> List[OutputData]:
         """Search for similar vectors using simple cosine similarity."""
@@ -83,12 +114,35 @@ class SQLiteVectorStore(VectorStoreBase):
             # Fallback for backward compatibility
             query_vector = query if isinstance(query, list) else [0.1] * 10
         
-        with self._lock:
-            cursor = self.connection.execute(f"""
-                SELECT id, vector, payload FROM {self.collection_name}
-            """)
+        # Build query with filters
+        query_sql = f"SELECT id, vector, payload FROM {self.collection_name}"
+        query_params = []
+        
+        # Apply filters if provided
+        if filters:
+            conditions = []
+            for key, value in filters.items():
+                # Filter by JSON field in payload
+                conditions.append(f"json_extract(payload, '$.{key}') = ?")
+                query_params.append(value)
             
+            if conditions:
+                query_sql += " WHERE " + " AND ".join(conditions)
+                logger.info(f"SQLite search with filters: {query_sql}, params: {query_params}")
+            else:
+                logger.debug("SQLite search: filters provided but empty after processing")
+        else:
+            logger.debug("SQLite search: no filters provided")
+        
+        with self._lock:
+            if query_params:
+                cursor = self.connection.execute(query_sql, query_params)
+            else:
+                cursor = self.connection.execute(query_sql)
+            
+            row_count = 0
             for row in cursor.fetchall():
+                row_count += 1
                 vector_id, vector_str, payload_str = row
                 vector = json.loads(vector_str)
                 payload = json.loads(payload_str)
@@ -106,7 +160,7 @@ class SQLiteVectorStore(VectorStoreBase):
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
     
-    def delete(self, vector_id: str) -> None:
+    def delete(self, vector_id: int) -> None:
         """Delete a vector by ID."""
         with self._lock:
             self.connection.execute(f"""
@@ -114,7 +168,7 @@ class SQLiteVectorStore(VectorStoreBase):
             """, (vector_id,))
             self.connection.commit()
     
-    def update(self, vector_id: str, vector=None, payload=None) -> None:
+    def update(self, vector_id: int, vector=None, payload=None) -> None:
         """Update a vector and its payload."""
         updates = []
         values = []
@@ -137,7 +191,7 @@ class SQLiteVectorStore(VectorStoreBase):
                 """, values)
                 self.connection.commit()
     
-    def get(self, vector_id: str) -> Optional[OutputData]:
+    def get(self, vector_id: int) -> Optional[OutputData]:
         """Retrieve a vector by ID."""
         with self._lock:
             cursor = self.connection.execute(f"""
@@ -187,15 +241,30 @@ class SQLiteVectorStore(VectorStoreBase):
             }
     
     def list(self, filters=None, limit=None) -> List[OutputData]:
-        """List all memories."""
+        """List all memories with optional filtering."""
         query = f"SELECT id, vector, payload FROM {self.collection_name}"
+        query_params = []
+        
+        # Apply filters if provided
+        if filters:
+            conditions = []
+            for key, value in filters.items():
+                # Filter by JSON field in payload
+                conditions.append(f"json_extract(payload, '$.{key}') = ?")
+                query_params.append(value)
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
         
         if limit:
             query += f" LIMIT {limit}"
         
         results = []
         with self._lock:
-            cursor = self.connection.execute(query)
+            if query_params:
+                cursor = self.connection.execute(query, query_params)
+            else:
+                cursor = self.connection.execute(query)
             
             for row in cursor.fetchall():
                 vector_id, vector_str, payload_str = row
@@ -231,9 +300,12 @@ class SQLiteVectorStore(VectorStoreBase):
     
     def close(self) -> None:
         """Close the database connection."""
-        if self.connection:
+        if hasattr(self, 'connection') and self.connection:
             self.connection.close()
             self.connection = None
     
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass  # Ignore errors during cleanup

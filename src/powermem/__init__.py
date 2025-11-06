@@ -60,22 +60,19 @@ def create_memory(
 
 def from_config(config: Any = None, **kwargs):
     """
-    Create Memory instance from configuration (mem0-compatible style).
-    
-    Compatible with mem0's initialization pattern for easy migration.
+    Create Memory instance from configuration
     
     Args:
-        config: Configuration dictionary (mem0 or powermem format)
+        config: Configuration dictionary
         **kwargs: Additional parameters
     
     Returns:
         Memory instance
         
-    Example (mem0-compatible):
+    Example:
         ```python
         from powermem import from_config
         
-        # mem0-style config
         memory = from_config({
             "llm": {"provider": "openai", "config": {"api_key": "..."}},
             "embedder": {"provider": "openai", "config": {"api_key": "..."}},
@@ -90,7 +87,6 @@ def from_config(config: Any = None, **kwargs):
     return _from_config(config=config, **kwargs)
 
 
-# Make Memory class work like mem0 (Memory.from_config())
 Memory.from_config = classmethod(lambda cls, config=None, **kwargs: create_memory(config, **kwargs))
 
 
