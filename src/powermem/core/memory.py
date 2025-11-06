@@ -140,37 +140,16 @@ class Memory(MemoryBase):
             ```
         """
         # Handle MemoryConfig object or dict
-        # Handle MemoryConfig object or dict
-        from powermem.storage.configs import GraphStoreConfig, OceanBaseGraphConfig
-
-        # 写死的 graph_store 配置
-        hardcoded_graph_config = GraphStoreConfig(
-            provider="oceanbase",
-            config=OceanBaseGraphConfig(
-                host="127.0.0.1",
-                port="2881",
-                user="root@ai_work",
-                password="oceanbaseV5",
-                embedding_model_dims=1536,
-                db_name="ai_work",
-            )
-        )
 
         if isinstance(config, MemoryConfig):
             # Use MemoryConfig object directly
             self.memory_config = config
             # For backward compatibility, also store as dict
             self.config = config.model_dump()
-            # todo 测试图
-            self.memory_config.graph_store = hardcoded_graph_config
-            # todo 测试图同步到 dict config
-            self.config["graph_store"] = hardcoded_graph_config.model_dump()
         else:
             # Convert dict config
             dict_config = config or {}
             dict_config = _auto_convert_config(dict_config)
-            # todo 测试图
-            dict_config["graph_store"] = hardcoded_graph_config.model_dump()
             self.config = dict_config
             # Try to create MemoryConfig from dict, fallback to dict if fails
             try:
