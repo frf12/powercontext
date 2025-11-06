@@ -137,7 +137,8 @@ class StorageAdapter:
             results = target_store.search(search_query, vectors=query_vector, limit=limit, filters=effective_filters)
         except TypeError:
             # Fallback to SQLite format (doesn't support query text parameter)
-            results = target_store.search(query_vector, vectors=[query_vector], limit=limit)
+            # Pass filters to ensure filtering works correctly
+            results = target_store.search(search_query if query else "", vectors=[query_vector], limit=limit, filters=effective_filters)
         
         # Convert results to unified format
         memories = []
@@ -194,10 +195,18 @@ class StorageAdapter:
             # If payload contains "metadata" field (nested user metadata), use it directly
             # Otherwise, extract additional metadata from other fields
             if "metadata" in payload:
-                user_metadata = payload["metadata"]
+                user_metadata = payload["metadata"].copy() if payload["metadata"] else {}
             else:
                 # Extract additional metadata (all fields not in core_and_promoted_keys)
                 user_metadata = {k: v for k, v in payload.items() if k not in core_and_promoted_keys}
+            
+            # Merge any user-defined fields from payload top-level into metadata
+            # These fields (like "category") were extracted from metadata for filtering purposes
+            # but should still be visible in the returned metadata
+            for key, value in payload.items():
+                if key not in core_and_promoted_keys and key not in user_metadata and value:
+                    # Only include non-empty values that aren't already in metadata
+                    user_metadata[key] = value
             
             memory = {
                 "id": memory_id,
@@ -452,7 +461,7 @@ class StorageAdapter:
             
             memory = {
                 "id": memory_id,
-                "content": payload.get("data", ""),  # Unified field name
+                "memory": payload.get("data", ""),  # Unified field name to match search_memories format
                 "user_id": payload.get("user_id"),
                 "agent_id": payload.get("agent_id"),
                 "run_id": payload.get("run_id"),

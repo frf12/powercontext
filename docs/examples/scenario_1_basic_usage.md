@@ -7,6 +7,27 @@ This scenario guides you through the basics of powermem - storing, retrieving, a
 - Python 3.8+
 - powermem installed (`pip install powermem`)
 
+## Configuration
+
+Powermem can automatically load configuration from a `.env` file in your project directory. This is the recommended way to configure powermem for your use case.
+
+### Creating a `.env` File
+
+1. Copy the example configuration file:
+   ```bash
+   cp configs/minienv.example .env
+   ```
+
+2. Edit the `.env` file and configure
+   ```
+
+> **Note:** When you call `create_memory()`, powermem will automatically:
+> - Look for a `.env` file in the current directory
+> - Load configuration from environment variables
+> - Use default values if `.env` is not found
+
+For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](../guides/0002-configuration.md).
+
 ## Step 1: Setup
 
 First, let's create a simple Python script and import powermem:
@@ -60,7 +81,7 @@ python basic_usage_example.py
 
 **Expected output:**
 ```
-✓ Memory added! ID: mem_xxx
+✓ Memory added! ID: xxxxxx
 ```
 
 ## Step 3: Add Multiple Memories
@@ -142,9 +163,10 @@ python basic_usage_example.py
 ```
 Searching for 'user preferences'...
 
-Found 2 memories:
-  1. User prefers email support over phone calls
-  2. User likes Python programming
+Found 3 memories:
+  1. Prefers email support
+  2. Likes Python programming
+  3. Works as a software engineer
 ```
 
 ## Step 5: Add Metadata
@@ -230,8 +252,8 @@ python basic_usage_example.py
 Searching with metadata filter...
 
 Found 1 memories:
-  - User likes Python programming
-    Metadata: {'category': 'preference'}
+  - Likes Python programming
+    Metadata: {'last_searched_at': datetime.datetime(2025, 11, 6, 13, 9, 32, 250703), 'search_count': 4, 'category': 'preference', 'fulltext_content': 'Likes Python programming', 'access_count': 1, 'search_relevance_score': 0.25}
 ```
 
 ## Step 7: Get All Memories
@@ -269,9 +291,9 @@ python basic_usage_example.py
 Total memories for user123: 3
 
 All memories:
-  1. User likes Python
-  2. User prefers email
-  3. User works as engineer
+  1. Likes Python programming
+  2. Prefers email support
+  3. Works as engineer
 ```
 
 ## Step 8: Update a Memory
@@ -365,7 +387,7 @@ python basic_usage_example.py
 
 **Expected output:**
 ```
-✓ Memory mem_xxx deleted successfully!
+✓ Memory xxx deleted successfully!
 ```
 
 ## Step 10: Delete All Memories
@@ -404,7 +426,7 @@ python basic_usage_example.py
 
 **Expected output:**
 ```
-✓ Deleted 3 memories for user123
+✓ Deleted x memories for user123
 ```
 
 ## Complete Example
@@ -488,6 +510,7 @@ python complete_basic_example.py
 Try managing memories for multiple users:
 
 ```python
+from powermem import create_memory
 memory = create_memory()
 
 # Add memories for different users
@@ -504,6 +527,9 @@ results2 = memory.search("preferences", user_id="user2")
 Experiment with richer metadata:
 
 ```python
+from powermem import create_memory
+memory = create_memory()
+
 memory.add(
     messages="User preference",
     user_id="user123",
@@ -522,6 +548,9 @@ memory.add(
 Try different search queries:
 
 ```python
+from powermem import create_memory
+memory = create_memory()
+
 # Search by category
 results = memory.search(
     query="programming languages",
