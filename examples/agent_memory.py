@@ -30,10 +30,10 @@ def load_oceanbase_config():
     
     Uses the auto_config() utility function to automatically load from .env.
     """
-    # Try to load from examples/configs/oceanbase.env first
-    config_path = os.path.join(os.path.dirname(__file__), 'configs', 'oceanbase.env')
-    if os.path.exists(config_path):
-        load_dotenv(config_path)
+    oceanbase_env_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'oceanbase.env')
+    
+    if os.path.exists(oceanbase_env_path):
+        load_dotenv(oceanbase_env_path, override=True)
     else:
         # Try to load from any .env file
         load_dotenv()
@@ -648,7 +648,6 @@ def main():
         print("  • Delete all memories functionality")
         print("  • Reset memory store functionality")
         print("  • Simple, consistent interface")
-        print("  • No mem0 dependencies")
         
     except Exception as e:
         print(f"❌ Error during demo: {e}")

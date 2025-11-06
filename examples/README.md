@@ -133,7 +133,6 @@ agent_memory.switch_mode('multi_agent')
 ### Key Benefits
 - **Single API** - Consistent interface across all modes
 - **Automatic Detection** - Intelligent mode selection
-- **No mem0 Dependencies** - Uses existing Memory infrastructure
 - **Easy Migration** - Simple upgrade from existing code
 - **Mode Flexibility** - Switch between modes as needed
 

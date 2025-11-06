@@ -95,7 +95,6 @@ def get_memory_update_prompt(
 ) -> str:
     """
     Generate the prompt for memory update operations.
-    Based on mem0's implementation for compatibility.
     
     Args:
         retrieved_old_memory: List of existing memories with id and text
@@ -108,7 +107,6 @@ def get_memory_update_prompt(
     if custom_prompt is None:
         custom_prompt = DEFAULT_UPDATE_MEMORY_PROMPT
     
-    # Format old memory (same as mem0)
     if retrieved_old_memory:
         current_memory_part = f"Current memory:\n```\n{retrieved_old_memory}\n```\n"
     else:

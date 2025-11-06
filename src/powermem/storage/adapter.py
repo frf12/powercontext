@@ -25,7 +25,7 @@ class StorageAdapter:
         self.embedding_service = embedding_service
         # get collection name from vector store attribute collection_name
         self.collection_name = getattr(vector_store, 'collection_name', 'memories')
-        
+
         # Sub stores support (optional, for multi-table routing)
         self.sub_stores: Dict[str, 'SubStoreConfig'] = {}
         self.migration_manager = None
@@ -40,13 +40,13 @@ class StorageAdapter:
         # Create vector from content using embedding service
         content = memory_data.get("content", "")
         metadata = memory_data.get("metadata", {})
-        
+
         # Route to target store (main or sub store)
         target_store = self._route_to_store(metadata)
-        
+
         # Check if embedding is already provided (preferred way)
         vector = memory_data.get("embedding")
-        
+
         if vector is None:
             # No embedding provided, generate using embedding service
             if self.embedding_service:
@@ -58,7 +58,7 @@ class StorageAdapter:
             else:
                 # No embedding service available, use mock vector
                 vector = [0.1] * 1536
-        
+
         # Create collection with actual vector size if not exists
         collection_name = getattr(target_store, 'collection_name', self.collection_name)
         if not hasattr(self, '_collection_created'):
@@ -128,7 +128,7 @@ class StorageAdapter:
         
         # Route to target store (main or sub store)
         target_store = self._route_to_store(effective_filters)
-        
+
         # Unified search method - try OceanBase format first, fallback to SQLite
         # Pass query text to enable hybrid search (vector + full-text search)
         try:
@@ -261,18 +261,18 @@ class StorageAdapter:
                             "created_at": result.payload.get("created_at"),
                             "updated_at": result.payload.get("updated_at"),
                         }
-                        
+
                         # Check access control
                         if user_id and memory.get("user_id") != user_id:
                             continue
                         if agent_id and memory.get("agent_id") != agent_id:
                             continue
-                        
+
                         return memory
                 except Exception as e:
                     logger.debug(f"Error searching in sub store {sub_config.name}: {e}")
                     continue
-        
+
         return None
     
     def update_memory(
@@ -284,9 +284,9 @@ class StorageAdapter:
     ) -> Optional[Dict[str, Any]]:
         """Update a memory."""
         # Get existing record from vector store directly
-        existing_result = self.vector_store.get(memory_id)
+        existing_result = self.get_memory(memory_id, user_id, agent_id)
         target_store = self.vector_store
-        
+
         # If not found in main store, search sub stores
         if (not existing_result or not existing_result.payload) and self.sub_stores:
             for sub_config in self.sub_stores.values():
@@ -298,9 +298,9 @@ class StorageAdapter:
                 except Exception as e:
                     logger.debug(f"Error searching in sub store {sub_config.name}: {e}")
                     continue
-        
+
         if not existing_result or not existing_result.payload:
-            logger.warning(f"Memory {memory_id} not found")
+            logger.warning(f"Memory {memory_id} not found in vector store")
             return None
         
         # Get existing payload
@@ -323,6 +323,16 @@ class StorageAdapter:
         # Update other fields
         updated_payload.update(serialized_update_data)
         
+        # Ensure datetime fields are serialized as ISO format strings
+        if "updated_at" in updated_payload:
+            updated_at = updated_payload["updated_at"]
+            if isinstance(updated_at, datetime):
+                updated_payload["updated_at"] = updated_at.isoformat()
+        if "created_at" in updated_payload:
+            created_at = updated_payload["created_at"]
+            if isinstance(created_at, datetime):
+                updated_payload["created_at"] = created_at.isoformat()
+
         # Update updated_at if not provided
         if "updated_at" not in updated_payload:
             updated_payload["updated_at"] = datetime.utcnow().isoformat()
@@ -572,30 +582,30 @@ class StorageAdapter:
         """Update a memory asynchronously."""
         import asyncio
         return await asyncio.to_thread(self.update_memory, memory_id, update_data, user_id, agent_id)
-    
+
     # ==================== Routing Support Methods ====================
-    
+
     def _route_to_store(self, filters_or_metadata: Optional[Dict] = None) -> VectorStoreBase:
         """
         Route to correct storage instance (main or sub store).
-        
+
         Args:
             filters_or_metadata: Query conditions or memory metadata
-            
+
         Returns:
             Target VectorStoreBase instance
         """
         # If no sub stores configured, always use main store
         if not self.sub_stores:
             return self.vector_store
-        
+
         # Try to find matching sub store
         if filters_or_metadata:
             for sub_config in self.sub_stores.values():
                 # Check if sub store is ready (only for query operations)
                 if self.migration_manager and not self.migration_manager.is_ready(sub_config.name):
                     continue
-                
+
                 # Check if filters_or_metadata matches routing rules
                 routing_filter = sub_config.routing_filter
                 if all(
@@ -604,31 +614,31 @@ class StorageAdapter:
                 ):
                     logger.debug(f"Routing to sub store: {sub_config.name}")
                     return sub_config.vector_store
-        
+
         # Default to main store
         logger.debug("Routing to main store")
         return self.vector_store
-    
+
     def get_target_store_name(self, filters_or_metadata: Optional[Dict] = None) -> str:
         """
         Get target store name for given filters/metadata.
-        
+
         Args:
             filters_or_metadata: Query conditions or memory metadata
-            
+
         Returns:
             Target storage name
         """
         target_store = self._route_to_store(filters_or_metadata)
         return getattr(target_store, 'collection_name', self.collection_name)
-    
+
     def is_sub_store_ready(self, store_name: str) -> bool:
         """
         Check if sub store is ready (migration completed).
-        
+
         Args:
             store_name: Sub store name
-            
+
         Returns:
             True if ready, False otherwise (or if no migration manager)
         """
@@ -651,31 +661,31 @@ class SubStoreConfig:
 class SubStorageAdapter(StorageAdapter):
     """
     Extended storage adapter with sub-store management capabilities.
-    
+
     This adapter extends the basic StorageAdapter to support multiple sub-stores
     with intelligent routing based on metadata filters. All CRUD operations are
     inherited from the parent class and automatically support routing.
-    
+
     This class only contains sub-store management methods.
     """
-    
+
     def __init__(self, vector_store: VectorStoreBase, embedding_service=None):
         """
         Initialize the sub-storage adapter.
-        
+
         Args:
             vector_store: The main vector store instance
             embedding_service: Optional embedding service for generating vectors
         """
         # Initialize parent class
         super().__init__(vector_store, embedding_service)
-        
+
         # Initialize migration status management (database-backed)
         from powermem.storage.migration_manager import SubStoreMigrationManager
         self.migration_manager = SubStoreMigrationManager(vector_store, self.collection_name)
-    
+
     # ==================== Sub Store Management Methods ====================
-    
+
     def register_sub_store(
         self,
         store_name: str,
@@ -685,7 +695,7 @@ class SubStorageAdapter(StorageAdapter):
     ):
         """
         Register a sub store for routing.
-        
+
         Args:
             store_name: Name of the sub store
             routing_filter: Dictionary of metadata conditions for routing
@@ -699,16 +709,16 @@ class SubStorageAdapter(StorageAdapter):
             embedding_service=embedding_service
         )
         self.sub_stores[store_name] = sub_config
-        
+
         # Register in migration manager
         if self.migration_manager:
             self.migration_manager.register_sub_store(
                 sub_store_name=store_name,
                 routing_filter=routing_filter
             )
-        
+
         logger.info(f"Registered sub store: {store_name} with filter: {routing_filter}")
-    
+
     def migrate_to_sub_store(
         self,
         store_name: str,
@@ -717,42 +727,42 @@ class SubStorageAdapter(StorageAdapter):
     ) -> int:
         """
         Migrate data from main store to sub store based on routing filter.
-        
+
         Args:
             store_name: Name of the sub store to migrate to
             delete_source: Whether to delete source data after migration
             batch_size: Number of records to process in each batch
-            
+
         Returns:
             Number of records migrated
-            
+
         Raises:
             ValueError: If sub store not found or not registered
         """
         if store_name not in self.sub_stores:
             raise ValueError(f"Sub store '{store_name}' not found. Please register it first.")
-        
+
         sub_config = self.sub_stores[store_name]
         routing_filter = sub_config.routing_filter
         target_store = sub_config.vector_store
         sub_embedding_service = sub_config.embedding_service
-        
+
         # Validate that embedding service is provided
         if not sub_embedding_service:
             raise ValueError(f"Sub store '{store_name}' does not have an embedding service configured. "
                            "Cannot migrate without re-embedding the data.")
-        
+
         # Mark migration as started
         if self.migration_manager:
             self.migration_manager.mark_migrating(store_name, 0)
-        
+
         try:
             # Query all matching records from main store
             migrated_count = 0
-            
+
             # Get all memories that match the routing filter
             from powermem.storage.oceanbase.oceanbase import OceanBaseVectorStore
-            
+
             if isinstance(self.vector_store, OceanBaseVectorStore):
                 # Use OceanBase specific query
                 # Build SQL query to find matching records (only need ID and content fields)
@@ -760,7 +770,7 @@ class SubStorageAdapter(StorageAdapter):
                     f"JSON_EXTRACT(metadata, '$.{key}') = '{value}'"
                     for key, value in routing_filter.items()
                 ])
-                
+
                 # Query only IDs first for efficiency
                 id_query_sql = f"""
                 SELECT id
@@ -768,31 +778,31 @@ class SubStorageAdapter(StorageAdapter):
                 WHERE {filter_conditions}
                 LIMIT {batch_size}
                 """
-                
+
                 while True:
                     id_results = self.vector_store.execute_sql(id_query_sql)
                     if not id_results:
                         break
-                    
+
                     for id_record in id_results:
                         record_id = id_record['id']
-                        
+
                         # Use get() method to retrieve the full record
                         result = self.vector_store.get(record_id)
                         if not result or not result.payload:
                             logger.warning(f"Record {record_id} not found, skipping")
                             continue
-                        
+
                         # Use payload from result
                         payload = result.payload.copy()
                         payload['id'] = record_id
-                        
+
                         # Extract content for re-embedding
                         content = payload.get('data', '')
                         if not content:
                             logger.warning(f"Record {record_id} has no content, skipping")
                             continue
-                        
+
                         # Re-generate vector using sub store's embedding service
                         try:
                             vector = sub_embedding_service.embed(content, memory_action="add")
@@ -800,15 +810,15 @@ class SubStorageAdapter(StorageAdapter):
                         except Exception as embed_error:
                             logger.error(f"Failed to re-embed record {record_id}: {embed_error}")
                             continue
-                        
+
                         try:
                             target_store.insert([vector], [payload])
                             migrated_count += 1
-                            
+
                             # Delete from source if requested
                             if delete_source:
                                 self.vector_store.delete(record_id)
-                            
+
                             # Update progress
                             if self.migration_manager and migrated_count % 10 == 0:
                                 self.migration_manager.update_progress(
@@ -819,45 +829,45 @@ class SubStorageAdapter(StorageAdapter):
                         except Exception as e:
                             logger.error(f"Error migrating record {record_id}: {e}")
                             continue
-                    
+
                     # If we got fewer results than batch_size, we're done
                     if len(id_results) < batch_size:
                         break
             else:
                 logger.warning(f"Migration not fully supported for {type(self.vector_store).__name__}")
-            
+
             # Mark migration as completed
             if self.migration_manager:
                 self.migration_manager.mark_completed(store_name, migrated_count)
-            
+
             logger.info(f"Migration completed: {migrated_count} records migrated to {store_name}")
             return migrated_count
-            
+
         except Exception as e:
             # Mark migration as failed
             if self.migration_manager:
                 self.migration_manager.mark_failed(store_name, str(e))
             logger.error(f"Migration failed: {e}")
             raise
-    
+
     def get_migration_status(self, store_name: str) -> Optional[Dict[str, Any]]:
         """
         Get migration status for a sub store.
-        
+
         Args:
             store_name: Sub store name
-            
+
         Returns:
             Migration status dict or None if not found
         """
         if self.migration_manager:
             return self.migration_manager.get_status(store_name)
         return None
-    
+
     def list_sub_stores(self) -> List[str]:
         """
         List all registered sub stores.
-        
+
         Returns:
             List of sub store names
         """

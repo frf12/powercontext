@@ -25,15 +25,15 @@ mock_psycopg2_extras.execute_values = mock_execute_values
 mock_psycopg2_extras.Json = mock_json
 mock_psycopg2_pool.ThreadedConnectionPool = mock_threaded_connection_pool
 
-sys.modules['psycopg2'] = MagicMock()
-sys.modules['psycopg2.extras'] = mock_psycopg2_extras
-sys.modules['psycopg2.pool'] = mock_psycopg2_pool
-sys.modules['psycopg2.sql'] = mock_psycopg2_sql
+# Note: We don't mock psycopg2 modules in sys.modules here to avoid import issues
+# Instead, we'll patch them in individual tests
 
-# Import and reload the module to pick up our mocks
-import mem.storage.pgvector.pgvector
-importlib.reload(mem.storage.pgvector.pgvector)
-from powermem.storage.pgvector.pgvector import PGVectorStore
+# Import PGVectorStore - we'll patch its dependencies in tests
+try:
+    from powermem.storage.pgvector.pgvector import PGVectorStore
+except ImportError:
+    # If import fails due to missing dependencies, we'll handle it in tests
+    PGVectorStore = None
 
 
 class TestPGVector(unittest.TestCase):
@@ -59,7 +59,7 @@ class TestPGVector(unittest.TestCase):
         # Test data
         self.test_vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
         self.test_payloads = [{"key": "value1"}, {"key": "value2"}]
-        self.test_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        self.test_ids = [1, 2]  # Use integer IDs instead of UUID strings
 
     @patch('powermem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
     @patch('powermem.storage.pgvector.pgvector.ConnectionPool')
@@ -341,7 +341,10 @@ class TestPGVector(unittest.TestCase):
             maxconn=4
         )
         
-        pgvector.insert(self.test_vectors, self.test_payloads, self.test_ids)
+        # Mock fetchall to return generated IDs
+        self.mock_cursor.fetchall.return_value = [(self.test_ids[0],), (self.test_ids[1],)]
+        
+        result_ids = pgvector.insert(self.test_vectors, self.test_payloads)
         
         # Verify the _get_cursor context manager was called
         mock_get_cursor.assert_called()
@@ -351,12 +354,12 @@ class TestPGVector(unittest.TestCase):
                        if "INSERT INTO test_collection" in str(call)]
         self.assertTrue(len(insert_calls) > 0)
         
-        # Verify data format
+        # Verify data format (should not include IDs, only vector and payload)
         call_args = self.mock_cursor.executemany.call_args
         data_arg = call_args[0][1]
         self.assertEqual(len(data_arg), 2)
-        self.assertEqual(data_arg[0][0], self.test_ids[0])
-        self.assertEqual(data_arg[1][0], self.test_ids[1])
+        # Verify returned IDs
+        self.assertEqual(result_ids, self.test_ids)
 
     @patch('powermem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
     @patch('powermem.storage.pgvector.pgvector.ConnectionPool')
@@ -397,8 +400,8 @@ class TestPGVector(unittest.TestCase):
             'psycopg2.sql': mock_psycopg2_sql
         }):
             # Force reload of PostgresVectorStore to pick up the mocked modules
-            if 'powermem.storage.pgvector' in sys.modules:
-                importlib.reload(sys.modules['powermem.storage.pgvector'])
+            if 'powermem.storage.pgvector.pgvector' in sys.modules:
+                importlib.reload(sys.modules['powermem.storage.pgvector.pgvector'])
 
             mock_connection_pool.return_value = self.mock_pool_psycopg
             mock_get_cursor.return_value.__enter__.return_value = self.mock_cursor
@@ -419,19 +422,23 @@ class TestPGVector(unittest.TestCase):
                 maxconn=4
             )
 
-            pgvector.insert(self.test_vectors, self.test_payloads, self.test_ids)
+            # Mock fetchall to return generated IDs
+            self.mock_cursor.fetchall.return_value = [(self.test_ids[0],), (self.test_ids[1],)]
+            
+            result_ids = pgvector.insert(self.test_vectors, self.test_payloads)
 
             mock_get_cursor.assert_called()
             mock_execute_values.assert_called_once()
             call_args = mock_execute_values.call_args
 
             self.assertIn("INSERT INTO test_collection", call_args[0][1])
+            self.assertIn("RETURNING id", call_args[0][1])
 
-            # The data argument should be a list of tuples, one per vector
+            # The data argument should be a list of tuples, one per vector (without IDs)
             data_arg = call_args[0][2]
             self.assertEqual(len(data_arg), 2)
-            self.assertEqual(data_arg[0][0], self.test_ids[0])
-            self.assertEqual(data_arg[1][0], self.test_ids[1])
+            # Verify returned IDs
+            self.assertEqual(result_ids, self.test_ids)
 
     @patch('powermem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
     @patch('powermem.storage.pgvector.pgvector.ConnectionPool')
