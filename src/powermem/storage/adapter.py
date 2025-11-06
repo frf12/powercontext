@@ -283,16 +283,29 @@ class StorageAdapter:
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Update a memory."""
-        # Get existing record from vector store directly
-        existing_result = self.get_memory(memory_id, user_id, agent_id)
+        # First check if memory exists and user has access (get_memory returns dict)
+        existing_memory_dict = self.get_memory(memory_id, user_id, agent_id)
+        if not existing_memory_dict:
+            logger.warning(f"Memory {memory_id} not found or access denied")
+            return None
+        
+        # Get raw OutputData object from vector store to access payload
+        existing_result = self.vector_store.get(memory_id)
         target_store = self.vector_store
 
         # If not found in main store, search sub stores
         if (not existing_result or not existing_result.payload) and self.sub_stores:
             for sub_config in self.sub_stores.values():
                 try:
-                    existing_result = sub_config.vector_store.get(memory_id)
-                    if existing_result and existing_result.payload:
+                    sub_result = sub_config.vector_store.get(memory_id)
+                    if sub_result and sub_result.payload:
+                        # Verify access control matches
+                        sub_payload = sub_result.payload
+                        if user_id and sub_payload.get("user_id") != user_id:
+                            continue
+                        if agent_id and sub_payload.get("agent_id") != agent_id:
+                            continue
+                        existing_result = sub_result
                         target_store = sub_config.vector_store
                         break
                 except Exception as e:

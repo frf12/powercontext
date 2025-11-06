@@ -315,8 +315,9 @@ class TestPGVector(unittest.TestCase):
 
     @patch('powermem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)
     @patch('powermem.storage.pgvector.pgvector.ConnectionPool')
+    @patch('powermem.storage.pgvector.pgvector.generate_snowflake_id')
     @patch.object(PGVectorStore, '_get_cursor')
-    def test_insert_psycopg3(self, mock_get_cursor, mock_connection_pool):
+    def test_insert_psycopg3(self, mock_get_cursor, mock_generate_snowflake_id, mock_connection_pool):
         """Test vector insertion with psycopg3."""
         # Set up mock pool and cursor
         mock_connection_pool.return_value = self.mock_pool_psycopg
@@ -326,6 +327,9 @@ class TestPGVector(unittest.TestCase):
         mock_get_cursor.return_value.__exit__.return_value = None
         
         self.mock_cursor.fetchall.return_value = []  # No existing collections
+        
+        # Mock Snowflake ID generation to return test IDs
+        mock_generate_snowflake_id.side_effect = self.test_ids
         
         pgvector = PGVectorStore(
             dbname="test_db",
@@ -341,9 +345,6 @@ class TestPGVector(unittest.TestCase):
             maxconn=4
         )
         
-        # Mock fetchall to return generated IDs
-        self.mock_cursor.fetchall.return_value = [(self.test_ids[0],), (self.test_ids[1],)]
-        
         result_ids = pgvector.insert(self.test_vectors, self.test_payloads)
         
         # Verify the _get_cursor context manager was called
@@ -354,17 +355,20 @@ class TestPGVector(unittest.TestCase):
                        if "INSERT INTO test_collection" in str(call)]
         self.assertTrue(len(insert_calls) > 0)
         
-        # Verify data format (should not include IDs, only vector and payload)
+        # Verify data format (should include IDs, vector, and payload - 3 elements per tuple)
         call_args = self.mock_cursor.executemany.call_args
         data_arg = call_args[0][1]
-        self.assertEqual(len(data_arg), 2)
-        # Verify returned IDs
+        self.assertEqual(len(data_arg), 2)  # 2 vectors
+        # Each tuple should have 3 elements: (id, vector, payload)
+        self.assertEqual(len(data_arg[0]), 3)
+        # Verify returned IDs match the generated Snowflake IDs
         self.assertEqual(result_ids, self.test_ids)
 
     @patch('powermem.storage.pgvector.pgvector.PSYCOPG_VERSION', 2)
     @patch('powermem.storage.pgvector.pgvector.ConnectionPool')
+    @patch('powermem.storage.pgvector.pgvector.generate_snowflake_id')
     @patch.object(PGVectorStore, '_get_cursor')
-    def test_insert_psycopg2(self, mock_get_cursor, mock_connection_pool):
+    def test_insert_psycopg2(self, mock_get_cursor, mock_generate_snowflake_id, mock_connection_pool):
         """
         Test vector insertion with psycopg2.
         This test ensures that PostgresVectorStore.insert uses psycopg2.extras.execute_values for batch inserts
@@ -402,11 +406,16 @@ class TestPGVector(unittest.TestCase):
             # Force reload of PostgresVectorStore to pick up the mocked modules
             if 'powermem.storage.pgvector.pgvector' in sys.modules:
                 importlib.reload(sys.modules['powermem.storage.pgvector.pgvector'])
+                # Re-apply the mock after reload
+                sys.modules['powermem.storage.pgvector.pgvector'].generate_snowflake_id = mock_generate_snowflake_id
 
             mock_connection_pool.return_value = self.mock_pool_psycopg
             mock_get_cursor.return_value.__enter__.return_value = self.mock_cursor
             mock_get_cursor.return_value.__exit__.return_value = None
             self.mock_cursor.fetchall.return_value = []
+
+            # Mock Snowflake ID generation to return test IDs
+            mock_generate_snowflake_id.side_effect = self.test_ids
 
             pgvector = PGVectorStore(
                 dbname="test_db",
@@ -421,9 +430,6 @@ class TestPGVector(unittest.TestCase):
                 minconn=1,
                 maxconn=4
             )
-
-            # Mock fetchall to return generated IDs
-            self.mock_cursor.fetchall.return_value = [(self.test_ids[0],), (self.test_ids[1],)]
             
             result_ids = pgvector.insert(self.test_vectors, self.test_payloads)
 
@@ -432,12 +438,13 @@ class TestPGVector(unittest.TestCase):
             call_args = mock_execute_values.call_args
 
             self.assertIn("INSERT INTO test_collection", call_args[0][1])
-            self.assertIn("RETURNING id", call_args[0][1])
-
-            # The data argument should be a list of tuples, one per vector (without IDs)
+            # Note: Current implementation generates IDs upfront, so no RETURNING id clause
+            # The data argument should be a list of tuples, one per vector (with IDs, vector, payload)
             data_arg = call_args[0][2]
-            self.assertEqual(len(data_arg), 2)
-            # Verify returned IDs
+            self.assertEqual(len(data_arg), 2)  # 2 vectors
+            # Each tuple should have 3 elements: (id, vector, payload)
+            self.assertEqual(len(data_arg[0]), 3)
+            # Verify returned IDs match the generated Snowflake IDs
             self.assertEqual(result_ids, self.test_ids)
 
     @patch('powermem.storage.pgvector.pgvector.PSYCOPG_VERSION', 3)

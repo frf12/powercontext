@@ -628,7 +628,14 @@ class Memory(MemoryBase):
             # Merge metadata into filters for correct routing
             search_filters = filters.copy() if filters else {}
             if metadata:
-                search_filters.update(metadata)
+                # Filter metadata to only include simple values (strings, numbers, booleans, None)
+                # This prevents nested dicts like {'agent': {'agent_id': ...}} from causing issues
+                # when OceanBase's build_condition tries to parse them as operators
+                simple_metadata = {
+                    k: v for k, v in metadata.items()
+                    if not isinstance(v, (dict, list)) and k not in ['agent_id', 'user_id', 'run_id']
+                }
+                search_filters.update(simple_metadata)
 
             # Search for similar memories with reduced limit to reduce noise
             # Pass fact text to enable hybrid search for better results
