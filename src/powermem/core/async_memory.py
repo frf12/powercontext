@@ -80,6 +80,10 @@ class AsyncMemory(MemoryBase):
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
 
+        # Save custom prompts from config (mem0 compatible)
+        self.custom_fact_extraction_prompt = self.config.get('custom_fact_extraction_prompt')
+        self.custom_update_memory_prompt = self.config.get('custom_update_memory_prompt')
+
         # Intelligent memory plugin (pluggable)
         # Support both "intelligence" and "intelligent_memory" config keys for backward compatibility
         intelligence_cfg = (self.config or {}).get("intelligence", {})
@@ -122,9 +126,13 @@ class AsyncMemory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use FACT_RETRIEVAL_PROMPT
-            system_prompt = FACT_RETRIEVAL_PROMPT
-            user_prompt = f"Input:\n{conversation}"
+            # Use custom prompt if provided, otherwise use default (mem0 compatible)
+            if self.custom_fact_extraction_prompt:
+                system_prompt = self.custom_fact_extraction_prompt
+                user_prompt = f"Input:\n{conversation}"
+            else:
+                system_prompt = FACT_RETRIEVAL_PROMPT
+                user_prompt = f"Input:\n{conversation}"
             
             # Call LLM to extract facts asynchronously
             try:
@@ -190,8 +198,11 @@ class AsyncMemory(MemoryBase):
                     "text": content
                 })
             
-            # Generate update prompt
-            update_prompt = get_memory_update_prompt(old_memory, new_facts)
+            # Generate update prompt with custom prompt if provided
+            custom_prompt = None
+            if hasattr(self, 'custom_update_memory_prompt') and self.custom_update_memory_prompt:
+                custom_prompt = self.custom_update_memory_prompt
+            update_prompt = get_memory_update_prompt(old_memory, new_facts, custom_prompt)
             
             # Call LLM asynchronously
             try:

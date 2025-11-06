@@ -62,8 +62,14 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
         self._algo = None
         if self.enabled:
             try:
+                # Prepare importance config, merging custom_importance_evaluation_prompt if present
+                importance_config = self.config.get("importance", {})
+                if "custom_importance_evaluation_prompt" in self.config:
+                    importance_config = importance_config.copy() if isinstance(importance_config, dict) else {}
+                    importance_config["custom_importance_evaluation_prompt"] = self.config["custom_importance_evaluation_prompt"]
+                
                 self._importance = ImportanceEvaluator(
-                    self.config.get("importance", {}),
+                    importance_config,
                     self.config.get("llm", {}),
                 )
                 # Support both "ebbinghaus" and direct intelligent_memory config
