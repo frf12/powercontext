@@ -93,15 +93,15 @@ def load_config_from_env() -> Dict[str, Any]:
     elif db_provider == 'postgres':
         # PostgreSQL configuration (pgvector)
         db_config = {
+            'collection_name': os.getenv('DATABASE_COLLECTION_NAME', 'memories'),
+            'dbname': os.getenv('DATABASE_NAME', 'powermem'),
             'host': os.getenv('DATABASE_HOST', 'localhost'),
             'port': int(os.getenv('DATABASE_PORT', '5432')),
             'user': os.getenv('DATABASE_USER', 'postgres'),
             'password': os.getenv('DATABASE_PASSWORD', 'password'),
-            'database': os.getenv('DATABASE_NAME', 'powermem'),
-            'connection_timeout': int(os.getenv('DATABASE_TIMEOUT', '30')),
             'embedding_model_dims': int(os.getenv('DATABASE_EMBEDDING_MODEL_DIMS', '1536')),
-            'diskann': bool(os.getenv('DATABASE_DISKANN', 'True')),
-            'hnsw': bool(os.getenv('DATABASE_HNSW', 'True')),
+            'diskann': os.getenv('DATABASE_DISKANN', 'true').lower() == 'true',
+            'hnsw': os.getenv('DATABASE_HNSW', 'true').lower() == 'true',
         }
     else:
         # SQLite configuration (default)

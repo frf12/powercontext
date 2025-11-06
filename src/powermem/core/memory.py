@@ -375,9 +375,11 @@ class Memory(MemoryBase):
             # Format existing memories for prompt
             old_memory = []
             for mem in existing_memories:
+                # Support both "memory" and "content" field names for compatibility
+                content = mem.get("memory", "") or mem.get("content", "")
                 old_memory.append({
                     "id": mem.get("id", "unknown"),
-                    "text": mem.get("content", "")
+                    "text": content
                 })
             
             # Generate update prompt with custom prompt if provided
@@ -635,7 +637,8 @@ class Memory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Mapping UUIDs with integers for handling UUID hallucinations (mem0 compatibility)
+        # Mapping IDs with integers for handling ID hallucinations (mem0 compatibility)
+        # Maps temporary string indices to real Snowflake IDs (integers)
         temp_uuid_mapping = {}
         for idx, item in enumerate(existing_memories):
             temp_uuid_mapping[str(idx)] = item["id"]
@@ -689,7 +692,7 @@ class Memory(MemoryBase):
                     action_counts["ADD"] += 1
                     
                 elif event_type == "UPDATE":
-                    # Use UUID mapping to get the real memory ID
+                    # Use ID mapping to get the real memory ID (Snowflake ID - integer)
                     real_memory_id = temp_uuid_mapping.get(str(action_id))
                     if real_memory_id:
                         self._update_memory(
@@ -710,7 +713,7 @@ class Memory(MemoryBase):
                         logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "DELETE":
-                    # Use UUID mapping to get the real memory ID
+                    # Use ID mapping to get the real memory ID (Snowflake ID - integer)
                     real_memory_id = temp_uuid_mapping.get(str(action_id))
                     if real_memory_id:
                         self.delete(real_memory_id, user_id, agent_id)
@@ -800,7 +803,7 @@ class Memory(MemoryBase):
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
         existing_embeddings: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> int:
         """Create a memory with optional embeddings."""
         # Validate content is not empty
         if not content or not content.strip():
