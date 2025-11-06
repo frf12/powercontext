@@ -1,0 +1,21 @@
+# =============================================================================
+# Minimal Configuration for PowerMem
+# =============================================================================
+# This is the smallest configuration needed to get started with PowerMem.
+# Copy this file to .env and fill in your API keys.
+# Only required and non-default values are included here.
+
+# Database Configuration
+DATABASE_PROVIDER=sqlite
+DATABASE_PATH=./data/powermem_dev.db
+
+# LLM Configuration (required)
+LLM_PROVIDER=qwen
+LLM_MODEL=your
+LLM_API_KEY=your_api_key_here
+
+# Embedding Configuration (required)
+EMBEDDING_PROVIDER=qwen
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_API_KEY=your_api_key_here
+

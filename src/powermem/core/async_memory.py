@@ -56,22 +56,29 @@ class AsyncMemory(MemoryBase):
             embedding_provider: Embedding provider to use
         """
         self.config = config or {}
-        self.storage_type = storage_type
-        self.llm_provider = llm_provider
-        self.embedding_provider = embedding_provider
         
-        # Initialize components
-        vector_store = VectorStoreFactory.create(storage_type, self.config)
-        self.llm = LLMFactory.create(llm_provider, self.config)
-        self.embedding = EmbedderFactory.create(embedding_provider, self.config)
+        # Extract providers from config with fallbacks
+        self.storage_type = storage_type or self._get_provider('vector_store', 'sqlite')
+        self.llm_provider = llm_provider or self._get_provider('llm', 'openai')
+        self.embedding_provider = embedding_provider or self._get_provider('embedder', 'openai')
+        
+        # Initialize components - extract component-specific configs
+        vector_store_config = self._get_component_config('vector_store')
+        vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+        
+        llm_config = self._get_component_config('llm')
+        self.llm = LLMFactory.create(self.llm_provider, llm_config)
+        
+        embedder_config = self._get_component_config('embedder')
+        self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
         # Extract graph_store config (simplified version for dict config)
         graph_store_cfg = self.config.get('graph_store', {})
         self.enable_graph = graph_store_cfg.get('enabled', False) if isinstance(graph_store_cfg, dict) else False
         self.graph_store = None
         if self.enable_graph:
-            graph_store_config = graph_store_cfg.get('config', {}) if isinstance(graph_store_cfg, dict) else {}
-            self.graph_store = GraphStoreFactory.create(storage_type, graph_store_config)
+            graph_store_config = self._get_component_config('graph_store')
+            self.graph_store = GraphStoreFactory.create(self.storage_type, graph_store_config)
         
         # Use StorageAdapter like Memory class
         self.storage = StorageAdapter(vector_store, self.embedding)
@@ -105,12 +112,37 @@ class AsyncMemory(MemoryBase):
                 self._intelligence_plugin = None
 
         
-        logger.info(f"AsyncMemory initialized with storage: {storage_type}, LLM: {llm_provider}")
-        self.telemetry.capture_event("async_memory.init", {"storage_type": storage_type, "llm_provider": llm_provider})
+        logger.info(f"AsyncMemory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}")
+        self.telemetry.capture_event("async_memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider})
     
     async def initialize(self):
         """Initialize async components."""
         await self.storage.initialize_async()
+    
+    def _get_provider(self, component: str, default: str) -> str:
+        """
+        Helper method to get component provider uniformly.
+
+        Args:
+            component: Component name ('vector_store', 'llm', 'embedder')
+            default: Default provider name
+
+        Returns:
+            Provider name string
+        """
+        return self.config.get(component, {}).get('provider', default)
+
+    def _get_component_config(self, component: str) -> Dict[str, Any]:
+        """
+        Helper method to get component configuration uniformly.
+
+        Args:
+            component: Component name ('vector_store', 'llm', 'embedder', 'graph_store')
+
+        Returns:
+            Component configuration dictionary
+        """
+        return self.config.get(component, {}).get('config', {})
     
     async def _extract_facts(self, messages: Any) -> List[str]:
         """
@@ -241,11 +273,11 @@ class AsyncMemory(MemoryBase):
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
         try:
-            # Handle messages parameter (mem0 compatibility)
+            # Handle messages parameter
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
-            # Normalize input format (mem0-compatible)
+            # Normalize input format
             if isinstance(messages, str):
                 messages = [{"role": "user", "content": messages}]
             elif isinstance(messages, dict):
@@ -253,7 +285,7 @@ class AsyncMemory(MemoryBase):
             elif not isinstance(messages, list):
                 raise ValueError("messages must be str, dict, or list[dict]")
             
-            # Vision-aware message processing (mem0-compatible behavior)
+            # Vision-aware message processing
             llm_cfg = {}
             try:
                 llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
@@ -447,7 +479,7 @@ class AsyncMemory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Mapping IDs with integers for handling ID hallucinations (mem0 compatibility)
+        # Mapping IDs with integers for handling ID hallucinations
         # Maps temporary string indices to real Snowflake IDs (integers)
         temp_uuid_mapping = {}
         for idx, item in enumerate(existing_memories):
@@ -475,12 +507,12 @@ class AsyncMemory(MemoryBase):
             event_type = action.get("event", "NONE")
             action_id = action.get("id", "")
             
-            # Validate action text
-            if not action_text:
+            # Skip actions with empty text UNLESS it's a NONE event (duplicates may have empty text)
+            if not action_text and event_type != "NONE":
                 logger.warning(f"Skipping action with empty text: {action}")
                 continue
             
-            logger.debug(f"Processing action: {event_type} - '{action_text[:50]}...' (id: {action_id})")
+            logger.debug(f"Processing action: {event_type} - '{action_text[:50] if action_text else 'NONE'}...' (id: {action_id})")
             
             try:
                 if event_type == "ADD":
@@ -537,7 +569,7 @@ class AsyncMemory(MemoryBase):
                         logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "NONE":
-                    logger.debug("No action needed for memory")
+                    logger.debug("No action needed for memory (duplicate detected)")
                     action_counts["NONE"] += 1
                     
             except Exception as e:
@@ -563,8 +595,16 @@ class AsyncMemory(MemoryBase):
             if graph_result:
                 result["relations"] = graph_result
             return result
+        # If we processed actions but they were all NONE (duplicates detected), return empty results
+        elif action_counts.get("NONE", 0) > 0:
+            logger.info(f"All actions were NONE (duplicates detected), returning empty results")
+            result = {"results": []}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
+        # Only fall back to simple mode if we had no actions at all
         else:
-            # Fallback to simple mode
+            logger.warning("No actions returned from LLM, falling back to simple mode")
             return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
     
     async def _add_to_graph_async(
@@ -577,7 +617,6 @@ class AsyncMemory(MemoryBase):
     ) -> Optional[Dict[str, Any]]:
         """
         Add messages to graph store and return relations asynchronously.
-        Matches mem0's _add_to_graph behavior.
         
         Returns:
             dict with added_entities and deleted_entities, or None if graph store is disabled
@@ -585,7 +624,7 @@ class AsyncMemory(MemoryBase):
         if not self.enable_graph:
             return None
         
-        # Extract content from messages for graph processing (matching mem0)
+        # Extract content from messages for graph processing
         if isinstance(messages, str):
             data = messages
         elif isinstance(messages, dict):
@@ -744,17 +783,16 @@ class AsyncMemory(MemoryBase):
             
             # Transform results to match benchmark expected format
             # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
-            # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
                 score = result.get("score", 0.0)
-                # Apply threshold filtering (mem0 compatible)
+                # Apply threshold filtering
                 # Only include results if threshold is None or score >= threshold
                 if threshold is not None and score < threshold:
                     continue
                 
                 transformed_result = {
-                    "memory": result.get("memory", ""),  # Already in mem0 format from adapter
+                    "memory": result.get("memory", ""), 
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
                     "score": score,
                 }
@@ -831,20 +869,48 @@ class AsyncMemory(MemoryBase):
     ) -> Dict[str, Any]:
         """Update an existing memory asynchronously."""
         try:
+            # Validate content is not empty
+            if not content or not content.strip():
+                raise ValueError(f"Cannot update memory with empty content: '{content}'")
+            
             # Generate new embedding asynchronously
             embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
             
-            # Disabled LLM-based importance evaluation to save tokens
-            # Process with intelligence manager
+            # Process metadata with intelligence manager (if enabled)
+            # Disabled LLM-based importance evaluation to save tokens (consistent with add method)
             # enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
             enhanced_metadata = metadata  # Use original metadata without LLM evaluation
             
+            # Intelligent plugin annotations
+            extra_fields = {}
+            if self._intelligence_plugin and self._intelligence_plugin.enabled:
+                # Get existing memory for context
+                existing_memory = await self.get(memory_id, user_id=user_id)
+                if existing_memory:
+                    # Plugin can process update event
+                    extra_fields = self._intelligence_plugin.on_add(content=content, metadata=enhanced_metadata)
+            
+            # Generate content hash for deduplication
+            content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            
+            # Extract category from enhanced metadata if present
+            category = ""
+            if enhanced_metadata and isinstance(enhanced_metadata, dict):
+                category = enhanced_metadata.get("category", "")
+                # Remove category from metadata to avoid duplication
+                enhanced_metadata = {k: v for k, v in enhanced_metadata.items() if k != "category"}
+            
+            # Merge extra fields from intelligence plugin
+            if extra_fields and isinstance(extra_fields, dict):
+                enhanced_metadata = {**(enhanced_metadata or {}), **extra_fields}
 
             # Update in storage asynchronously
             update_data = {
                 "content": content,
                 "embedding": embedding,
                 "metadata": enhanced_metadata,
+                "hash": content_hash,  # Update hash
+                "category": category,
                 "updated_at": datetime.utcnow(),
             }
             
@@ -893,7 +959,8 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """Get all memories with optional filtering asynchronously."""
         try:
             results = await self.storage.get_all_memories_async(user_id, agent_id, run_id, limit, offset)
@@ -906,8 +973,15 @@ class AsyncMemory(MemoryBase):
                 "offset": offset,
                 "results_count": len(results)
             }, user_id=user_id, agent_id=agent_id)
-            
-            return results
+
+            # get from graph store
+            if self.enable_graph:
+                filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+                graph_results = await asyncio.to_thread(self.graph_store.get_all, filters, limit + offset)
+                results.extend(graph_results)
+                return {"results": results, "relations": graph_results}
+
+            return {"results": results}
             
         except Exception as e:
             logger.error(f"Failed to get all memories: {e}")

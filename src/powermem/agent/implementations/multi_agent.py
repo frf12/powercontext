@@ -320,7 +320,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             Snowflake ID (int) from database
         """
         try:
-            # Use existing Memory infrastructure instead of mem0
+            # Use existing Memory infrastructure
             if not hasattr(self, '_memory_instance'):
                 from powermem.core.memory import Memory
                 # Convert ConfigObject back to dict for Memory class

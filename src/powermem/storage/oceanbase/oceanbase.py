@@ -35,7 +35,7 @@ from powermem.storage.oceanbase import constants
 logger = logging.getLogger(__name__)
 
 class OceanBaseVectorStore(VectorStoreBase):
-    """OceanBase vector store implementation for mem0."""
+    """OceanBase vector store implementation"""
 
     def __init__(
             self,
@@ -194,7 +194,6 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _create_table_with_index_by_embedding_model_dims(self) -> None:
         """Create table with vector index based on embedding dimension."""
-        # Create columns following mem0 standard schema
         cols = [
             # Primary key - Snowflake ID (BIGINT without AUTO_INCREMENT)
             Column(self.primary_field, BigInteger, primary_key=True, autoincrement=False),
@@ -204,7 +203,6 @@ class OceanBaseVectorStore(VectorStoreBase):
             Column(self.text_field, LONGTEXT),
             # Metadata field (JSON)
             Column(self.metadata_field, JSON),
-            # mem0 standard fields for filtering
             Column("user_id", String(128)),  # User identifier
             Column("agent_id", String(128)),  # Agent identifier
             Column("run_id", String(128)),  # Run identifier
@@ -1261,3 +1259,42 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Refresh metadata
         self.obvector.refresh_metadata([self.collection_name])
+    
+    def execute_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Execute a raw SQL statement and return results.
+        
+        This method is used by SubStoreMigrationManager to manage migration status table.
+        
+        Args:
+            sql: SQL statement to execute
+            params: Optional parameters for the SQL statement
+            
+        Returns:
+            List of result rows as dictionaries
+        """
+        try:
+            with self.obvector.engine.connect() as conn:
+                if params:
+                    result = conn.execute(text(sql), params)
+                else:
+                    result = conn.execute(text(sql))
+                
+                # Commit for DDL/DML statements
+                conn.commit()
+                
+                # Try to fetch results (for SELECT queries)
+                try:
+                    rows = result.fetchall()
+                    # Convert rows to dictionaries
+                    if rows and result.keys():
+                        return [dict(zip(result.keys(), row)) for row in rows]
+                    return []
+                except Exception:
+                    # No results to fetch (for INSERT/UPDATE/DELETE/CREATE)
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"Failed to execute SQL: {e}")
+            logger.debug(f"SQL statement: {sql}")
+            raise

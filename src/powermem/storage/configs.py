@@ -25,6 +25,7 @@ class VectorStoreConfig(BaseModel):
     _provider_configs: Dict[str, str] = {
         "oceanbase": "OceanBaseConfig",
         "pgvector": "PGVectorConfig",
+        "sqlite": "SQLiteConfig",
     }
 
     @model_validator(mode="after")

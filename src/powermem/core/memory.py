@@ -14,7 +14,7 @@ from copy import deepcopy
 from .base import MemoryBase
 from ..configs import MemoryConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
-from ..storage.adapter import StorageAdapter
+from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
@@ -34,15 +34,15 @@ logger = logging.getLogger(__name__)
 
 def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Convert legacy powermem config to mem0 format for compatibility.
+    Convert legacy powermem config to format for compatibility.
     
-    Now powermem uses mem0-style field names directly.
+    Now powermem uses field names directly.
     
     Args:
-        config: Configuration dictionary (legacy or mem0 format)
+        config: Configuration dictionary (legacy format)
         
     Returns:
-        mem0-style configuration dictionary
+        configuration dictionary
     """
     if not config:
         return config
@@ -77,10 +77,9 @@ def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
                 "config": {}
             }
         
-        logger.info("Converted legacy powermem config to mem0 format")
+        logger.info("Converted legacy powermem config format")
         return converted
-    
-    # Already in mem0 format (has embedder or vector_store)
+
     return config
 
 
@@ -103,11 +102,10 @@ class Memory(MemoryBase):
         Initialize the memory manager.
 
         Compatible with both dict config and MemoryConfig object.
-        Supports both mem0 and powermem config formats.
 
         Args:
             config: Configuration dictionary or MemoryConfig object containing all settings.
-                   Dict format supports both mem0 style (llm, embedder, vector_store)
+                   Dict format supports style (llm, embedder, vector_store)
                    and powermem style (database, llm, embedding)
             storage_type: Type of storage backend to use (overrides config)
             llm_provider: LLM provider to use (overrides config)
@@ -131,7 +129,7 @@ class Memory(MemoryBase):
                 "llm": {"provider": "qwen", "config": {...}},
             })
 
-            # Method 3: Using dict (mem0 style - auto-converted)
+            # Method 3: Using dict
             memory = Memory({
                 "llm": {"provider": "openai", "config": {...}},
                 "embedder": {"provider": "openai", "config": {...}},
@@ -190,7 +188,17 @@ class Memory(MemoryBase):
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
         # Initialize storage adapter with embedding service
-        self.storage = StorageAdapter(vector_store, self.embedding)
+        # Automatically select adapter based on sub_stores configuration
+        sub_stores_list = self.config.get('sub_stores', [])
+        if sub_stores_list and self.storage_type.lower() == 'oceanbase':
+            # Use SubStorageAdapter if sub stores are configured and using OceanBase
+            self.storage = SubStorageAdapter(vector_store, self.embedding)
+            logger.info("Using SubStorageAdapter with sub-store support")
+        else:
+            # Use basic StorageAdapter for single store operations
+            self.storage = StorageAdapter(vector_store, self.embedding)
+            logger.info("Using basic StorageAdapter")
+
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
@@ -219,6 +227,12 @@ class Memory(MemoryBase):
                 self._intelligence_plugin = None
 
         
+        # Sub stores configuration (support multiple)
+        self.sub_stores_config: List[Dict] = []
+
+        # Initialize sub stores
+        self._init_sub_stores()
+
         logger.info(f"Memory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
         self.telemetry.capture_event("memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
 
@@ -427,11 +441,11 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Add a new memory with optional intelligent processing."""
         try:
-            # Handle messages parameter (mem0 compatibility)
+            # Handle messages parameter
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
             
-            # Normalize input format (mem0-compatible)
+            # Normalize input format
             if isinstance(messages, str):
                 messages = [{"role": "user", "content": messages}]
             elif isinstance(messages, dict):
@@ -439,7 +453,7 @@ class Memory(MemoryBase):
             elif not isinstance(messages, list):
                 raise ValueError("messages must be str, dict, or list[dict]")
             
-            # Vision-aware message processing (mem0-compatible behavior)
+            # Vision-aware message processing
             llm_cfg = {}
             try:
                 llm_cfg = (self.config or {}).get("llm", {}).get("config", {})
@@ -493,8 +507,11 @@ class Memory(MemoryBase):
             logger.error(f"Cannot store empty content. Messages: {messages}")
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+
         # Generate embedding
-        embedding = self.embedding.embed(content, memory_action="add")
+        embedding = embedding_service.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -601,10 +618,18 @@ class Memory(MemoryBase):
         existing_memories = []
         fact_embeddings = {}
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+
         for fact in facts:
-            fact_embedding = self.embedding.embed(fact, memory_action="add")
+            fact_embedding = embedding_service.embed(fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
             
+            # Merge metadata into filters for correct routing
+            search_filters = filters.copy() if filters else {}
+            if metadata:
+                search_filters.update(metadata)
+
             # Search for similar memories with reduced limit to reduce noise
             # Pass fact text to enable hybrid search for better results
             similar = self.storage.search_memories(
@@ -612,7 +637,7 @@ class Memory(MemoryBase):
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
-                filters=filters,
+                filters=search_filters,
                 limit=5,
                 query=fact  # Enable hybrid search
             )
@@ -637,7 +662,7 @@ class Memory(MemoryBase):
         
         logger.info(f"Found {len(existing_memories)} existing memories to consider (after dedup and limiting)")
         
-        # Mapping IDs with integers for handling ID hallucinations (mem0 compatibility)
+        # Mapping IDs with integers for handling ID hallucinations
         # Maps temporary string indices to real Snowflake IDs (integers)
         temp_uuid_mapping = {}
         for idx, item in enumerate(existing_memories):
@@ -665,12 +690,12 @@ class Memory(MemoryBase):
             event_type = action.get("event", "NONE")
             action_id = action.get("id", "")
             
-            # Validate action text
-            if not action_text:
+            # Skip actions with empty text UNLESS it's a NONE event (duplicates may have empty text)
+            if not action_text and event_type != "NONE":
                 logger.warning(f"Skipping action with empty text: {action}")
                 continue
             
-            logger.debug(f"Processing action: {event_type} - '{action_text[:50]}...' (id: {action_id})")
+            logger.debug(f"Processing action: {event_type} - '{action_text[:50] if action_text else 'NONE'}...' (id: {action_id})")
             
             try:
                 if event_type == "ADD":
@@ -706,7 +731,7 @@ class Memory(MemoryBase):
                             "id": real_memory_id,
                             "memory": action_text,
                             "event": event_type,
-                            "previous_memory": action.get("old_memory")  # mem0 uses "previous_memory" in API response
+                            "previous_memory": action.get("old_memory")
                         })
                         action_counts["UPDATE"] += 1
                     else:
@@ -727,7 +752,7 @@ class Memory(MemoryBase):
                         logger.warning(f"Could not find real memory ID for action ID: {action_id}")
                         
                 elif event_type == "NONE":
-                    logger.debug("No action needed for memory")
+                    logger.debug("No action needed for memory (duplicate detected)")
                     action_counts["NONE"] += 1
                     
             except Exception as e:
@@ -744,13 +769,23 @@ class Memory(MemoryBase):
         
         # Add to graph store and get relations
         graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
+
+        # If we have results, return them
         if results:
             result = {"results": results}
             if graph_result:
                 result["relations"] = graph_result
             return result
+        # If we processed actions but they were all NONE (duplicates detected), return empty results
+        elif action_counts.get("NONE", 0) > 0:
+            logger.info(f"All actions were NONE (duplicates detected), returning empty results")
+            result = {"results": []}
+            if graph_result:
+                result["relations"] = graph_result
+            return result
+        # Only fall back to simple mode if we had no actions at all
         else:
-            # Fallback to simple mode
+            logger.warning("No actions returned from LLM, falling back to simple mode")
             return self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
     
     def _add_to_graph(
@@ -763,7 +798,6 @@ class Memory(MemoryBase):
     ) -> Optional[Dict[str, Any]]:
         """
         Add messages to graph store and return relations.
-        Matches mem0's _add_to_graph behavior.
         
         Returns:
             dict with added_entities and deleted_entities, or None if graph store is disabled
@@ -771,7 +805,7 @@ class Memory(MemoryBase):
         if not self.enable_graph:
             return None
         
-        # Extract content from messages for graph processing (matching mem0)
+        # Extract content from messages for graph processing
         if isinstance(messages, str):
             data = messages
         elif isinstance(messages, dict):
@@ -809,11 +843,14 @@ class Memory(MemoryBase):
         if not content or not content.strip():
             raise ValueError(f"Cannot create memory with empty content: '{content}'")
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+
         # Generate or use existing embedding
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content, memory_action="add")
+            embedding = embedding_service.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -855,6 +892,7 @@ class Memory(MemoryBase):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         existing_embeddings: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """Update a memory with optional embeddings."""
         # Validate content is not empty
@@ -865,7 +903,16 @@ class Memory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content, memory_action="update")
+            # If no metadata provided, try to get existing memory's metadata
+            if metadata is None:
+                existing = self.storage.get_memory(memory_id, user_id, agent_id)
+                if existing:
+                    metadata = existing.get("metadata", {})
+
+            # Select embedding service based on metadata (for sub-store routing)
+            embedding_service = self._get_embedding_service(metadata)
+
+            embedding = embedding_service.embed(content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -893,8 +940,11 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Search for memories."""
         try:
+            # Select embedding service based on filters (for sub-store routing)
+            embedding_service = self._get_embedding_service(filters)
+
             # Generate query embedding
-            query_embedding = self.embedding.embed(query, memory_action="search")
+            query_embedding = embedding_service.embed(query, memory_action="search")
             
 
             # Search in storage - pass query text to enable hybrid search
@@ -930,17 +980,16 @@ class Memory(MemoryBase):
             
             # Transform results to match benchmark expected format
             # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
-            # Map "content" to "memory" field to match mem0 format
             transformed_results = []
             for result in processed_results:
                 score = result.get("score", 0.0)
-                # Apply threshold filtering (mem0 compatible)
+                # Apply threshold filtering
                 # Only include results if threshold is None or score >= threshold
                 if threshold is not None and score < threshold:
                     continue
                 
                 transformed_result = {
-                    "memory": result.get("memory", ""),  # Already in mem0 format from adapter
+                    "memory": result.get("memory", ""),
                     "metadata": result.get("metadata", {}),  # Keep metadata as-is from storage
                     "score": score,
                 }
@@ -1025,18 +1074,57 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Update an existing memory."""
         try:
+            # Validate content is not empty
+            if not content or not content.strip():
+                raise ValueError(f"Cannot update memory with empty content: '{content}'")
+
+            # If no metadata provided, try to get existing memory's metadata
+            if metadata is None:
+                existing = self.storage.get_memory(memory_id, user_id, agent_id)
+                if existing:
+                    metadata = existing.get("metadata", {})
+
+            # Select embedding service based on metadata (for sub-store routing)
+            embedding_service = self._get_embedding_service(metadata)
+
             # Generate new embedding
-            embedding = self.embedding.embed(content, memory_action="update")
+            embedding = embedding_service.embed(content, memory_action="update")
             
-            # Process with intelligence manager
-            processed_content = self.intelligence.process_content(content, metadata)
+            # Process metadata with intelligence manager (if enabled)
+            # Disabled LLM-based importance evaluation to save tokens (consistent with add method)
+            # enhanced_metadata = self.intelligence.process_metadata(content, metadata)
+            enhanced_metadata = metadata  # Use original metadata without LLM evaluation
+
+            # Intelligent plugin annotations
+            extra_fields = {}
+            if self._intelligence_plugin and self._intelligence_plugin.enabled:
+                # Get existing memory for context
+                existing_memory = self.get(memory_id, user_id=user_id)
+                if existing_memory:
+                    # Plugin can process update event
+                    extra_fields = self._intelligence_plugin.on_add(content=content, metadata=enhanced_metadata)
             
+            # Generate content hash for deduplication
+            content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+
+            # Extract category from enhanced metadata if present
+            category = ""
+            if enhanced_metadata and isinstance(enhanced_metadata, dict):
+                category = enhanced_metadata.get("category", "")
+                # Remove category from metadata to avoid duplication
+                enhanced_metadata = {k: v for k, v in enhanced_metadata.items() if k != "category"}
+
+            # Merge extra fields from intelligence plugin
+            if extra_fields and isinstance(extra_fields, dict):
+                enhanced_metadata = {**(enhanced_metadata or {}), **extra_fields}
 
             # Update in storage
             update_data = {
-                "content": processed_content,
+                "content": content,
                 "embedding": embedding,
-                "metadata": metadata,
+                "metadata": enhanced_metadata,
+                "hash": content_hash,  # Update hash
+                "category": category,
                 "updated_at": datetime.utcnow(),
             }
             
@@ -1183,15 +1271,203 @@ class Memory(MemoryBase):
             logger.error(f"Failed to reset memory store: {e}")
             raise
     
+    def _init_sub_stores(self):
+        """Initialize multiple sub stores configuration"""
+        if self.sub_stores_config:
+            logger.info(f"Sub stores enabled: {len(self.sub_stores_config)} stores")
+
+        sub_stores_list = self.config.get('sub_stores', [])
+
+        if not sub_stores_list:
+            logger.info("No sub stores configured")
+            return
+
+        # Sub store feature only supports OceanBase storage
+        if self.storage_type.lower() != 'oceanbase':
+            logger.warning(f"Sub store feature only supports OceanBase storage, current storage: {self.storage_type}")
+            logger.warning("Sub stores configuration will be ignored")
+            return
+
+        # Get main table information
+        main_collection_name = self.config.get('vector_store', {}).get('config', {}).get('collection_name', 'memories')
+        main_embedding_dims = self.config.get('vector_store', {}).get('config', {}).get('embedding_model_dims', 1536)
+
+        # Iterate through configs and initialize each sub store
+        for index, sub_config in enumerate(sub_stores_list):
+            try:
+                self._init_single_sub_store(index, sub_config, main_collection_name, main_embedding_dims)
+            except Exception as e:
+                logger.error(f"Failed to initialize sub store {index}: {e}")
+                continue
+
+    def _init_single_sub_store(
+        self,
+        index: int,
+        sub_config: Dict,
+        main_collection_name: str,
+        main_embedding_dims: int
+    ):
+        """Initialize a single sub store"""
+
+        # 1. Determine sub store name (default: {main_table_name}_sub_{index})
+        sub_store_name = sub_config.get(
+            'collection_name',
+            f"{main_collection_name}_sub_{index}"
+        )
+
+        # 2. Get routing rules (required)
+        routing_filter = sub_config.get('routing_filter')
+        if not routing_filter:
+            logger.warning(f"Sub store {index} has no routing_filter, skipping")
+            return
+
+        # 3. Determine vector dimension (default: same as main table)
+        embedding_model_dims = sub_config.get('embedding_model_dims', main_embedding_dims)
+
+        # 4. Initialize sub store's embedding service
+        sub_embedding_config = sub_config.get('embedding', {})
+
+        if sub_embedding_config:
+            # Has independent embedding configuration
+            sub_embedding_provider = sub_embedding_config.get('provider', self.embedding_provider)
+            sub_embedding_params = sub_embedding_config.get('config', {})
+
+            # Inherit api_key and other configs from main table
+            main_embedding_config = self.config.get('embedder', {}).get('config', {})
+            for key in ['api_key', 'openai_base_url', 'timeout']:
+                if key not in sub_embedding_params and key in main_embedding_config:
+                    sub_embedding_params[key] = main_embedding_config[key]
+
+            sub_embedding = EmbedderFactory.create(
+                sub_embedding_provider,
+                sub_embedding_params,
+                None
+            )
+            logger.info(f"Created sub embedding service for store {index}: {sub_embedding_provider}")
+        else:
+            # Reuse main table's embedding service
+            sub_embedding = self.embedding
+            logger.info(f"Sub store {index} using main embedding service")
+
+        # 5. Create sub store storage instance
+        db_config = self.config.get('vector_store', {}).get('config', {}).copy()
+        db_config['collection_name'] = sub_store_name
+        db_config['embedding_model_dims'] = embedding_model_dims
+
+        sub_vector_store = VectorStoreFactory.create(self.storage_type, db_config)
+
+        # 6. Register sub store in Adapter (with embedding service for migration)
+        self.storage.register_sub_store(
+            store_name=sub_store_name,
+            routing_filter=routing_filter,
+            vector_store=sub_vector_store,
+            embedding_service=sub_embedding,
+        )
+
+        # 7. Save sub store configuration
+        self.sub_stores_config.append({
+            'name': sub_store_name,
+            'routing_filter': routing_filter,
+            'embedding_service': sub_embedding,
+            'embedding_dims': embedding_model_dims,
+        })
+
+        logger.info(f"Registered sub store {index}: {sub_store_name} (dims={embedding_model_dims})")
+
+    def _get_embedding_service(self, filters_or_metadata: Optional[Dict] = None):
+        """
+        Select appropriate embedding service based on filters or metadata
+
+        Args:
+            filters_or_metadata: Query filters (for search) or memory metadata (for add)
+
+        Returns:
+            Corresponding embedding service instance
+        """
+        if not filters_or_metadata or not self.sub_stores_config:
+            return self.embedding
+
+        # Iterate through all sub stores to find a match
+        if isinstance(self.storage, SubStorageAdapter):
+            for sub_config in self.sub_stores_config:
+                # Check if sub store is ready
+                if not self.storage.is_sub_store_ready(sub_config['name']):
+                    continue
+
+                # Check if filters_or_metadata matches routing rules
+                routing_filter = sub_config['routing_filter']
+                if all(
+                    key in filters_or_metadata and filters_or_metadata[key] == value
+                    for key, value in routing_filter.items()
+                ):
+                    logger.debug(f"Using sub embedding for store: {sub_config['name']}")
+                    return sub_config['embedding_service']
+
+        logger.debug("Using main embedding service")
+        return self.embedding
+
+
+    def migrate_to_sub_store(self, sub_store_index: int = 0, delete_source: bool = False) -> int:
+        """
+        Migrate data to specified sub store
+
+        Args:
+            sub_store_index: Sub store index (default 0, i.e., first sub store)
+            delete_source: Whether to delete source data
+
+        Returns:
+            Number of migrated records
+        """
+        if not self.sub_stores_config:
+            raise ValueError("No sub stores configured.")
+
+        if sub_store_index >= len(self.sub_stores_config):
+            raise ValueError(f"Sub store index {sub_store_index} out of range")
+
+        sub_config = self.sub_stores_config[sub_store_index]
+
+        logger.info(f"Starting migration to sub store: {sub_config['name']}")
+
+        # Call adapter's migration method
+        if isinstance(self.storage, SubStorageAdapter):
+            migrated_count = self.storage.migrate_to_sub_store(
+                store_name=sub_config['name'],
+                delete_source=delete_source
+            )
+
+            logger.info(f"Migration completed: {migrated_count} records migrated")
+            return migrated_count
+        else:
+            raise ValueError("Storage adapter does not support migration")
+
+    def migrate_all_sub_stores(self, delete_source: bool = True) -> Dict[str, int]:
+        """
+        Migrate all sub stores
+
+        Args:
+            delete_source: Whether to delete source data
+
+        Returns:
+            Migration record count for each sub store {store_name: count}
+        """
+        results = {}
+        for index, sub_config in enumerate(self.sub_stores_config):
+            try:
+                count = self.migrate_to_sub_store(index, delete_source)
+                results[sub_config['name']] = count
+            except Exception as e:
+                logger.error(f"Failed to migrate sub store {index}: {e}")
+                results[sub_config['name']] = 0
+
+        return results
+
     @classmethod
     def from_config(cls, config: Optional[Dict[str, Any]] = None, **kwargs):
         """
-        Create Memory instance from configuration (mem0-compatible style).
-        
-        Compatible with mem0's initialization pattern.
+        Create Memory instance from configuration.
         
         Args:
-            config: Configuration dictionary (mem0 or powermem format)
+            config: Configuration dictionary
             **kwargs: Additional parameters
         
         Returns:
@@ -1199,7 +1475,6 @@ class Memory(MemoryBase):
             
         Example:
             ```python
-            # mem0-style config
             memory = Memory.from_config({
                 "llm": {"provider": "openai", "config": {"api_key": "..."}},
                 "embedder": {"provider": "openai", "config": {"api_key": "..."}},
@@ -1211,8 +1486,7 @@ class Memory(MemoryBase):
             # Use auto config from environment
             from ..config_loader import auto_config
             config = auto_config()
-        
-        # Convert legacy config to mem0 format if needed
+
         converted_config = _auto_convert_config(config)
         
         return cls(config=converted_config, **kwargs)
