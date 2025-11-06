@@ -1313,11 +1313,12 @@ class Memory(MemoryBase):
 
         sub_vector_store = VectorStoreFactory.create(self.storage_type, db_config)
 
-        # 6. Register sub store in Adapter
+        # 6. Register sub store in Adapter (with embedding service for migration)
         self.storage.register_sub_store(
             store_name=sub_store_name,
             routing_filter=routing_filter,
             vector_store=sub_vector_store,
+            embedding_service=sub_embedding,
         )
 
         # 7. Save sub store configuration
@@ -1387,9 +1388,7 @@ class Memory(MemoryBase):
         # Call adapter's migration method
         if isinstance(self.storage, SubStorageAdapter):
             migrated_count = self.storage.migrate_to_sub_store(
-                target_store_name=sub_config['name'],
-                filters=sub_config['routing_filter'],
-                target_embedding_service=sub_config['embedding_service'],
+                store_name=sub_config['name'],
                 delete_source=delete_source
             )
 

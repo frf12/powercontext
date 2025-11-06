@@ -641,10 +641,11 @@ class StorageAdapter:
 
 class SubStoreConfig:
     """Configuration for a sub store."""
-    def __init__(self, name: str, routing_filter: Dict, vector_store: VectorStoreBase):
+    def __init__(self, name: str, routing_filter: Dict, vector_store: VectorStoreBase, embedding_service=None):
         self.name = name
         self.routing_filter = routing_filter
         self.vector_store = vector_store
+        self.embedding_service = embedding_service
 
 
 class SubStorageAdapter(StorageAdapter):
@@ -680,6 +681,7 @@ class SubStorageAdapter(StorageAdapter):
         store_name: str,
         routing_filter: Dict,
         vector_store: VectorStoreBase,
+        embedding_service=None,
     ):
         """
         Register a sub store for routing.
@@ -688,11 +690,13 @@ class SubStorageAdapter(StorageAdapter):
             store_name: Name of the sub store
             routing_filter: Dictionary of metadata conditions for routing
             vector_store: Vector store instance for the sub store
+            embedding_service: Optional embedding service for this sub store (for migration)
         """
         sub_config = SubStoreConfig(
             name=store_name,
             routing_filter=routing_filter,
-            vector_store=vector_store
+            vector_store=vector_store,
+            embedding_service=embedding_service
         )
         self.sub_stores[store_name] = sub_config
         
@@ -731,59 +735,71 @@ class SubStorageAdapter(StorageAdapter):
         sub_config = self.sub_stores[store_name]
         routing_filter = sub_config.routing_filter
         target_store = sub_config.vector_store
+        sub_embedding_service = sub_config.embedding_service
+        
+        # Validate that embedding service is provided
+        if not sub_embedding_service:
+            raise ValueError(f"Sub store '{store_name}' does not have an embedding service configured. "
+                           "Cannot migrate without re-embedding the data.")
         
         # Mark migration as started
         if self.migration_manager:
-            self.migration_manager.mark_migrating(store_name)
+            self.migration_manager.mark_migrating(store_name, 0)
         
         try:
             # Query all matching records from main store
-            # Use search with empty vector to get all records (or use get_all if available)
-            # For simplicity, we'll use a broad search approach
             migrated_count = 0
             
             # Get all memories that match the routing filter
-            # This is a simplified approach - in production you might want to paginate
             from powermem.storage.oceanbase.oceanbase import OceanBaseVectorStore
             
             if isinstance(self.vector_store, OceanBaseVectorStore):
                 # Use OceanBase specific query
-                # Build SQL query to find matching records
+                # Build SQL query to find matching records (only need ID and content fields)
                 filter_conditions = " AND ".join([
                     f"JSON_EXTRACT(metadata, '$.{key}') = '{value}'"
                     for key, value in routing_filter.items()
                 ])
                 
-                query_sql = f"""
-                SELECT id, embedding, document, metadata, user_id, agent_id, run_id, 
-                       actor_id, hash, created_at, updated_at, category, fulltext_content
+                # Query only IDs first for efficiency
+                id_query_sql = f"""
+                SELECT id
                 FROM {self.collection_name}
                 WHERE {filter_conditions}
                 LIMIT {batch_size}
                 """
                 
                 while True:
-                    results = self.vector_store.execute_sql(query_sql)
-                    if not results:
+                    id_results = self.vector_store.execute_sql(id_query_sql)
+                    if not id_results:
                         break
                     
-                    for record in results:
-                        # Insert into target store
-                        vector = record.get('embedding', [])
-                        payload = {
-                            'id': record['id'],
-                            'data': record.get('document', ''),
-                            'metadata': record.get('metadata', {}),
-                            'user_id': record.get('user_id', ''),
-                            'agent_id': record.get('agent_id', ''),
-                            'run_id': record.get('run_id', ''),
-                            'actor_id': record.get('actor_id', ''),
-                            'hash': record.get('hash', ''),
-                            'created_at': record.get('created_at', ''),
-                            'updated_at': record.get('updated_at', ''),
-                            'category': record.get('category', ''),
-                            'fulltext_content': record.get('fulltext_content', ''),
-                        }
+                    for id_record in id_results:
+                        record_id = id_record['id']
+                        
+                        # Use get() method to retrieve the full record
+                        result = self.vector_store.get(record_id)
+                        if not result or not result.payload:
+                            logger.warning(f"Record {record_id} not found, skipping")
+                            continue
+                        
+                        # Use payload from result
+                        payload = result.payload.copy()
+                        payload['id'] = record_id
+                        
+                        # Extract content for re-embedding
+                        content = payload.get('data', '')
+                        if not content:
+                            logger.warning(f"Record {record_id} has no content, skipping")
+                            continue
+                        
+                        # Re-generate vector using sub store's embedding service
+                        try:
+                            vector = sub_embedding_service.embed(content, memory_action="add")
+                            logger.debug(f"Re-embedded record {record_id} with dimension {len(vector)}")
+                        except Exception as embed_error:
+                            logger.error(f"Failed to re-embed record {record_id}: {embed_error}")
+                            continue
                         
                         try:
                             target_store.insert([vector], [payload])
@@ -791,7 +807,7 @@ class SubStorageAdapter(StorageAdapter):
                             
                             # Delete from source if requested
                             if delete_source:
-                                self.vector_store.delete(record['id'])
+                                self.vector_store.delete(record_id)
                             
                             # Update progress
                             if self.migration_manager and migrated_count % 10 == 0:
@@ -801,11 +817,11 @@ class SubStorageAdapter(StorageAdapter):
                                     migrated_count  # Total is unknown in this approach
                                 )
                         except Exception as e:
-                            logger.error(f"Error migrating record {record['id']}: {e}")
+                            logger.error(f"Error migrating record {record_id}: {e}")
                             continue
                     
                     # If we got fewer results than batch_size, we're done
-                    if len(results) < batch_size:
+                    if len(id_results) < batch_size:
                         break
             else:
                 logger.warning(f"Migration not fully supported for {type(self.vector_store).__name__}")
