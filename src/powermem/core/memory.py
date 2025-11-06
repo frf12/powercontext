@@ -138,6 +138,7 @@ class Memory(MemoryBase):
             ```
         """
         # Handle MemoryConfig object or dict
+
         if isinstance(config, MemoryConfig):
             # Use MemoryConfig object directly
             self.memory_config = config
@@ -170,8 +171,13 @@ class Memory(MemoryBase):
         self.enable_graph = self._get_graph_enabled()
         self.graph_store = None
         if self.enable_graph:
-            graph_store_config = self._get_component_config('graph_store')
-            self.graph_store = GraphStoreFactory.create(self.storage_type, graph_store_config)
+            logger.debug("Graph store enabled")
+            graph_store_config = self.config.get("graph_store", {})
+            if graph_store_config:
+                provider = graph_store_config.get("provider", "oceanbase")
+                config_to_pass = self.memory_config if self.memory_config else self.config
+                self.graph_store = GraphStoreFactory.create(provider, config_to_pass)
+
 
         # Extract LLM config
         llm_config = self._get_component_config('llm')
@@ -273,7 +279,8 @@ class Memory(MemoryBase):
         if self.memory_config:
             return self.memory_config.graph_store.enabled if self.memory_config.graph_store else False
         else:
-            return self.config.get('enabled', False)
+            graph_store_config = self.config.get('graph_store', {})
+            return graph_store_config.get('enabled', False) if graph_store_config else False
 
     def _get_intelligent_memory_config(self) -> Dict[str, Any]:
         """

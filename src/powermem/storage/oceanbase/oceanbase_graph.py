@@ -28,6 +28,14 @@ from powermem.storage.oceanbase import constants
 
 logger = logging.getLogger(__name__)
 
+# Try to import jieba for better Chinese text segmentation
+try:
+    import jieba
+except ImportError:
+    logger.warning("jieba is not installed. Falling back to simple space-based tokenization. "
+                   "Install jieba for better Chinese text segmentation: pip install jieba")
+    jieba = None
+
 
 class MemoryGraph(GraphStoreBase):
     """OceanBase-based graph memory storage implementation."""
@@ -46,25 +54,33 @@ class MemoryGraph(GraphStoreBase):
         # Get OceanBase config
         ob_config = self.config.graph_store.config
 
+        # Helper function to get config value (supports both dict and object)
+        def get_config_value(key: str, default: Any = None) -> Any:
+            if isinstance(ob_config, dict):
+                return ob_config.get(key, default)
+            else:
+                return getattr(ob_config, key, default)
+
         # Get embedding_model_dims (required)
-        if (not hasattr(ob_config, "embedding_model_dims") or
-                ob_config.embedding_model_dims is None):
+        embedding_model_dims = get_config_value("embedding_model_dims")
+        if embedding_model_dims is None:
             raise ValueError(
                 "embedding_model_dims is required for OceanBase graph operations. "
                 "Please configure embedding_model_dims in your OceanBaseGraphConfig."
             )
-        self.embedding_dims = ob_config.embedding_model_dims
+        self.embedding_dims = embedding_model_dims
 
         # Get vidx parameters with defaults.
-        self.index_type = getattr(ob_config, "index_type", constants.DEFAULT_INDEX_TYPE)
-        self.vidx_metric_type = getattr(ob_config, "vidx_metric_type", constants.DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE)
-        self.vidx_name = getattr(ob_config, "vidx_name", constants.DEFAULT_VIDX_NAME)
+        self.index_type = get_config_value("index_type", constants.DEFAULT_INDEX_TYPE)
+        self.vidx_metric_type = get_config_value("vidx_metric_type",
+                                                 constants.DEFAULT_OCEANBASE_VECTOR_METRIC_TYPE)
+        self.vidx_name = get_config_value("vidx_name", constants.DEFAULT_VIDX_NAME)
 
         # Get graph search parameters
-        self.max_hops = getattr(ob_config, "max_hops", 3)
+        self.max_hops = get_config_value("max_hops", 3)
 
         # Set vidx_algo_params with defaults based on index_type.
-        self.vidx_algo_params = getattr(ob_config, "vidx_algo_params", None)
+        self.vidx_algo_params = get_config_value("vidx_algo_params", None)
         if not self.vidx_algo_params:
             # Set default parameters based on index type.
             self.vidx_algo_params = constants.get_default_build_params(self.index_type)
@@ -77,11 +93,17 @@ class MemoryGraph(GraphStoreBase):
         )
 
         # Initialize OceanBase client
+        host = get_config_value("host", "localhost")
+        port = get_config_value("port", "2881")
+        user = get_config_value("user", "root")
+        password = get_config_value("password", "")
+        db_name = get_config_value("db_name", "test")
+
         self.client = ObVecClient(
-            uri=f"{ob_config.host}:{ob_config.port}",
-            user=ob_config.user,
-            password=ob_config.password,
-            db_name=ob_config.db_name,
+            uri=f"{host}:{port}",
+            user=user,
+            password=password,
+            db_name=db_name,
         )
         self.engine = self.client.engine
         self.metadata = MetaData()
@@ -418,21 +440,59 @@ class MemoryGraph(GraphStoreBase):
         if not search_output:
             return []
 
-        search_outputs_sequence = [
-            [item["source"], item["relationship"], item["destination"]] for item in search_output
-        ]
+        # Tokenize search outputs for BM25 with improved segmentation
+        search_outputs_sequence = []
+        for item in search_output:
+            # Combine source, relationship, destination into a single text for better tokenization
+            combined_text = f"{item['source']} {item['relationship']} {item['destination']}"
+            tokenized_item = self._tokenize_text(combined_text)
+            search_outputs_sequence.append(tokenized_item)
+        
         bm25 = BM25Okapi(search_outputs_sequence)
 
-        tokenized_query = query.split(" ")
-        reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=constants.DEFAULT_BM25_TOP_N)
-
+        # Tokenize query using the same method
+        tokenized_query = self._tokenize_text(query)
+        
+        # Get top N results based on BM25 scores
+        scores = bm25.get_scores(tokenized_query)
+        # Get indices sorted by score (descending)
+        sorted_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        top_n_indices = sorted_indices[:constants.DEFAULT_BM25_TOP_N]
+        
+        # Build reranked results
         search_results = []
-        for item in reranked_results:
-            search_results.append({"source": item[0], "relationship": item[1], "destination": item[2]})
+        for idx in top_n_indices:
+            if idx < len(search_output):
+                item = search_output[idx]
+                search_results.append({
+                    "source": item["source"], 
+                    "relationship": item["relationship"], 
+                    "destination": item["destination"]
+                })
 
-        logger.info("Returned %d search results", len(search_results))
+        logger.info("Returned %d search results (from %d candidates)", len(search_results), len(search_output))
 
         return search_results
+    
+    def _tokenize_text(self, text: str) -> List[str]:
+        """Tokenize text using jieba for Chinese or simple split for other languages.
+        
+        Args:
+            text: Text to tokenize.
+            
+        Returns:
+            List of tokens.
+        """
+        if jieba is not None:
+            # Use jieba for Chinese text segmentation
+            # Convert to lowercase for better matching
+            tokens = list(jieba.cut(text.lower()))
+            # Filter out empty strings and single spaces
+            tokens = [t for t in tokens if t.strip()]
+            return tokens
+        else:
+            # Fallback to simple space-based tokenization
+            return text.lower().split()
 
     def delete_all(self, filters: Dict[str, Any]) -> None:
         """Delete all graph data for the given filters.
