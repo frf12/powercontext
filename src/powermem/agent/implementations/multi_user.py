@@ -8,9 +8,6 @@ designed for single-agent scenarios with multiple users.
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
-import uuid
-
-from typing import Any, Dict
 from powermem.agent.types import (
     CollaborationLevel,
     MemoryType,
@@ -148,16 +145,29 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 context=context or {}
             )
             
-            # Create memory ID
-            memory_id = str(uuid.uuid4())
-            
             # Determine memory type from enhanced metadata
             memory_type = self._determine_memory_type_from_metadata(enhanced_metadata)
             
             # Determine scope based on sharing settings
             scope = self._determine_user_scope(user_id, context, enhanced_metadata)
             
-            # Create memory data
+            # Persist to database first to get Snowflake ID
+            # Use temporary memory data for database insertion
+            temp_memory_data = {
+                'content': content,
+                'user_id': user_id,
+                'agent_id': agent_id,
+                'scope': scope,
+                'memory_type': memory_type,
+                'metadata': enhanced_metadata,
+            }
+            
+            # Get Snowflake ID from database
+            memory_id = self._persist_memory_to_storage(temp_memory_data)
+            if not memory_id:
+                raise ValueError("Failed to get memory ID from database")
+            
+            # Create complete memory data with Snowflake ID from database
             memory_data = {
                 'id': memory_id,
                 'content': content,  # Keep original content unchanged
@@ -201,9 +211,6 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             # Update user context
             self._update_user_context(user_id, memory_data)
             
-            # Also persist to database and vector store (like original Memory class)
-            self._persist_memory_to_storage(memory_data)
-            
             # Apply privacy protection
             self._apply_privacy_protection(memory_id, user_id, memory_data)
             
@@ -224,12 +231,15 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             logger.error(f"Failed to process memory for user {agent_id}: {e}")
             raise
     
-    def _persist_memory_to_storage(self, memory_data: Dict[str, Any]) -> None:
+    def _persist_memory_to_storage(self, memory_data: Dict[str, Any]) -> int:
         """
         Persist memory data to database and vector store.
         
         Args:
-            memory_data: Memory data dictionary
+            memory_data: Memory data dictionary (minimal data for database insertion)
+        
+        Returns:
+            Snowflake ID (int) from database
         """
         try:
             # Use existing Memory infrastructure
@@ -240,7 +250,8 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 self._memory_instance = Memory(config_dict)
             
             # Use the existing Memory.add() method
-            self._memory_instance.add(
+            # Get the Snowflake ID returned from database to ensure consistency
+            add_result = self._memory_instance.add(
                 messages=memory_data['content'],
                 user_id=memory_data.get('user_id'),
                 agent_id=memory_data.get('agent_id'),
@@ -254,11 +265,21 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 }
             )
             
-            logger.info(f"Persisted memory {memory_data['id']} to storage")
+            # Get the Snowflake ID from database
+            if add_result and 'results' in add_result and len(add_result['results']) > 0:
+                db_memory_id = add_result['results'][0].get('id')
+                if db_memory_id:
+                    logger.info(f"Persisted memory {db_memory_id} to storage")
+                    return db_memory_id
+                else:
+                    raise ValueError("Failed to get memory ID from database")
+            else:
+                raise ValueError("Failed to persist memory to database")
             
         except Exception as e:
-            logger.error(f"Failed to persist memory {memory_data.get('id', 'unknown')} to storage: {e}")
-            # Don't raise the exception to avoid breaking the main flow
+            logger.error(f"Failed to persist memory to storage: {e}")
+            # Re-raise exception to allow caller to handle it
+            raise
     
     def _extract_user_id(
         self,

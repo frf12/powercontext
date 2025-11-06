@@ -9,6 +9,8 @@ import hashlib
 import json
 import logging
 import re
+import time
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -383,3 +385,155 @@ def convert_config_object_to_dict(obj: Any) -> Any:
 
     # Return primitive types as-is
     return obj
+
+
+class SnowflakeIDGenerator:
+    """
+    Snowflake ID generator for distributed systems.
+    
+    Generates unique 64-bit IDs using the Snowflake algorithm:
+    - 41 bits for timestamp (milliseconds since epoch)
+    - 10 bits for machine ID (5 bits datacenter + 5 bits worker)
+    - 12 bits for sequence number
+    
+    Thread-safe implementation.
+    """
+    
+    # Snowflake parameters
+    EPOCH = 1609459200000  # 2021-01-01 00:00:00 UTC in milliseconds
+    TIMESTAMP_BITS = 41
+    DATACENTER_BITS = 5
+    WORKER_BITS = 5
+    SEQUENCE_BITS = 12
+    
+    MAX_DATACENTER_ID = (1 << DATACENTER_BITS) - 1  # 31
+    MAX_WORKER_ID = (1 << WORKER_BITS) - 1  # 31
+    MAX_SEQUENCE = (1 << SEQUENCE_BITS) - 1  # 4095
+    
+    # Bit shifts
+    TIMESTAMP_SHIFT = SEQUENCE_BITS + WORKER_BITS + DATACENTER_BITS
+    DATACENTER_SHIFT = SEQUENCE_BITS + WORKER_BITS
+    WORKER_SHIFT = SEQUENCE_BITS
+    
+    def __init__(self, datacenter_id: int = 0, worker_id: int = 0):
+        """
+        Initialize Snowflake ID generator.
+        
+        Args:
+            datacenter_id: Datacenter ID (0-31)
+            worker_id: Worker ID (0-31)
+            
+        Raises:
+            ValueError: If datacenter_id or worker_id is out of range
+        """
+        if datacenter_id < 0 or datacenter_id > self.MAX_DATACENTER_ID:
+            raise ValueError(f"Datacenter ID must be between 0 and {self.MAX_DATACENTER_ID}")
+        if worker_id < 0 or worker_id > self.MAX_WORKER_ID:
+            raise ValueError(f"Worker ID must be between 0 and {self.MAX_WORKER_ID}")
+        
+        self.datacenter_id = datacenter_id
+        self.worker_id = worker_id
+        self.sequence = 0
+        self.last_timestamp = -1
+        self._lock = threading.Lock()
+    
+    def _current_timestamp(self) -> int:
+        """Get current timestamp in milliseconds."""
+        return int(time.time() * 1000)
+    
+    def _wait_next_millis(self, last_timestamp: int) -> int:
+        """Wait until next millisecond."""
+        timestamp = self._current_timestamp()
+        while timestamp <= last_timestamp:
+            timestamp = self._current_timestamp()
+        return timestamp
+    
+    def generate(self) -> int:
+        """
+        Generate a new Snowflake ID.
+        
+        Returns:
+            64-bit integer ID
+            
+        Raises:
+            RuntimeError: If clock moves backwards or sequence overflows
+        """
+        with self._lock:
+            timestamp = self._current_timestamp()
+            
+            # Handle clock backwards
+            if timestamp < self.last_timestamp:
+                raise RuntimeError(
+                    f"Clock moved backwards. Refusing to generate ID for "
+                    f"{self.last_timestamp - timestamp} milliseconds"
+                )
+            
+            # Same millisecond, increment sequence
+            if timestamp == self.last_timestamp:
+                self.sequence = (self.sequence + 1) & self.MAX_SEQUENCE
+                # Sequence overflow, wait for next millisecond
+                if self.sequence == 0:
+                    timestamp = self._wait_next_millis(self.last_timestamp)
+            else:
+                # New millisecond, reset sequence
+                self.sequence = 0
+            
+            self.last_timestamp = timestamp
+            
+            # Generate ID
+            return (
+                ((timestamp - self.EPOCH) << self.TIMESTAMP_SHIFT) |
+                (self.datacenter_id << self.DATACENTER_SHIFT) |
+                (self.worker_id << self.WORKER_SHIFT) |
+                self.sequence
+            )
+    
+    def generate_batch(self, count: int) -> List[int]:
+        """
+        Generate a batch of Snowflake IDs.
+        
+        Args:
+            count: Number of IDs to generate
+            
+        Returns:
+            List of 64-bit integer IDs
+        """
+        return [self.generate() for _ in range(count)]
+
+
+# Global Snowflake ID generator instance
+# Default to datacenter_id=0, worker_id=0
+# Can be configured via environment variables if needed
+_snowflake_generator: Optional[SnowflakeIDGenerator] = None
+_snowflake_lock = threading.Lock()
+
+
+def get_snowflake_generator() -> SnowflakeIDGenerator:
+    """
+    Get or create the global Snowflake ID generator instance.
+    
+    Returns:
+        Snowflake ID generator instance
+    """
+    global _snowflake_generator
+    if _snowflake_generator is None:
+        with _snowflake_lock:
+            if _snowflake_generator is None:
+                # Try to get from environment variables
+                datacenter_id = int(os.getenv("SNOWFLAKE_DATACENTER_ID", "0"))
+                worker_id = int(os.getenv("SNOWFLAKE_WORKER_ID", "0"))
+                _snowflake_generator = SnowflakeIDGenerator(
+                    datacenter_id=datacenter_id,
+                    worker_id=worker_id
+                )
+    return _snowflake_generator
+
+
+def generate_snowflake_id() -> int:
+    """
+    Generate a new Snowflake ID using the global generator.
+    
+    Returns:
+        64-bit integer ID
+    """
+    return get_snowflake_generator().generate()

@@ -120,7 +120,11 @@ class MockOceanBaseVectorStore:
     def insert(self, vectors, payloads=None, ids=None):
         """Mock insert method."""
         if ids is None:
-            ids = [str(uuid.uuid4()) for _ in vectors]
+            # Generate Snowflake IDs (64-bit integers) instead of UUIDs
+            # Snowflake IDs are large integers, typically in the range of 10^18
+            import time
+            base_id = int(time.time() * 1000) << 22  # Simulate Snowflake ID structure
+            ids = [base_id + i for i in range(len(vectors))]
         return ids
     
     def search(self, query, vectors, limit=5, filters=None):
@@ -213,7 +217,10 @@ class TestOceanBaseVectorStore(unittest.TestCase):
         # Test data
         self.test_vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
         self.test_payloads = [{"data": "test content 1", "user_id": "user1"}, {"data": "test content 2", "user_id": "user2"}]
-        self.test_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        # Use Snowflake IDs (64-bit integers) instead of UUID strings
+        import time
+        base_id = int(time.time() * 1000) << 22
+        self.test_ids = [base_id, base_id + 1]
         
         # Connection parameters
         self.connection_args = {
@@ -278,12 +285,12 @@ class TestOceanBaseVectorStore(unittest.TestCase):
         # Test insert without providing IDs
         result_ids = oceanbase_store.insert(self.test_vectors, self.test_payloads)
         
-        # Verify returned IDs are UUIDs
+        # Verify returned IDs are Snowflake IDs (64-bit integers)
         self.assertEqual(len(result_ids), 2)
         for result_id in result_ids:
-            self.assertIsInstance(result_id, str)
-            # Verify it's a valid UUID format
-            uuid.UUID(result_id)
+            self.assertIsInstance(result_id, int)
+            # Verify it's a positive integer (Snowflake IDs are always positive)
+            self.assertGreater(result_id, 0)
 
     def test_vector_search(self):
         """Test vector search."""
