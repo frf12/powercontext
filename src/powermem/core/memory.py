@@ -14,7 +14,7 @@ from copy import deepcopy
 from .base import MemoryBase
 from ..configs import MemoryConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
-from ..storage.adapter import StorageAdapter
+from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
@@ -184,7 +184,17 @@ class Memory(MemoryBase):
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
         # Initialize storage adapter with embedding service
-        self.storage = StorageAdapter(vector_store, self.embedding)
+        # Automatically select adapter based on sub_stores configuration
+        sub_stores_list = self.config.get('sub_stores', [])
+        if sub_stores_list and self.storage_type.lower() == 'oceanbase':
+            # Use SubStorageAdapter if sub stores are configured and using OceanBase
+            self.storage = SubStorageAdapter(vector_store, self.embedding)
+            logger.info("Using SubStorageAdapter with sub-store support")
+        else:
+            # Use basic StorageAdapter for single store operations
+            self.storage = StorageAdapter(vector_store, self.embedding)
+            logger.info("Using basic StorageAdapter")
+        
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
@@ -213,6 +223,12 @@ class Memory(MemoryBase):
                 self._intelligence_plugin = None
 
         
+        # Sub stores configuration (support multiple)
+        self.sub_stores_config: List[Dict] = []
+
+        # Initialize sub stores
+        self._init_sub_stores()
+
         logger.info(f"Memory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
         self.telemetry.capture_event("memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
 
@@ -486,8 +502,11 @@ class Memory(MemoryBase):
             logger.error(f"Cannot store empty content. Messages: {messages}")
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+        
         # Generate embedding
-        embedding = self.embedding.embed(content, memory_action="add")
+        embedding = embedding_service.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -594,9 +613,17 @@ class Memory(MemoryBase):
         existing_memories = []
         fact_embeddings = {}
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+        
         for fact in facts:
-            fact_embedding = self.embedding.embed(fact, memory_action="add")
+            fact_embedding = embedding_service.embed(fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
+            
+            # Merge metadata into filters for correct routing
+            search_filters = filters.copy() if filters else {}
+            if metadata:
+                search_filters.update(metadata)
             
             # Search for similar memories with reduced limit to reduce noise
             # Pass fact text to enable hybrid search for better results
@@ -605,7 +632,7 @@ class Memory(MemoryBase):
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
-                filters=filters,
+                filters=search_filters,
                 limit=5,
                 query=fact  # Enable hybrid search
             )
@@ -802,11 +829,14 @@ class Memory(MemoryBase):
         if not content or not content.strip():
             raise ValueError(f"Cannot create memory with empty content: '{content}'")
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+        
         # Generate or use existing embedding
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content, memory_action="add")
+            embedding = embedding_service.embed(content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -848,6 +878,7 @@ class Memory(MemoryBase):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         existing_embeddings: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """Update a memory with optional embeddings."""
         # Validate content is not empty
@@ -858,7 +889,16 @@ class Memory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = self.embedding.embed(content, memory_action="update")
+            # If no metadata provided, try to get existing memory's metadata
+            if metadata is None:
+                existing = self.storage.get_memory(memory_id, user_id, agent_id)
+                if existing:
+                    metadata = existing.get("metadata", {})
+            
+            # Select embedding service based on metadata (for sub-store routing)
+            embedding_service = self._get_embedding_service(metadata)
+            
+            embedding = embedding_service.embed(content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -886,8 +926,11 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Search for memories."""
         try:
+            # Select embedding service based on filters (for sub-store routing)
+            embedding_service = self._get_embedding_service(filters)
+            
             # Generate query embedding
-            query_embedding = self.embedding.embed(query, memory_action="search")
+            query_embedding = embedding_service.embed(query, memory_action="search")
             
 
             # Search in storage - pass query text to enable hybrid search
@@ -1018,8 +1061,17 @@ class Memory(MemoryBase):
     ) -> Dict[str, Any]:
         """Update an existing memory."""
         try:
+            # If no metadata provided, try to get existing memory's metadata
+            if metadata is None:
+                existing = self.storage.get_memory(memory_id, user_id, agent_id)
+                if existing:
+                    metadata = existing.get("metadata", {})
+            
+            # Select embedding service based on metadata (for sub-store routing)
+            embedding_service = self._get_embedding_service(metadata)
+            
             # Generate new embedding
-            embedding = self.embedding.embed(content, memory_action="update")
+            embedding = embedding_service.embed(content, memory_action="update")
             
             # Process with intelligence manager
             processed_content = self.intelligence.process_content(content, metadata)
@@ -1175,6 +1227,197 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to reset memory store: {e}")
             raise
+    
+    def _init_sub_stores(self):
+        """Initialize multiple sub stores configuration"""
+        if self.sub_stores_config:
+            logger.info(f"Sub stores enabled: {len(self.sub_stores_config)} stores")
+
+        sub_stores_list = self.config.get('sub_stores', [])
+
+        if not sub_stores_list:
+            logger.info("No sub stores configured")
+            return
+
+        # Sub store feature only supports OceanBase storage
+        if self.storage_type.lower() != 'oceanbase':
+            logger.warning(f"Sub store feature only supports OceanBase storage, current storage: {self.storage_type}")
+            logger.warning("Sub stores configuration will be ignored")
+            return
+
+        # Get main table information
+        main_collection_name = self.config.get('vector_store', {}).get('config', {}).get('collection_name', 'memories')
+        main_embedding_dims = self.config.get('vector_store', {}).get('config', {}).get('embedding_model_dims', 1536)
+
+        # Iterate through configs and initialize each sub store
+        for index, sub_config in enumerate(sub_stores_list):
+            try:
+                self._init_single_sub_store(index, sub_config, main_collection_name, main_embedding_dims)
+            except Exception as e:
+                logger.error(f"Failed to initialize sub store {index}: {e}")
+                continue
+
+    def _init_single_sub_store(
+        self,
+        index: int,
+        sub_config: Dict,
+        main_collection_name: str,
+        main_embedding_dims: int
+    ):
+        """Initialize a single sub store"""
+
+        # 1. Determine sub store name (default: {main_table_name}_sub_{index})
+        sub_store_name = sub_config.get(
+            'collection_name',
+            f"{main_collection_name}_sub_{index}"
+        )
+
+        # 2. Get routing rules (required)
+        routing_filter = sub_config.get('routing_filter')
+        if not routing_filter:
+            logger.warning(f"Sub store {index} has no routing_filter, skipping")
+            return
+
+        # 3. Determine vector dimension (default: same as main table)
+        embedding_model_dims = sub_config.get('embedding_model_dims', main_embedding_dims)
+
+        # 4. Initialize sub store's embedding service
+        sub_embedding_config = sub_config.get('embedding', {})
+
+        if sub_embedding_config:
+            # Has independent embedding configuration
+            sub_embedding_provider = sub_embedding_config.get('provider', self.embedding_provider)
+            sub_embedding_params = sub_embedding_config.get('config', {})
+
+            # Inherit api_key and other configs from main table
+            main_embedding_config = self.config.get('embedder', {}).get('config', {})
+            for key in ['api_key', 'openai_base_url', 'timeout']:
+                if key not in sub_embedding_params and key in main_embedding_config:
+                    sub_embedding_params[key] = main_embedding_config[key]
+
+            sub_embedding = EmbedderFactory.create(
+                sub_embedding_provider,
+                sub_embedding_params,
+                None
+            )
+            logger.info(f"Created sub embedding service for store {index}: {sub_embedding_provider}")
+        else:
+            # Reuse main table's embedding service
+            sub_embedding = self.embedding
+            logger.info(f"Sub store {index} using main embedding service")
+
+        # 5. Create sub store storage instance
+        db_config = self.config.get('vector_store', {}).get('config', {}).copy()
+        db_config['collection_name'] = sub_store_name
+        db_config['embedding_model_dims'] = embedding_model_dims
+
+        sub_vector_store = VectorStoreFactory.create(self.storage_type, db_config)
+
+        # 6. Register sub store in Adapter
+        self.storage.register_sub_store(
+            store_name=sub_store_name,
+            routing_filter=routing_filter,
+            vector_store=sub_vector_store,
+        )
+
+        # 7. Save sub store configuration
+        self.sub_stores_config.append({
+            'name': sub_store_name,
+            'routing_filter': routing_filter,
+            'embedding_service': sub_embedding,
+            'embedding_dims': embedding_model_dims,
+        })
+
+        logger.info(f"Registered sub store {index}: {sub_store_name} (dims={embedding_model_dims})")
+
+    def _get_embedding_service(self, filters_or_metadata: Optional[Dict] = None):
+        """
+        Select appropriate embedding service based on filters or metadata
+
+        Args:
+            filters_or_metadata: Query filters (for search) or memory metadata (for add)
+
+        Returns:
+            Corresponding embedding service instance
+        """
+        if not filters_or_metadata or not self.sub_stores_config:
+            return self.embedding
+
+        # Iterate through all sub stores to find a match
+        if isinstance(self.storage, SubStorageAdapter):
+            for sub_config in self.sub_stores_config:
+                # Check if sub store is ready
+                if not self.storage.is_sub_store_ready(sub_config['name']):
+                    continue
+
+                # Check if filters_or_metadata matches routing rules
+                routing_filter = sub_config['routing_filter']
+                if all(
+                    key in filters_or_metadata and filters_or_metadata[key] == value
+                    for key, value in routing_filter.items()
+                ):
+                    logger.debug(f"Using sub embedding for store: {sub_config['name']}")
+                    return sub_config['embedding_service']
+
+        logger.debug("Using main embedding service")
+        return self.embedding
+
+
+    def migrate_to_sub_store(self, sub_store_index: int = 0, delete_source: bool = False) -> int:
+        """
+        Migrate data to specified sub store
+
+        Args:
+            sub_store_index: Sub store index (default 0, i.e., first sub store)
+            delete_source: Whether to delete source data
+
+        Returns:
+            Number of migrated records
+        """
+        if not self.sub_stores_config:
+            raise ValueError("No sub stores configured.")
+
+        if sub_store_index >= len(self.sub_stores_config):
+            raise ValueError(f"Sub store index {sub_store_index} out of range")
+
+        sub_config = self.sub_stores_config[sub_store_index]
+
+        logger.info(f"Starting migration to sub store: {sub_config['name']}")
+
+        # Call adapter's migration method
+        if isinstance(self.storage, SubStorageAdapter):
+            migrated_count = self.storage.migrate_to_sub_store(
+                target_store_name=sub_config['name'],
+                filters=sub_config['routing_filter'],
+                target_embedding_service=sub_config['embedding_service'],
+                delete_source=delete_source
+            )
+
+            logger.info(f"Migration completed: {migrated_count} records migrated")
+            return migrated_count
+        else:
+            raise ValueError("Storage adapter does not support migration")
+
+    def migrate_all_sub_stores(self, delete_source: bool = True) -> Dict[str, int]:
+        """
+        Migrate all sub stores
+
+        Args:
+            delete_source: Whether to delete source data
+
+        Returns:
+            Migration record count for each sub store {store_name: count}
+        """
+        results = {}
+        for index, sub_config in enumerate(self.sub_stores_config):
+            try:
+                count = self.migrate_to_sub_store(index, delete_source)
+                results[sub_config['name']] = count
+            except Exception as e:
+                logger.error(f"Failed to migrate sub store {index}: {e}")
+                results[sub_config['name']] = 0
+
+        return results
     
     @classmethod
     def from_config(cls, config: Optional[Dict[str, Any]] = None, **kwargs):
