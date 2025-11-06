@@ -455,17 +455,30 @@ python complete_intelligent_example.py
 Compare adding memories with and without intelligent processing:
 
 ```python
+from powermem import create_memory
+
 memory = create_memory()
 
 # Simple mode
-memory.add("User likes Python", user_id="user123", infer=False)
+print("1. Simple mode (infer=False):")
+result1 = memory.add("User likes Python", user_id="user123", infer=False)
+print(f"   Added memory directly: {result1.get('results', [{}])[0].get('memory', 'N/A')}")
 
 # Intelligent mode
-memory.add(
+print("\n2. Intelligent mode (infer=True):")
+result2 = memory.add(
     messages=[{"role": "user", "content": "I like Python programming"}],
     user_id="user123",
     infer=True
 )
+
+print("   Extracted memories:")
+for mem in result2.get('results', []):
+    event = mem.get('event', 'N/A')
+    memory_text = mem.get('memory', '')
+    print(f"   - [{event}] {memory_text}")
+    
+print("\n✓ Comparison completed. Intelligent mode extracts facts automatically!")
 ```
 
 ### Exercise 2: Track Memory Events
@@ -473,18 +486,30 @@ memory.add(
 Monitor different memory operations:
 
 ```python
-result = memory.add(messages=[...], user_id="user123", infer=True)
+from powermem import create_memory
 
+memory = create_memory()
+
+# Example: Add memory and check the event type
+result = memory.add(
+    messages=[
+        {"role": "user", "content": "I love working with machine learning"}
+    ],
+    user_id="user123",
+    infer=True
+)
+
+print("Processing results:")
 for mem in result.get('results', []):
     event = mem.get('event')
     if event == 'ADD':
-        print("New memory added")
+        print(f"✓ New memory added: {mem.get('memory', '')}")
     elif event == 'UPDATE':
-        print("Memory updated")
+        print(f"✓ Memory updated: {mem.get('previous_memory', '')} → {mem.get('memory', '')}")
     elif event == 'DELETE':
-        print("Memory deleted")
+        print(f"✓ Memory deleted: {mem.get('memory', '')}")
     elif event == 'NONE':
-        print("Duplicate detected")
+        print("✓ Duplicate detected, skipped")
 ```
 
 ### Exercise 3: Complex Conversations
@@ -492,6 +517,11 @@ for mem in result.get('results', []):
 Process longer conversations:
 
 ```python
+from powermem import create_memory
+
+memory = create_memory()
+
+# Long conversation with multiple facts
 long_conversation = [
     {"role": "user", "content": "I'm Alice, a software engineer at Google."},
     {"role": "assistant", "content": "Nice to meet you!"},
@@ -500,11 +530,18 @@ long_conversation = [
     {"role": "user", "content": "I use Python, TensorFlow, and PyTorch."},
 ]
 
+print("Processing long conversation...")
 result = memory.add(
     messages=long_conversation,
     user_id="user123",
     infer=True
 )
+
+print(f"\n✓ Extracted {len(result.get('results', []))} memories:")
+for i, mem in enumerate(result.get('results', []), 1):
+    event = mem.get('event', 'N/A')
+    memory_text = mem.get('memory', '')
+    print(f"  {i}. [{event}] {memory_text}")
 ```
 
 ## Next Steps

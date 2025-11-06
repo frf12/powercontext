@@ -24,7 +24,6 @@ Powermem can automatically load configuration from a `.env` file in your project
 > **Note:** When you call `create_memory()`, powermem will automatically:
 > - Look for a `.env` file in the current directory
 > - Load configuration from environment variables
-> - Use default values if `.env` is not found
 
 For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](../guides/0002-configuration.md).
 
@@ -520,15 +519,6 @@ memory.add("User 2 likes Java", user_id="user2")
 # Search for each user
 results1 = memory.search("preferences", user_id="user1")
 results2 = memory.search("preferences", user_id="user2")
-```
-
-### Exercise 2: Rich Metadata
-
-Experiment with richer metadata:
-
-```python
-from powermem import create_memory
-memory = create_memory()
 
 memory.add(
     messages="User preference",
@@ -541,15 +531,6 @@ memory.add(
         "tags": ["python", "programming"]
     }
 )
-```
-
-### Exercise 3: Search Variations
-
-Try different search queries:
-
-```python
-from powermem import create_memory
-memory = create_memory()
 
 # Search by category
 results = memory.search(
@@ -557,13 +538,19 @@ results = memory.search(
     user_id="user123"
 )
 
+print(results)
+
 # Search with different limits
 results = memory.search(
     query="user information",
     user_id="user123",
     limit=10
 )
+
+print(results)
 ```
+
+
 
 ## Next Steps
 
