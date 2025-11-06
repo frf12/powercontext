@@ -190,6 +190,9 @@ elif DB_TYPE == "postgres":
             "password": "postgres",
             "dbname": "ai_work",
             "collection_name": "memories",
+            "embedding_model_dims": 1536,
+            "diskann": True,
+            "hnsw": True,
         },
     }
 DEFAULT_CONFIG = {

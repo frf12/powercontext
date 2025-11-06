@@ -17,6 +17,7 @@ class VectorStoreFactory:
         "oceanbase": "powermem.storage.oceanbase.oceanbase.OceanBaseVectorStore",
         "sqlite": "powermem.storage.sqlite.sqlite_vector_store.SQLiteVectorStore",
         "pgvector": "powermem.storage.pgvector.pgvector.PGVectorStore",
+        "postgres": "powermem.storage.pgvector.pgvector.PGVectorStore",  # Alias for pgvector
     }
 
     @classmethod
