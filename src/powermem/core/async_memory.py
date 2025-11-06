@@ -56,22 +56,29 @@ class AsyncMemory(MemoryBase):
             embedding_provider: Embedding provider to use
         """
         self.config = config or {}
-        self.storage_type = storage_type
-        self.llm_provider = llm_provider
-        self.embedding_provider = embedding_provider
         
-        # Initialize components
-        vector_store = VectorStoreFactory.create(storage_type, self.config)
-        self.llm = LLMFactory.create(llm_provider, self.config)
-        self.embedding = EmbedderFactory.create(embedding_provider, self.config)
+        # Extract providers from config with fallbacks
+        self.storage_type = storage_type or self._get_provider('vector_store', 'sqlite')
+        self.llm_provider = llm_provider or self._get_provider('llm', 'openai')
+        self.embedding_provider = embedding_provider or self._get_provider('embedder', 'openai')
+        
+        # Initialize components - extract component-specific configs
+        vector_store_config = self._get_component_config('vector_store')
+        vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+        
+        llm_config = self._get_component_config('llm')
+        self.llm = LLMFactory.create(self.llm_provider, llm_config)
+        
+        embedder_config = self._get_component_config('embedder')
+        self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
         # Extract graph_store config (simplified version for dict config)
         graph_store_cfg = self.config.get('graph_store', {})
         self.enable_graph = graph_store_cfg.get('enabled', False) if isinstance(graph_store_cfg, dict) else False
         self.graph_store = None
         if self.enable_graph:
-            graph_store_config = graph_store_cfg.get('config', {}) if isinstance(graph_store_cfg, dict) else {}
-            self.graph_store = GraphStoreFactory.create(storage_type, graph_store_config)
+            graph_store_config = self._get_component_config('graph_store')
+            self.graph_store = GraphStoreFactory.create(self.storage_type, graph_store_config)
         
         # Use StorageAdapter like Memory class
         self.storage = StorageAdapter(vector_store, self.embedding)
@@ -105,12 +112,37 @@ class AsyncMemory(MemoryBase):
                 self._intelligence_plugin = None
 
         
-        logger.info(f"AsyncMemory initialized with storage: {storage_type}, LLM: {llm_provider}")
-        self.telemetry.capture_event("async_memory.init", {"storage_type": storage_type, "llm_provider": llm_provider})
+        logger.info(f"AsyncMemory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}")
+        self.telemetry.capture_event("async_memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider})
     
     async def initialize(self):
         """Initialize async components."""
         await self.storage.initialize_async()
+    
+    def _get_provider(self, component: str, default: str) -> str:
+        """
+        Helper method to get component provider uniformly.
+
+        Args:
+            component: Component name ('vector_store', 'llm', 'embedder')
+            default: Default provider name
+
+        Returns:
+            Provider name string
+        """
+        return self.config.get(component, {}).get('provider', default)
+
+    def _get_component_config(self, component: str) -> Dict[str, Any]:
+        """
+        Helper method to get component configuration uniformly.
+
+        Args:
+            component: Component name ('vector_store', 'llm', 'embedder', 'graph_store')
+
+        Returns:
+            Component configuration dictionary
+        """
+        return self.config.get(component, {}).get('config', {})
     
     async def _extract_facts(self, messages: Any) -> List[str]:
         """

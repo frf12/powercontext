@@ -261,8 +261,8 @@ New facts:
 memory = Memory(config=config)
 
 # System will use custom update strategy
-memory.add("I like Python programming", user_id="user123")
-memory.add("I love Python and JavaScript programming", user_id="user123")  # Will update instead of add new
+memory.add(messages="I like Python programming", user_id="user123")
+memory.add(messages="I love Python and JavaScript programming", user_id="user123")  # Will update instead of add new
 ```
 
 ### Example 3: Custom Importance Evaluation
@@ -314,7 +314,7 @@ memory = Memory(config=config)
 
 # System will use custom importance evaluation
 memory.add(
-    "I have diabetes and need to monitor blood sugar control",
+    messages="I have diabetes and need to monitor blood sugar control",
     user_id="user123",
     metadata={"category": "health", "priority": "critical"}
 )
@@ -406,7 +406,7 @@ memory = Memory(config=config)
 
 # Add memory, system will use custom graph memory prompts
 memory.add(
-    "Alice is my friend, we work together at Google. She likes to drink coffee.",
+    messages="Alice is my friend, we work together at Google. She likes to drink coffee.",
     user_id="user123",
     agent_id="agent1"
 )

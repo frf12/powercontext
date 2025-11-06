@@ -62,7 +62,7 @@ def main():
     
     # Get all memories
     all_memories = memory.get_all(user_id="user123")
-    print(f"\n✓ Total memories: {len(all_memories)}")
+    print(f"\n✓ Total memories: {len(all_memories.get('results', []))}")
 
 if __name__ == "__main__":
     main()
