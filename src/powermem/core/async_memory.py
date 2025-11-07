@@ -554,7 +554,7 @@ class AsyncMemory(MemoryBase):
         if self.enable_graph:
             graph_result = await self._add_to_graph_async(messages, filters, user_id, agent_id, run_id)
         
-        result = {
+        result: Dict[str, Any] = {
             "results": [{
                 "id": memory_id,
                 "memory": content,
@@ -761,14 +761,14 @@ class AsyncMemory(MemoryBase):
         
         # API format: {"results": [...]}
         if results:
-            result = {"results": results}
+            result: Dict[str, Any] = {"results": results}
             if graph_result:
                 result["relations"] = graph_result
             return result
         # If we processed actions but they were all NONE (duplicates detected), return empty results
         elif action_counts.get("NONE", 0) > 0:
             logger.info(f"All actions were NONE (duplicates detected), returning empty results")
-            result = {"results": []}
+            result: Dict[str, Any] = {"results": []}
             if graph_result:
                 result["relations"] = graph_result
             return result

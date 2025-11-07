@@ -575,7 +575,7 @@ class Memory(MemoryBase):
         
         graph_result = self._add_to_graph(messages, filters, user_id, agent_id, run_id)
         
-        result = {
+        result: Dict[str, Any] = {
             "results": [{
                 "id": memory_id,
                 "memory": content,
@@ -779,14 +779,14 @@ class Memory(MemoryBase):
 
         # If we have results, return them
         if results:
-            result = {"results": results}
+            result: Dict[str, Any] = {"results": results}
             if graph_result:
                 result["relations"] = graph_result
             return result
         # If we processed actions but they were all NONE (duplicates detected), return empty results
         elif action_counts.get("NONE", 0) > 0:
             logger.info(f"All actions were NONE (duplicates detected), returning empty results")
-            result = {"results": []}
+            result: Dict[str, Any] = {"results": []}
             if graph_result:
                 result["relations"] = graph_result
             return result
@@ -1372,12 +1372,13 @@ class Memory(MemoryBase):
         sub_vector_store = VectorStoreFactory.create(self.storage_type, db_config)
 
         # 6. Register sub store in Adapter (with embedding service for migration)
-        self.storage.register_sub_store(
-            store_name=sub_store_name,
-            routing_filter=routing_filter,
-            vector_store=sub_vector_store,
-            embedding_service=sub_embedding,
-        )
+        if isinstance(self.storage, SubStorageAdapter):
+            self.storage.register_sub_store(
+                store_name=sub_store_name,
+                routing_filter=routing_filter,
+                vector_store=sub_vector_store,
+                embedding_service=sub_embedding,
+            )
 
         # 7. Save sub store configuration
         self.sub_stores_config.append({
