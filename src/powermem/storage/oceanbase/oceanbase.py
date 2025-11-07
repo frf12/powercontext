@@ -61,8 +61,8 @@ class OceanBaseVectorStore(VectorStoreBase):
             db_name: Optional[str] = None,
             hybrid_search: bool = True,
             fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
-            vector_weight: float = 1.0,
-            fts_weight: float = 1.0,
+            vector_weight: float = 0.5,
+            fts_weight: float = 0.5,
             **kwargs,
     ):
         """

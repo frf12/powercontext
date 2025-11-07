@@ -44,8 +44,8 @@ class OceanBaseConfig(BaseVectorStoreConfig):
     metadata_field: str = Field("metadata", description="Metadata field name")
     vidx_name: str = Field("vidx", description="Vector index name")
 
-    vector_weight: float = Field(1.0, description="Weight for vector search")
-    fts_weight: float = Field(1.0, description="Weight for fulltext search")
+    vector_weight: float = Field(0.5, description="Weight for vector search")
+    fts_weight: float = Field(0.5, description="Weight for fulltext search")
 
     model_config = {
         "arbitrary_types_allowed": True,
