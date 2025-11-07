@@ -203,7 +203,7 @@ class Memory(MemoryBase):
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
 
-        # Save custom prompts from config (mem0 compatible)
+        # Save custom prompts from config
         if self.memory_config:
             self.custom_fact_extraction_prompt = self.memory_config.custom_fact_extraction_prompt
             self.custom_update_memory_prompt = self.memory_config.custom_update_memory_prompt
@@ -322,7 +322,7 @@ class Memory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use custom prompt if provided, otherwise use default (mem0 compatible)
+            # Use custom prompt if provided, otherwise use default
             if self.custom_fact_extraction_prompt:
                 system_prompt = self.custom_fact_extraction_prompt
                 user_prompt = f"Input:\n{conversation}"
