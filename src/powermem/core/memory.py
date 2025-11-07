@@ -1325,7 +1325,7 @@ class Memory(MemoryBase):
         embedding_model_dims = sub_config.get('embedding_model_dims', main_embedding_dims)
 
         # 4. Initialize sub store's embedding service
-        sub_embedding_config = sub_config.get('embedding', {})
+        sub_embedding_config = sub_config.get('embedder', sub_config.get('embedding', {}))
 
         if sub_embedding_config:
             # Has independent embedding configuration
