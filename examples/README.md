@@ -7,56 +7,68 @@ This directory contains various examples demonstrating how to use powermem with 
 ### 1. Basic Usage (`basic_usage.py`)
 - **Database**: SQLite
 - **Purpose**: Simple memory operations demonstration
-- **Configuration**: `configs/.env`
+- **Configuration**: Auto-loads from `configs/.env` or uses mock providers
 - **Run**: `python examples/basic_usage.py`
-- **✨ Simplified**: Now uses `Memory(config=config)` for easy setup
+- **✨ Simplified**: Now uses `create_memory()` for easy setup with automatic config loading
 
-### 2. Multi-Agent Demo (`multi_agent.py`)
-- **Database**: OceanBase (configurable)
-- **Purpose**: Multi-agent memory management (COMPLEX approach)
-- **Features**: Agent isolation, cross-agent search, collaboration
-- **Run**: `python examples/multi_agent.py`
-- **⚠️ Complex**: Shows the full complexity of multi-agent features
-
-### 3. Agent Memory Demo (`agent_memory.py`) ⭐ NEW!
+### 2. Agent Memory Demo (`agent_memory.py`)
 - **Database**: OceanBase (configurable)
 - **Purpose**: Unified interface for all agent memory scenarios
-- **Features**: Auto mode detection, multi-agent, multi-user, hybrid modes
+- **Features**: Auto mode detection, multi-agent, multi-user, hybrid modes, intelligent memory with Ebbinghaus algorithm
 - **Run**: `python examples/agent_memory.py`
 - **✨ Unified**: Single API for all scenarios, automatic mode detection
+- **Demonstrates**: 
+  - Auto, multi-agent, multi-user, and hybrid modes
+  - Intelligent memory management with importance scoring
+  - Ebbinghaus forgetting curve algorithm
+  - Memory deletion and reset operations
+
+### 3. Intelligent Memory Demo (`intelligent_memory_demo.py`)
+- **Database**: OceanBase (configurable)
+- **Purpose**: Advanced intelligent memory management features
+- **Features**: Fact extraction, duplicate detection, conflict resolution, memory consolidation
+- **Run**: `python examples/intelligent_memory_demo.py`
+- **Demonstrates**:
+  - Automatic fact extraction from conversations
+  - Duplicate detection and deduplication
+  - Information updates and consolidation
+  - Conflict resolution (contradiction handling)
+  - Comparison between simple and intelligent modes
 
 ## Configuration Files
 
-- `configs/env.example` - Template for development configuration
+- `configs/powermem.env` - OceanBase configuration template (copy from `configs/powermem.env.example` if needed)
 
 
 ## Quick Start
 
 1. **Choose your database backend**:
-   - **SQLite** (simple, file-based): Use `development.env`
-   - **OceanBase** (enterprise, scalable): Use `oceanbase.env`
+   - **SQLite** (simple, file-based): Works out of the box, no configuration needed
+   - **OceanBase** (enterprise, scalable): Requires `configs/powermem.env` configuration
 
-2. **Configure your environment**:
+2. **Configure your environment** (for OceanBase):
    ```bash
-   # For SQLite
-   cp examples/configs/env.example examples/configs/development.env
-   # Edit development.env with your settings
-   
-   # For OceanBase
-   cp examples/configs/oceanbase.env.example examples/configs/oceanbase.env
-   # Edit oceanbase.env with your OceanBase credentials
+   # Copy and edit the OceanBase configuration
+   cp configs/powermem.env.example configs/powermem.env
+   # Edit configs/powermem.env with your OceanBase credentials and API keys
    ```
 
 3. **Run an example**:
    ```bash
-   # Basic SQLite example
+   # Basic SQLite example (works without config)
    python examples/basic_usage.py
    
    # Unified agent memory demo (RECOMMENDED)
+   # Requires OceanBase configuration
    python examples/agent_memory.py
    
-   # Complex multi-agent demo (for advanced users)
-   python examples/multi_agent.py
+   # Intelligent memory management demo
+   # Requires OceanBase configuration
+   python examples/intelligent_memory_demo.py
+   
+   # Run specific scenario in intelligent memory demo
+   python examples/intelligent_memory_demo.py 1  # Run scenario 1
+   python examples/intelligent_memory_demo.py compare  # Compare modes
    ```
 
 ## Database Backends
@@ -78,9 +90,15 @@ The new unified interface provides a single, consistent API for all agent memory
 ### Auto Mode (Recommended)
 ```python
 from powermem.agent import AgentMemory
+from powermem import auto_config
+from dotenv import load_dotenv
+
+# Load configuration from environment
+load_dotenv('configs/powermem.env')  # or your config path
+config = auto_config()
 
 # Automatic mode detection
-agent_memory = AgentMemory(config)
+agent_memory = AgentMemory(config, mode='auto')
 
 # Same API regardless of detected mode
 agent_memory.add("Memory content", user_id="user123", agent_id="agent456")
@@ -89,6 +107,13 @@ results = agent_memory.search("query", user_id="user123")
 
 ### Multi-Agent Mode
 ```python
+from powermem.agent import AgentMemory
+from powermem import auto_config
+from dotenv import load_dotenv
+
+load_dotenv('configs/powermem.env')
+config = auto_config()
+
 # Explicit multi-agent mode
 agent_memory = AgentMemory(config, mode='multi_agent')
 
@@ -106,6 +131,13 @@ agent_memory.create_group("customer_team", ["support_agent", "sales_agent"])
 
 ### Multi-User Mode
 ```python
+from powermem.agent import AgentMemory
+from powermem import auto_config
+from dotenv import load_dotenv
+
+load_dotenv('configs/powermem.env')
+config = auto_config()
+
 # Multi-user mode
 agent_memory = AgentMemory(config, mode='multi_user')
 
@@ -119,6 +151,13 @@ alice_memories = agent_memory.search("Python", user_id="alice")
 
 ### Hybrid Mode
 ```python
+from powermem.agent import AgentMemory
+from powermem import auto_config
+from dotenv import load_dotenv
+
+load_dotenv('configs/powermem.env')
+config = auto_config()
+
 # Hybrid mode with dynamic switching
 agent_memory = AgentMemory(config, mode='hybrid')
 
@@ -162,6 +201,7 @@ EMBEDDING_DIMS=1536
 
 ## Features Demonstrated
 
+### Basic Features
 - ✅ **Memory Storage**: Add, update, delete memories
 - ✅ **Semantic Search**: Find similar memories using vector similarity
 - ✅ **Multi-user Support**: Isolate memories by user ID
@@ -170,6 +210,16 @@ EMBEDDING_DIMS=1536
 - ✅ **Real-time Operations**: Immediate memory operations
 - ✅ **Vector Embeddings**: High-dimensional vector storage
 - ✅ **Configuration Management**: Environment-based configuration
+
+### Advanced Features (Agent Memory & Intelligent Memory)
+- ✅ **Intelligent Memory Management**: Automatic importance scoring and memory type classification
+- ✅ **Ebbinghaus Forgetting Curve**: Automatic review schedule generation based on memory importance
+- ✅ **Fact Extraction**: Automatic extraction of facts from conversations
+- ✅ **Duplicate Detection**: Smart deduplication to prevent redundant memories
+- ✅ **Conflict Resolution**: Automatic handling of contradictory information
+- ✅ **Memory Consolidation**: Merging related memories for better organization
+- ✅ **Mode Detection**: Automatic detection of multi-agent vs multi-user contexts
+- ✅ **Memory Reset**: Complete memory store reset functionality
 
 ## Dependencies
 

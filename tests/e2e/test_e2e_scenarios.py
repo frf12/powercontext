@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 from powermem import Memory, AsyncMemory
 
 
+@pytest.mark.e2e
 class TestEndToEndScenarios:
     """End-to-end tests for complete user scenarios."""
     
