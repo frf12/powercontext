@@ -112,23 +112,34 @@ def load_config_from_env() -> Dict[str, Any]:
             'timeout': int(os.getenv('DATABASE_TIMEOUT', '30'))
         }
     
+    # Build LLM config based on provider
+    llm_provider = os.getenv('LLM_PROVIDER', 'qwen')
+    llm_config = {
+        'api_key': os.getenv('LLM_API_KEY'),
+        'model': os.getenv('LLM_MODEL', 'qwen-plus' if llm_provider == 'qwen' else 'gpt-4o-mini'),
+        'temperature': float(os.getenv('LLM_TEMPERATURE', '0.7')),
+        'max_tokens': int(os.getenv('LLM_MAX_TOKENS', '1000')),
+        'top_p': float(os.getenv('LLM_TOP_P', '0.8')),
+        'top_k': int(os.getenv('LLM_TOP_K', '50')),
+    }
+    
+    # Add provider-specific config
+    if llm_provider == 'qwen':
+        llm_config['dashscope_base_url'] = os.getenv('LLM_BASE_URL', 'https://dashscope.aliyuncs.com/api/v1')
+        llm_config['enable_search'] = os.getenv('LLM_ENABLE_SEARCH', 'false').lower() == 'true'
+    elif llm_provider == 'openai':
+        base_url = os.getenv('LLM_BASE_URL')
+        if base_url:
+            llm_config['openai_base_url'] = base_url
+    
     config = {
         'vector_store': {
             'provider': db_provider,
             'config': db_config
         },
         'llm': {
-            'provider': os.getenv('LLM_PROVIDER', 'qwen'),
-            'config': {
-                'api_key': os.getenv('LLM_API_KEY'),
-                'model': os.getenv('LLM_MODEL', 'qwen-plus'),
-                'temperature': float(os.getenv('LLM_TEMPERATURE', '0.7')),
-                'max_tokens': int(os.getenv('LLM_MAX_TOKENS', '1000')),
-                'top_p': float(os.getenv('LLM_TOP_P', '0.8')),
-                'top_k': int(os.getenv('LLM_TOP_K', '50')),
-                'dashscope_base_url': os.getenv('LLM_BASE_URL', 'https://dashscope.aliyuncs.com/api/v1'),
-                'enable_search': os.getenv('LLM_ENABLE_SEARCH', 'false').lower() == 'true'
-            }
+            'provider': llm_provider,
+            'config': llm_config
         },
         'embedder': {
             'provider': os.getenv('EMBEDDING_PROVIDER', 'qwen'),

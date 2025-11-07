@@ -10,12 +10,13 @@ DATABASE_PROVIDER=sqlite
 DATABASE_PATH=./data/powermem_dev.db
 
 # LLM Configuration (required)
-LLM_PROVIDER=qwen
-LLM_MODEL=your
+# Choose LLM provider: qwen, openai ...
+LLM_PROVIDER=your_llm_provider
+LLM_MODEL=model_name
 LLM_API_KEY=your_api_key_here
 
 # Embedding Configuration (required)
-EMBEDDING_PROVIDER=qwen
-EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_PROVIDER=your_embedding_provider
+EMBEDDING_MODEL=your_embedding_model_name
 EMBEDDING_API_KEY=your_api_key_here
 

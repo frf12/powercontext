@@ -137,7 +137,8 @@ class StorageAdapter:
             results = target_store.search(search_query, vectors=query_vector, limit=limit, filters=effective_filters)
         except TypeError:
             # Fallback to SQLite format (doesn't support query text parameter)
-            results = target_store.search(query_vector, vectors=[query_vector], limit=limit)
+            # Pass filters to ensure filtering works correctly
+            results = target_store.search(search_query if query else "", vectors=[query_vector], limit=limit, filters=effective_filters)
         
         # Convert results to unified format
         memories = []
@@ -194,10 +195,18 @@ class StorageAdapter:
             # If payload contains "metadata" field (nested user metadata), use it directly
             # Otherwise, extract additional metadata from other fields
             if "metadata" in payload:
-                user_metadata = payload["metadata"]
+                user_metadata = payload["metadata"].copy() if payload["metadata"] else {}
             else:
                 # Extract additional metadata (all fields not in core_and_promoted_keys)
                 user_metadata = {k: v for k, v in payload.items() if k not in core_and_promoted_keys}
+            
+            # Merge any user-defined fields from payload top-level into metadata
+            # These fields (like "category") were extracted from metadata for filtering purposes
+            # but should still be visible in the returned metadata
+            for key, value in payload.items():
+                if key not in core_and_promoted_keys and key not in user_metadata and value:
+                    # Only include non-empty values that aren't already in metadata
+                    user_metadata[key] = value
             
             memory = {
                 "id": memory_id,
@@ -283,16 +292,29 @@ class StorageAdapter:
         agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Update a memory."""
-        # Get existing record from vector store directly
-        existing_result = self.get_memory(memory_id, user_id, agent_id)
+        # First check if memory exists and user has access (get_memory returns dict)
+        existing_memory_dict = self.get_memory(memory_id, user_id, agent_id)
+        if not existing_memory_dict:
+            logger.warning(f"Memory {memory_id} not found or access denied")
+            return None
+        
+        # Get raw OutputData object from vector store to access payload
+        existing_result = self.vector_store.get(memory_id)
         target_store = self.vector_store
 
         # If not found in main store, search sub stores
         if (not existing_result or not existing_result.payload) and self.sub_stores:
             for sub_config in self.sub_stores.values():
                 try:
-                    existing_result = sub_config.vector_store.get(memory_id)
-                    if existing_result and existing_result.payload:
+                    sub_result = sub_config.vector_store.get(memory_id)
+                    if sub_result and sub_result.payload:
+                        # Verify access control matches
+                        sub_payload = sub_result.payload
+                        if user_id and sub_payload.get("user_id") != user_id:
+                            continue
+                        if agent_id and sub_payload.get("agent_id") != agent_id:
+                            continue
+                        existing_result = sub_result
                         target_store = sub_config.vector_store
                         break
                 except Exception as e:
@@ -439,7 +461,7 @@ class StorageAdapter:
             
             memory = {
                 "id": memory_id,
-                "content": payload.get("data", ""),  # Unified field name
+                "memory": payload.get("data", ""),  # Unified field name to match search_memories format
                 "user_id": payload.get("user_id"),
                 "agent_id": payload.get("agent_id"),
                 "run_id": payload.get("run_id"),

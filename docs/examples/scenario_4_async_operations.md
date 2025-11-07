@@ -70,7 +70,13 @@ async def main():
         user_id="user123"
     )
     
-    print(f"✓ Memory added! ID: {result.get('results', [{}])[0].get('id', 'N/A')}")
+    # Handle result - check if results list is not empty
+    results_list = result.get('results', [])
+    if results_list:
+        memory_id = results_list[0].get('id', 'N/A')
+        print(f"✓ Memory added! ID: {memory_id}")
+    else:
+        print("✓ Memory operation completed (may have been deduplicated)")
 
 asyncio.run(main())
 ```
@@ -283,12 +289,24 @@ async def main():
     async_memory = AsyncMemory(config=config)
     await async_memory.initialize()
     
-    # Add memory
+    # Add memory (using infer=False to ensure it's added for demo purposes)
+    # In production, you might want infer=True for intelligent deduplication
     result = await async_memory.add(
         "User likes Python",  # messages as first positional argument
-        user_id="user123"
+        user_id="user123",
+        infer=False  # Disable intelligent deduplication for demo
     )
-    memory_id = result.get('results', [{}])[0].get('id')
+    
+    # Handle result - check if results list is not empty
+    results_list = result.get('results', [])
+    if not results_list:
+        print("Error: No memory was added")
+        raise ValueError("Cannot update/delete: memory was not added")
+    
+    memory_id = results_list[0].get('id')
+    if not memory_id:
+        print("Error: Memory ID not found in result")
+        raise ValueError("Cannot update/delete: memory ID not found")
     
     # Update memory
     updated = await async_memory.update(
@@ -322,20 +340,25 @@ Use async memory in FastAPI:
 
 ```python
 # fastapi_example.py
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from powermem import AsyncMemory, auto_config
-import asyncio
 
-app = FastAPI()
 config = auto_config()
 async_memory = None
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: initialize async memory
     global async_memory
     async_memory = AsyncMemory(config=config)
     await async_memory.initialize()
+    yield
+    # Shutdown: cleanup (if needed)
+    # async_memory cleanup can be added here if needed
+
+app = FastAPI(lifespan=lifespan)
 
 class MemoryRequest(BaseModel):
     memory: str

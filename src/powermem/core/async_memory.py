@@ -13,15 +13,16 @@ from datetime import datetime
 from copy import deepcopy
 
 from .base import MemoryBase
+from ..configs import MemoryConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
-from ..storage.adapter import StorageAdapter
+from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
-from ..utils.utils import remove_code_blocks, parse_vision_messages
+from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -30,6 +31,57 @@ from ..prompts.intelligent_memory_prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert legacy powermem config to format for compatibility.
+    
+    Now powermem uses field names directly.
+    
+    Args:
+        config: Configuration dictionary (legacy format)
+        
+    Returns:
+        configuration dictionary
+    """
+    if not config:
+        return config
+
+    # First, convert any ConfigObject instances to dicts
+    config = convert_config_object_to_dict(config)
+
+    # Check if legacy powermem format (has database or embedding)
+    if "database" in config or ("llm" in config and "embedding" in config):
+        converted = config.copy()
+
+        # Convert llm
+        if "llm" in config:
+            converted["llm"] = config["llm"]
+        
+        # Convert embedding to embedder
+        if "embedding" in config:
+            converted["embedder"] = config["embedding"]
+            converted.pop("embedding", None)
+
+        # Convert database to vector_store
+        if "database" in config:
+            db_config = config["database"]
+            converted["vector_store"] = {
+                "provider": db_config.get("provider", "oceanbase"),
+                "config": db_config.get("config", {})
+            }
+            converted.pop("database", None)
+        elif "vector_store" not in converted:
+            converted["vector_store"] = {
+                "provider": "oceanbase",
+                "config": {}
+            }
+        
+        logger.info("Converted legacy powermem config format")
+        return converted
+
+    return config
 
 
 class AsyncMemory(MemoryBase):
@@ -41,64 +93,101 @@ class AsyncMemory(MemoryBase):
     
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
-        storage_type: str = "sqlite",
-        llm_provider: str = "openai",
-        embedding_provider: str = "openai",
+        config: Optional[Dict[str, Any] | MemoryConfig] = None,
+        storage_type: Optional[str] = None,
+        llm_provider: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """
         Initialize the async memory manager.
-        
+
+        Compatible with both dict config and MemoryConfig object.
+
         Args:
-            config: Configuration dictionary
-            storage_type: Type of storage backend to use
-            llm_provider: LLM provider to use
-            embedding_provider: Embedding provider to use
+            config: Configuration dictionary or MemoryConfig object containing all settings.
+                   Dict format supports style (llm, embedder, vector_store)
+                   and powermem style (database, llm, embedding)
+            storage_type: Type of storage backend to use (overrides config)
+            llm_provider: LLM provider to use (overrides config)
+            embedding_provider: Embedding provider to use (overrides config)
+            agent_id: Agent identifier for multi-agent scenarios
         """
-        self.config = config or {}
+        # Handle MemoryConfig object or dict
+        if isinstance(config, MemoryConfig):
+            # Use MemoryConfig object directly
+            self.memory_config = config
+            # For backward compatibility, also store as dict
+            self.config = config.model_dump()
+        else:
+            # Convert dict config
+            dict_config = config or {}
+            dict_config = _auto_convert_config(dict_config)
+            self.config = dict_config
+            # Try to create MemoryConfig from dict, fallback to dict if fails
+            try:
+                self.memory_config = MemoryConfig(**dict_config)
+            except Exception as e:
+                logger.warning(f"Could not parse config as MemoryConfig: {e}, using dict mode")
+                self.memory_config = None
+
+        self.agent_id = agent_id
         
         # Extract providers from config with fallbacks
-        self.storage_type = storage_type or self._get_provider('vector_store', 'sqlite')
-        self.llm_provider = llm_provider or self._get_provider('llm', 'openai')
-        self.embedding_provider = embedding_provider or self._get_provider('embedder', 'openai')
+        self.storage_type = storage_type or self._get_provider('vector_store', 'oceanbase')
+        self.llm_provider = llm_provider or self._get_provider('llm', 'mock')
+        self.embedding_provider = embedding_provider or self._get_provider('embedder', 'mock')
         
-        # Initialize components - extract component-specific configs
+        # Initialize components
         vector_store_config = self._get_component_config('vector_store')
         vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
         
+        # Extract graph_store config
+        self.enable_graph = self._get_graph_enabled()
+        self.graph_store = None
+        if self.enable_graph:
+            logger.debug("Graph store enabled")
+            graph_store_config = self.config.get("graph_store", {})
+            if graph_store_config:
+                provider = graph_store_config.get("provider", "oceanbase")
+                config_to_pass = self.memory_config if self.memory_config else self.config
+                self.graph_store = GraphStoreFactory.create(provider, config_to_pass)
+
+        # Extract LLM config
         llm_config = self._get_component_config('llm')
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
         
+        # Extract embedder config
         embedder_config = self._get_component_config('embedder')
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
         
-        # Extract graph_store config (simplified version for dict config)
-        graph_store_cfg = self.config.get('graph_store', {})
-        self.enable_graph = graph_store_cfg.get('enabled', False) if isinstance(graph_store_cfg, dict) else False
-        self.graph_store = None
-        if self.enable_graph:
-            graph_store_config = self._get_component_config('graph_store')
-            self.graph_store = GraphStoreFactory.create(self.storage_type, graph_store_config)
-        
-        # Use StorageAdapter like Memory class
-        self.storage = StorageAdapter(vector_store, self.embedding)
+        # Initialize storage adapter with embedding service
+        # Automatically select adapter based on sub_stores configuration
+        sub_stores_list = self.config.get('sub_stores', [])
+        if sub_stores_list and self.storage_type.lower() == 'oceanbase':
+            # Use SubStorageAdapter if sub stores are configured and using OceanBase
+            self.storage = SubStorageAdapter(vector_store, self.embedding)
+            logger.info("Using SubStorageAdapter with sub-store support")
+        else:
+            # Use basic StorageAdapter for single store operations
+            self.storage = StorageAdapter(vector_store, self.embedding)
+            logger.info("Using basic StorageAdapter")
         
         self.intelligence = IntelligenceManager(self.config)
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
 
-        # Save custom prompts from config (mem0 compatible)
-        self.custom_fact_extraction_prompt = self.config.get('custom_fact_extraction_prompt')
-        self.custom_update_memory_prompt = self.config.get('custom_update_memory_prompt')
+        # Save custom prompts from config
+        if self.memory_config:
+            self.custom_fact_extraction_prompt = self.memory_config.custom_fact_extraction_prompt
+            self.custom_update_memory_prompt = self.memory_config.custom_update_memory_prompt
+        else:
+            self.custom_fact_extraction_prompt = self.config.get('custom_fact_extraction_prompt')
+            self.custom_update_memory_prompt = self.config.get('custom_update_memory_prompt')
 
         # Intelligent memory plugin (pluggable)
-        # Support both "intelligence" and "intelligent_memory" config keys for backward compatibility
-        intelligence_cfg = (self.config or {}).get("intelligence", {})
-        intelligent_memory_cfg = (self.config or {}).get("intelligent_memory", {})
-        
-        # Merge configurations, with intelligent_memory taking precedence
-        merged_cfg = {**intelligence_cfg, **intelligent_memory_cfg}
-        
+        merged_cfg = self._get_intelligent_memory_config()
+
         plugin_type = merged_cfg.get("plugin", "ebbinghaus")
         self._intelligence_plugin: Optional[IntelligentMemoryPlugin] = None
         if merged_cfg.get("enabled", False):
@@ -112,8 +201,14 @@ class AsyncMemory(MemoryBase):
                 self._intelligence_plugin = None
 
         
-        logger.info(f"AsyncMemory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}")
-        self.telemetry.capture_event("async_memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider})
+        # Sub stores configuration (support multiple)
+        self.sub_stores_config: List[Dict] = []
+
+        # Initialize sub stores
+        self._init_sub_stores()
+
+        logger.info(f"AsyncMemory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
+        self.telemetry.capture_event("async_memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
     
     async def initialize(self):
         """Initialize async components."""
@@ -130,7 +225,11 @@ class AsyncMemory(MemoryBase):
         Returns:
             Provider name string
         """
-        return self.config.get(component, {}).get('provider', default)
+        if self.memory_config:
+            component_obj = getattr(self.memory_config, component, None)
+            return component_obj.provider if component_obj else default
+        else:
+            return self.config.get(component, {}).get('provider', default)
 
     def _get_component_config(self, component: str) -> Dict[str, Any]:
         """
@@ -142,7 +241,49 @@ class AsyncMemory(MemoryBase):
         Returns:
             Component configuration dictionary
         """
-        return self.config.get(component, {}).get('config', {})
+        if self.memory_config:
+            component_obj = getattr(self.memory_config, component, None)
+            return component_obj.config or {} if component_obj else {}
+        else:
+            return self.config.get(component, {}).get('config', {})
+
+    def _get_graph_enabled(self) -> bool:
+        """
+        Helper method to get graph store enabled status.
+
+        Returns:
+            Boolean indicating whether graph store is enabled
+        """
+        if self.memory_config:
+            return self.memory_config.graph_store.enabled if self.memory_config.graph_store else False
+        else:
+            graph_store_config = self.config.get('graph_store', {})
+            return graph_store_config.get('enabled', False) if graph_store_config else False
+
+    def _get_intelligent_memory_config(self) -> Dict[str, Any]:
+        """
+        Helper method to get intelligent memory configuration.
+        Supports both "intelligence" and "intelligent_memory" config keys for backward compatibility.
+
+        Returns:
+            Merged intelligent memory configuration dictionary
+        """
+        if self.memory_config and self.memory_config.intelligent_memory:
+            # Use MemoryConfig's intelligent_memory
+            cfg = self.memory_config.intelligent_memory.model_dump()
+            # Merge custom_importance_evaluation_prompt from top level if present
+            if self.memory_config.custom_importance_evaluation_prompt:
+                cfg["custom_importance_evaluation_prompt"] = self.memory_config.custom_importance_evaluation_prompt
+            return cfg
+        else:
+            # Fallback to dict access
+            intelligence_cfg = (self.config or {}).get("intelligence", {})
+            intelligent_memory_cfg = (self.config or {}).get("intelligent_memory", {})
+            merged_cfg = {**intelligence_cfg, **intelligent_memory_cfg}
+            # Merge custom_importance_evaluation_prompt from top level if present
+            if "custom_importance_evaluation_prompt" in self.config:
+                merged_cfg["custom_importance_evaluation_prompt"] = self.config["custom_importance_evaluation_prompt"]
+            return merged_cfg
     
     async def _extract_facts(self, messages: Any) -> List[str]:
         """
@@ -158,7 +299,7 @@ class AsyncMemory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use custom prompt if provided, otherwise use default (mem0 compatible)
+            # Use custom prompt if provided, otherwise use default
             if self.custom_fact_extraction_prompt:
                 system_prompt = self.custom_fact_extraction_prompt
                 user_prompt = f"Input:\n{conversation}"
@@ -269,6 +410,9 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
+        scope: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        prompt: Optional[str] = None,
         infer: bool = True,
     ) -> Dict[str, Any]:
         """Add a new memory asynchronously with optional intelligent processing."""
@@ -301,10 +445,10 @@ class AsyncMemory(MemoryBase):
             
             # If not using intelligent memory, fall back to simple mode
             if not use_infer:
-                return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+                return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
             
             # Intelligent memory mode: extract facts, search similar memories, and consolidate
-            return await self._intelligent_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+            return await self._intelligent_add_async(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
             
         except Exception as e:
             logger.error(f"Failed to add memory: {e}")
@@ -319,6 +463,9 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
+        scope: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Simple add mode: direct storage without intelligence."""
         # Parse messages into content
@@ -336,8 +483,11 @@ class AsyncMemory(MemoryBase):
             logger.error(f"Cannot store empty content. Messages: {messages}")
             raise ValueError(f"Cannot create memory with empty content. Original messages: {messages}")
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+
         # Generate embedding asynchronously
-        embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="add")
+        embedding = await asyncio.to_thread(embedding_service.embed, content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process with intelligence manager
@@ -357,6 +507,7 @@ class AsyncMemory(MemoryBase):
         category = ""
         if enhanced_metadata and isinstance(enhanced_metadata, dict):
             category = enhanced_metadata.get("category", "")
+            # Remove category from metadata to avoid duplication
             enhanced_metadata = {k: v for k, v in enhanced_metadata.items() if k != "category"}
 
         # Final validation before storage
@@ -411,8 +562,8 @@ class AsyncMemory(MemoryBase):
                 "user_id": user_id,
                 "agent_id": agent_id,
                 "run_id": run_id,
-                "metadata": enhanced_metadata,
-                "created_at": memory_data["created_at"],
+                "metadata": metadata,
+                "created_at": memory_data["created_at"].isoformat() if isinstance(memory_data["created_at"], datetime) else memory_data["created_at"],
             }]
         }
         if graph_result:
@@ -427,6 +578,9 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         filters: Optional[Dict[str, Any]] = None,
+        scope: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Intelligent add mode: extract facts, consolidate with existing memories."""
         # Step 1: Extract facts from messages
@@ -435,7 +589,7 @@ class AsyncMemory(MemoryBase):
         
         if not facts:
             logger.debug("No facts extracted, falling back to simple mode")
-            return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+            return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
         
         logger.info(f"Extracted {len(facts)} facts: {facts}")
         
@@ -443,10 +597,25 @@ class AsyncMemory(MemoryBase):
         existing_memories = []
         fact_embeddings = {}
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+
         for fact in facts:
-            fact_embedding = await asyncio.to_thread(self.embedding.embed, fact, memory_action="add")
+            fact_embedding = await asyncio.to_thread(embedding_service.embed, fact, memory_action="add")
             fact_embeddings[fact] = fact_embedding
             
+            # Merge metadata into filters for correct routing
+            search_filters = filters.copy() if filters else {}
+            if metadata:
+                # Filter metadata to only include simple values (strings, numbers, booleans, None)
+                # This prevents nested dicts like {'agent': {'agent_id': ...}} from causing issues
+                # when OceanBase's build_condition tries to parse them as operators
+                simple_metadata = {
+                    k: v for k, v in metadata.items()
+                    if not isinstance(v, (dict, list)) and k not in ['agent_id', 'user_id', 'run_id']
+                }
+                search_filters.update(simple_metadata)
+
             # Search for similar memories with reduced limit to reduce noise
             # Pass fact text to enable hybrid search for better results
             similar = await self.storage.search_memories_async(
@@ -454,7 +623,7 @@ class AsyncMemory(MemoryBase):
                 user_id=user_id,
                 agent_id=agent_id,
                 run_id=run_id,
-                filters=filters,
+                filters=search_filters,
                 limit=5,
                 query=fact  # Enable hybrid search
             )
@@ -499,8 +668,8 @@ class AsyncMemory(MemoryBase):
         action_counts = {"ADD": 0, "UPDATE": 0, "DELETE": 0, "NONE": 0}
         
         if not actions:
-            logger.debug("No actions to execute, returning empty results")
-            return {"results": []}
+            logger.warning("No actions returned from LLM, falling back to simple mode")
+            return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
         
         for action in actions:
             action_text = action.get("text", "") or action.get("memory", "")
@@ -542,7 +711,8 @@ class AsyncMemory(MemoryBase):
                             content=action_text,
                             user_id=user_id,
                             agent_id=agent_id,
-                            existing_embeddings=fact_embeddings
+                            existing_embeddings=fact_embeddings,
+                            metadata=metadata
                         )
                         results.append({
                             "id": real_memory_id,
@@ -605,7 +775,7 @@ class AsyncMemory(MemoryBase):
         # Only fall back to simple mode if we had no actions at all
         else:
             logger.warning("No actions returned from LLM, falling back to simple mode")
-            return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters)
+            return await self._simple_add_async(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
     
     async def _add_to_graph_async(
         self,
@@ -662,11 +832,14 @@ class AsyncMemory(MemoryBase):
         if not content or not content.strip():
             raise ValueError(f"Cannot create memory with empty content: '{content}'")
         
+        # Select embedding service based on metadata (for sub-store routing)
+        embedding_service = self._get_embedding_service(metadata)
+
         # Generate or use existing embedding
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="add")
+            embedding = await asyncio.to_thread(embedding_service.embed, content, memory_action="add")
         
         # Disabled LLM-based importance evaluation to save tokens
         # Process metadata
@@ -708,6 +881,7 @@ class AsyncMemory(MemoryBase):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         existing_embeddings: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """Update a memory asynchronously with optional embeddings."""
         # Validate content is not empty
@@ -718,7 +892,16 @@ class AsyncMemory(MemoryBase):
         if existing_embeddings and content in existing_embeddings:
             embedding = existing_embeddings[content]
         else:
-            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
+            # If no metadata provided, try to get existing memory's metadata
+            if metadata is None:
+                existing = await self.storage.get_memory_async(memory_id, user_id, agent_id)
+                if existing:
+                    metadata = existing.get("metadata", {})
+
+            # Select embedding service based on metadata (for sub-store routing)
+            embedding_service = self._get_embedding_service(metadata)
+
+            embedding = await asyncio.to_thread(embedding_service.embed, content, memory_action="update")
         
         # Generate content hash
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -746,8 +929,11 @@ class AsyncMemory(MemoryBase):
     ) -> Dict[str, Any]:
         """Search for memories asynchronously."""
         try:
+            # Select embedding service based on filters (for sub-store routing)
+            embedding_service = self._get_embedding_service(filters)
+
             # Generate query embedding asynchronously
-            query_embedding = await asyncio.to_thread(self.embedding.embed, query, memory_action="search")
+            query_embedding = await asyncio.to_thread(embedding_service.embed, query, memory_action="search")
             
 
             # Search in storage asynchronously - pass query text to enable hybrid search
@@ -817,7 +1003,13 @@ class AsyncMemory(MemoryBase):
                 "results_count": len(transformed_results),
                 "threshold": threshold
             })
-            
+
+            # Search in graph store
+            if self.enable_graph:
+                filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+                graph_results = await asyncio.to_thread(self.graph_store.search, query, filters, limit)
+                return {"results": transformed_results, "relations": graph_results}
+
             # Return in benchmark expected format
             return {"results": transformed_results}
             
@@ -872,9 +1064,18 @@ class AsyncMemory(MemoryBase):
             # Validate content is not empty
             if not content or not content.strip():
                 raise ValueError(f"Cannot update memory with empty content: '{content}'")
-            
+
+            # If no metadata provided, try to get existing memory's metadata
+            if metadata is None:
+                existing = await self.storage.get_memory_async(memory_id, user_id, agent_id)
+                if existing:
+                    metadata = existing.get("metadata", {})
+
+            # Select embedding service based on metadata (for sub-store routing)
+            embedding_service = self._get_embedding_service(metadata)
+
             # Generate new embedding asynchronously
-            embedding = await asyncio.to_thread(self.embedding.embed, content, memory_action="update")
+            embedding = await asyncio.to_thread(embedding_service.embed, content, memory_action="update")
             
             # Process metadata with intelligence manager (if enabled)
             # Disabled LLM-based importance evaluation to save tokens (consistent with add method)
@@ -1009,6 +1210,10 @@ class AsyncMemory(MemoryBase):
                     "agent_id": agent_id,
                     "run_id": run_id
                 })
+
+            if self.enable_graph:
+                filters = {"user_id": user_id, "agent_id": agent_id, "run_id": run_id}
+                await asyncio.to_thread(self.graph_store.delete_all, filters)
             
             return result
             
@@ -1052,4 +1257,222 @@ class AsyncMemory(MemoryBase):
             logger.error(f"Failed to reset memory store: {e}")
             raise
 
-    # No internal helpers are needed in core now; logic resides in plugin
+    def _init_sub_stores(self):
+        """Initialize multiple sub stores configuration"""
+        if self.sub_stores_config:
+            logger.info(f"Sub stores enabled: {len(self.sub_stores_config)} stores")
+
+        sub_stores_list = self.config.get('sub_stores', [])
+
+        if not sub_stores_list:
+            logger.info("No sub stores configured")
+            return
+
+        # Sub store feature only supports OceanBase storage
+        if self.storage_type.lower() != 'oceanbase':
+            logger.warning(f"Sub store feature only supports OceanBase storage, current storage: {self.storage_type}")
+            logger.warning("Sub stores configuration will be ignored")
+            return
+
+        # Get main table information
+        main_collection_name = self.config.get('vector_store', {}).get('config', {}).get('collection_name', 'memories')
+        main_embedding_dims = self.config.get('vector_store', {}).get('config', {}).get('embedding_model_dims', 1536)
+
+        # Iterate through configs and initialize each sub store
+        for index, sub_config in enumerate(sub_stores_list):
+            try:
+                self._init_single_sub_store(index, sub_config, main_collection_name, main_embedding_dims)
+            except Exception as e:
+                logger.error(f"Failed to initialize sub store {index}: {e}")
+                continue
+
+    def _init_single_sub_store(
+        self,
+        index: int,
+        sub_config: Dict,
+        main_collection_name: str,
+        main_embedding_dims: int
+    ):
+        """Initialize a single sub store"""
+
+        # 1. Determine sub store name (default: {main_table_name}_sub_{index})
+        sub_store_name = sub_config.get(
+            'collection_name',
+            f"{main_collection_name}_sub_{index}"
+        )
+
+        # 2. Get routing rules (required)
+        routing_filter = sub_config.get('routing_filter')
+        if not routing_filter:
+            logger.warning(f"Sub store {index} has no routing_filter, skipping")
+            return
+
+        # 3. Determine vector dimension (default: same as main table)
+        embedding_model_dims = sub_config.get('embedding_model_dims', main_embedding_dims)
+
+        # 4. Initialize sub store's embedding service
+        sub_embedding_config = sub_config.get('embedding', {})
+
+        if sub_embedding_config:
+            # Has independent embedding configuration
+            sub_embedding_provider = sub_embedding_config.get('provider', self.embedding_provider)
+            sub_embedding_params = sub_embedding_config.get('config', {})
+
+            # Inherit api_key and other configs from main table
+            main_embedding_config = self.config.get('embedder', {}).get('config', {})
+            for key in ['api_key', 'openai_base_url', 'timeout']:
+                if key not in sub_embedding_params and key in main_embedding_config:
+                    sub_embedding_params[key] = main_embedding_config[key]
+
+            sub_embedding = EmbedderFactory.create(
+                sub_embedding_provider,
+                sub_embedding_params,
+                None
+            )
+            logger.info(f"Created sub embedding service for store {index}: {sub_embedding_provider}")
+        else:
+            # Reuse main table's embedding service
+            sub_embedding = self.embedding
+            logger.info(f"Sub store {index} using main embedding service")
+
+        # 5. Create sub store storage instance
+        db_config = self.config.get('vector_store', {}).get('config', {}).copy()
+        db_config['collection_name'] = sub_store_name
+        db_config['embedding_model_dims'] = embedding_model_dims
+
+        sub_vector_store = VectorStoreFactory.create(self.storage_type, db_config)
+
+        # 6. Register sub store in Adapter (with embedding service for migration)
+        self.storage.register_sub_store(
+            store_name=sub_store_name,
+            routing_filter=routing_filter,
+            vector_store=sub_vector_store,
+            embedding_service=sub_embedding,
+        )
+
+        # 7. Save sub store configuration
+        self.sub_stores_config.append({
+            'name': sub_store_name,
+            'routing_filter': routing_filter,
+            'embedding_service': sub_embedding,
+            'embedding_dims': embedding_model_dims,
+        })
+
+        logger.info(f"Registered sub store {index}: {sub_store_name} (dims={embedding_model_dims})")
+
+    def _get_embedding_service(self, filters_or_metadata: Optional[Dict] = None):
+        """
+        Select appropriate embedding service based on filters or metadata
+
+        Args:
+            filters_or_metadata: Query filters (for search) or memory metadata (for add)
+
+        Returns:
+            Corresponding embedding service instance
+        """
+        if not filters_or_metadata or not self.sub_stores_config:
+            return self.embedding
+
+        # Iterate through all sub stores to find a match
+        if isinstance(self.storage, SubStorageAdapter):
+            for sub_config in self.sub_stores_config:
+                # Check if sub store is ready
+                if not self.storage.is_sub_store_ready(sub_config['name']):
+                    continue
+
+                # Check if filters_or_metadata matches routing rules
+                routing_filter = sub_config['routing_filter']
+                if all(
+                    key in filters_or_metadata and filters_or_metadata[key] == value
+                    for key, value in routing_filter.items()
+                ):
+                    logger.debug(f"Using sub embedding for store: {sub_config['name']}")
+                    return sub_config['embedding_service']
+
+        logger.debug("Using main embedding service")
+        return self.embedding
+
+    async def migrate_to_sub_store(self, sub_store_index: int = 0, delete_source: bool = False) -> int:
+        """
+        Migrate data to specified sub store
+
+        Args:
+            sub_store_index: Sub store index (default 0, i.e., first sub store)
+            delete_source: Whether to delete source data
+
+        Returns:
+            Number of migrated records
+        """
+        if not self.sub_stores_config:
+            raise ValueError("No sub stores configured.")
+
+        if sub_store_index >= len(self.sub_stores_config):
+            raise ValueError(f"Sub store index {sub_store_index} out of range")
+
+        sub_config = self.sub_stores_config[sub_store_index]
+
+        logger.info(f"Starting migration to sub store: {sub_config['name']}")
+
+        # Call adapter's migration method
+        if isinstance(self.storage, SubStorageAdapter):
+            migrated_count = await asyncio.to_thread(
+                self.storage.migrate_to_sub_store,
+                store_name=sub_config['name'],
+                delete_source=delete_source
+            )
+
+            logger.info(f"Migration completed: {migrated_count} records migrated")
+            return migrated_count
+        else:
+            raise ValueError("Storage adapter does not support migration")
+
+    async def migrate_all_sub_stores(self, delete_source: bool = True) -> Dict[str, int]:
+        """
+        Migrate all sub stores
+
+        Args:
+            delete_source: Whether to delete source data
+
+        Returns:
+            Migration record count for each sub store {store_name: count}
+        """
+        results = {}
+        for index, sub_config in enumerate(self.sub_stores_config):
+            try:
+                count = await self.migrate_to_sub_store(index, delete_source)
+                results[sub_config['name']] = count
+            except Exception as e:
+                logger.error(f"Failed to migrate sub store {index}: {e}")
+                results[sub_config['name']] = 0
+
+        return results
+
+    @classmethod
+    async def from_config(cls, config: Optional[Dict[str, Any]] = None, **kwargs):
+        """
+        Create AsyncMemory instance from configuration.
+        
+        Args:
+            config: Configuration dictionary
+            **kwargs: Additional parameters
+        
+        Returns:
+            AsyncMemory instance
+            
+        Example:
+            ```python
+            memory = await AsyncMemory.from_config({
+                "llm": {"provider": "openai", "config": {"api_key": "..."}},
+                "embedder": {"provider": "openai", "config": {"api_key": "..."}},
+                "vector_store": {"provider": "oceanbase", "config": {...}},
+            })
+            ```
+        """
+        if config is None:
+            # Use auto config from environment
+            from ..config_loader import auto_config
+            config = auto_config()
+
+        converted_config = _auto_convert_config(config)
+        
+        return cls(config=converted_config, **kwargs)

@@ -16,8 +16,8 @@ install-test: ## Install test dependencies
 	pip install -e ".[dev,test,llm,vector_stores]"
 
 # Test commands
-test: ## Run all tests
-	pytest
+test: ## Run all tests (excludes e2e_config tests)
+	pytest -m "not e2e_config"
 
 test-unit: ## Run unit tests only
 	pytest tests/unit/ -v
@@ -26,7 +26,10 @@ test-integration: ## Run integration tests only
 	pytest tests/integration/ -v
 
 test-e2e: ## Run end-to-end tests only
-	pytest tests/e2e/ -v
+	pytest tests/e2e/ -v -m "e2e and not e2e_config"
+
+test-e2e-config: ## Run end-to-end tests with real configuration (requires config files)
+	pytest tests/e2e/ -v -m e2e_config
 
 test-fast: ## Run fast tests (exclude slow markers)
 	pytest -m "not slow" -v

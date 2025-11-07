@@ -232,9 +232,9 @@ class TestOceanBaseGraph(unittest.TestCase):
             mock_bm25_instance = MagicMock()
             mock_bm25.return_value = mock_bm25_instance
 
-            # Mock get_top_n to return reranked results
-            reranked_results = [["alice", "knows", "bob"], ["alice", "works_with", "charlie"]]
-            mock_bm25_instance.get_top_n.return_value = reranked_results
+            # Mock get_scores to return scores for the 2 search results
+            # Higher score for first result (0.8) than second (0.5) to ensure ordering
+            mock_bm25_instance.get_scores.return_value = [0.8, 0.5]
 
             # Call the search method
             result = self.memory_graph.search("Find Alice", self.test_filters, limit=5)

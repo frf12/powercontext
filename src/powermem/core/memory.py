@@ -203,7 +203,7 @@ class Memory(MemoryBase):
         self.telemetry = TelemetryManager(self.config)
         self.audit = AuditLogger(self.config)
 
-        # Save custom prompts from config (mem0 compatible)
+        # Save custom prompts from config
         if self.memory_config:
             self.custom_fact_extraction_prompt = self.memory_config.custom_fact_extraction_prompt
             self.custom_update_memory_prompt = self.memory_config.custom_update_memory_prompt
@@ -322,7 +322,7 @@ class Memory(MemoryBase):
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
             
-            # Use custom prompt if provided, otherwise use default (mem0 compatible)
+            # Use custom prompt if provided, otherwise use default
             if self.custom_fact_extraction_prompt:
                 system_prompt = self.custom_fact_extraction_prompt
                 user_prompt = f"Input:\n{conversation}"
@@ -628,7 +628,14 @@ class Memory(MemoryBase):
             # Merge metadata into filters for correct routing
             search_filters = filters.copy() if filters else {}
             if metadata:
-                search_filters.update(metadata)
+                # Filter metadata to only include simple values (strings, numbers, booleans, None)
+                # This prevents nested dicts like {'agent': {'agent_id': ...}} from causing issues
+                # when OceanBase's build_condition tries to parse them as operators
+                simple_metadata = {
+                    k: v for k, v in metadata.items()
+                    if not isinstance(v, (dict, list)) and k not in ['agent_id', 'user_id', 'run_id']
+                }
+                search_filters.update(simple_metadata)
 
             # Search for similar memories with reduced limit to reduce noise
             # Pass fact text to enable hybrid search for better results
