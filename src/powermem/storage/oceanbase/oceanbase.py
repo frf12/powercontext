@@ -61,6 +61,8 @@ class OceanBaseVectorStore(VectorStoreBase):
             db_name: Optional[str] = None,
             hybrid_search: bool = True,
             fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
+            vector_weight: float = 0.5,
+            fts_weight: float = 0.5,
             **kwargs,
     ):
         """
@@ -87,12 +89,16 @@ class OceanBaseVectorStore(VectorStoreBase):
             password (Optional[str]): OceanBase password.
             db_name (Optional[str]): OceanBase database name.
             hybrid_search (bool): Whether to use hybrid search.
+            vector_weight (float): Weight for vector search in hybrid search (default: 1.0).
+            fts_weight (float): Weight for full-text search in hybrid search (default: 1.0).
         """
         self.normalize = normalize
         self.include_sparse = include_sparse
         self.auto_configure_vector_index = auto_configure_vector_index
         self.hybrid_search = hybrid_search
         self.fulltext_parser = fulltext_parser
+        self.vector_weight = vector_weight
+        self.fts_weight = fts_weight
 
         # Validate fulltext parser
         if self.fulltext_parser not in constants.OCEANBASE_SUPPORTED_FULLTEXT_PARSERS:
@@ -838,13 +844,18 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _rrf_fusion(self, vector_results: List[OutputData], fts_results: List[OutputData],
                     limit: int, k: int = 60):
-        """Reciprocal Rank Fusion (RRF) for combining search results."""
+        """
+        Reciprocal Rank Fusion (RRF) for combining search results.
+        
+        Uses weights configured at initialization (self.vector_weight and self.fts_weight)
+        to control the contribution of vector search vs full-text search.
+        """
         # Create mapping of document ID to result data
         all_docs = {}
 
-        # Process vector search results (rank-based scoring)
+        # Process vector search results (rank-based scoring with weight)
         for rank, result in enumerate(vector_results, 1):
-            rrf_score = 1.0 / (k + rank)
+            rrf_score = self.vector_weight * (1.0 / (k + rank))
             all_docs[result.id] = {
                 'result': result,
                 'vector_rank': rank,
@@ -852,9 +863,9 @@ class OceanBaseVectorStore(VectorStoreBase):
                 'rrf_score': rrf_score
             }
 
-        # Process FTS results (add or update RRF scores)
+        # Process FTS results (add or update RRF scores with weight)
         for rank, result in enumerate(fts_results, 1):
-            fts_rrf_score = 1.0 / (k + rank)
+            fts_rrf_score = self.fts_weight * (1.0 / (k + rank))
 
             if result.id in all_docs:
                 # Document found in both searches - combine RRF scores
@@ -887,7 +898,9 @@ class OceanBaseVectorStore(VectorStoreBase):
                 'vector_rank': doc_data['vector_rank'],
                 'fts_rank': doc_data['fts_rank'],
                 'rrf_score': score,
-                'fusion_method': 'rrf'
+                'fusion_method': 'rrf',
+                'vector_weight': self.vector_weight,
+                'fts_weight': self.fts_weight
             }
             final_results.append(result)
 

@@ -1325,7 +1325,7 @@ class Memory(MemoryBase):
         embedding_model_dims = sub_config.get('embedding_model_dims', main_embedding_dims)
 
         # 4. Initialize sub store's embedding service
-        sub_embedding_config = sub_config.get('embedding', {})
+        sub_embedding_config = sub_config.get('embedder', sub_config.get('embedding', {}))
 
         if sub_embedding_config:
             # Has independent embedding configuration
@@ -1333,7 +1333,7 @@ class Memory(MemoryBase):
             sub_embedding_params = sub_embedding_config.get('config', {})
 
             # Inherit api_key and other configs from main table
-            main_embedding_config = self.config.get('embedder', {}).get('config', {})
+            main_embedding_config = self.config.get('embedding', {}).get('config', {})
             for key in ['api_key', 'openai_base_url', 'timeout']:
                 if key not in sub_embedding_params and key in main_embedding_config:
                     sub_embedding_params[key] = main_embedding_config[key]
@@ -1351,6 +1351,14 @@ class Memory(MemoryBase):
 
         # 5. Create sub store storage instance
         db_config = self.config.get('vector_store', {}).get('config', {}).copy()
+        
+        # Override with sub store specific vector_store config if provided
+        sub_vector_store_config = sub_config.get('vector_store', {})
+        if sub_vector_store_config:
+            db_config.update(sub_vector_store_config)
+            logger.info(f"Sub store {index} using custom vector_store config: {list(sub_vector_store_config.keys())}")
+        
+        # Always override these critical fields
         db_config['collection_name'] = sub_store_name
         db_config['embedding_model_dims'] = embedding_model_dims
 

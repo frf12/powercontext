@@ -164,6 +164,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen3-max")
 
 EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "text-embedding-v4")
 DB_TYPE= os.getenv("db_type", "oceanbase")
+VECTOR_WEIGHT = os.getenv("VECTOR_WEIGHT", "0.5")
+FTS_WEIGHT = os.getenv("FTS_WEIGHT", "0.5")
 vector_store=None
 if DB_TYPE == "oceanbase":
     vector_store={
@@ -178,6 +180,8 @@ if DB_TYPE == "oceanbase":
             "embedding_model_dims": 1536,
             "index_type": "HNSW",
             "vidx_metric_type": "l2",
+            "vector_weight": float(VECTOR_WEIGHT),
+            "fts_weight": float(FTS_WEIGHT),
         },
     }
 elif DB_TYPE == "postgres":
