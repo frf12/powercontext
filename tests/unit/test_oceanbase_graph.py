@@ -449,51 +449,14 @@ class TestOceanBaseGraph(unittest.TestCase):
         # Verify the method calls
         self.mock_client.upsert.assert_called_once()
 
-        # Check the result is a UUID
-        self.assertIsInstance(result, str)
-        self.assertEqual(len(result), 36)  # UUID length
-
-    def test_update_entity_mentions(self):
-        """Test the _update_entity_mentions method."""
-        entity_id = str(uuid.uuid4())
-
-        # Mock get results
-        mock_get_result = MagicMock()
-        mock_get_result.fetchall.return_value = [
-            (entity_id, "alice", "person", [0.1, 0.2, 0.3], 5)
-        ]
-        self.mock_client.get.return_value = mock_get_result
-
-        # Mock upsert
-        self.mock_client.upsert.return_value = None
-
-        # Call the _update_entity_mentions method
-        self.memory_graph._update_entity_mentions(entity_id)
-
-        # Verify the method calls
-        self.mock_client.get.assert_called_once()
-        self.mock_client.upsert.assert_called_once()
-
-    def test_update_entity_mentions_not_found(self):
-        """Test the _update_entity_mentions method when entity not found."""
-        entity_id = str(uuid.uuid4())
-
-        # Mock empty get results
-        mock_get_result = MagicMock()
-        mock_get_result.fetchall.return_value = []
-        self.mock_client.get.return_value = mock_get_result
-
-        # Call the _update_entity_mentions method
-        self.memory_graph._update_entity_mentions(entity_id)
-
-        # Verify only get was called, not upsert
-        self.mock_client.get.assert_called_once()
-        self.mock_client.upsert.assert_not_called()
+        # Check the result is a Snowflake ID (int)
+        self.assertIsInstance(result, int)
+        self.assertGreater(result, 0)  # Snowflake ID should be positive
 
     def test_create_or_update_relationship_new(self):
         """Test the _create_or_update_relationship method for new relationship."""
-        source_id = str(uuid.uuid4())
-        dest_id = str(uuid.uuid4())
+        source_id = 641905209349505024  # Use Snowflake ID format
+        dest_id = 641905209349505025
         relationship_type = "knows"
         filters = self.test_filters
 
@@ -526,18 +489,15 @@ class TestOceanBaseGraph(unittest.TestCase):
 
     def test_create_or_update_relationship_existing(self):
         """Test the _create_or_update_relationship method for existing relationship."""
-        source_id = str(uuid.uuid4())
-        dest_id = str(uuid.uuid4())
+        source_id = 641905209349505024  # Use Snowflake ID format
+        dest_id = 641905209349505025
         relationship_type = "knows"
         filters = self.test_filters
 
         # Mock get results (existing relationship)
         mock_get_result = MagicMock()
-        mock_get_result.fetchall.return_value = [(str(uuid.uuid4()), 3)]  # existing relationship with 3 mentions
+        mock_get_result.fetchall.return_value = [(641905209349505026,)]  # existing relationship (no mentions field)
         self.mock_client.get.return_value = mock_get_result
-
-        # Mock update
-        self.mock_client.update.return_value = None
 
         # Mock entity names for return value
         mock_entity_result = MagicMock()
@@ -550,8 +510,8 @@ class TestOceanBaseGraph(unittest.TestCase):
         # Call the _create_or_update_relationship method
         result = self.memory_graph._create_or_update_relationship(source_id, dest_id, relationship_type, filters)
 
-        # Verify the method calls
-        self.mock_client.update.assert_called_once()
+        # Verify insert is NOT called (relationship already exists)
+        self.mock_client.insert.assert_not_called()
 
         # Check the result
         self.assertEqual(result["source"], "alice")

@@ -5,17 +5,16 @@ This module provides OceanBase-based graph storage for memory data.
 """
 import json
 import logging
-import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from pyobvector import ObVecClient, l2_distance, VECTOR, VecIndexType
-from sqlalchemy import bindparam, text, MetaData, Column, String, Integer, Index, Table
+from sqlalchemy import bindparam, text, MetaData, Column, String, Index, Table, BigInteger
 from sqlalchemy.dialects.mysql import TIMESTAMP
 
 from powermem.integrations import EmbedderFactory, LLMFactory
 from powermem.storage.base import GraphStoreBase
-from powermem.utils.utils import format_entities, remove_code_blocks
+from powermem.utils.utils import format_entities, remove_code_blocks, generate_snowflake_id
 
 try:
     from rank_bm25 import BM25Okapi
@@ -257,11 +256,10 @@ class MemoryGraph(GraphStoreBase):
         if not self.client.check_table_exists(constants.TABLE_ENTITIES):
             # Define columns for entities table
             cols = [
-                Column("id", String(64), primary_key=True, autoincrement=False),
+                Column("id", BigInteger, primary_key=True, autoincrement=False),
                 Column("name", String(255), nullable=False),
                 Column("entity_type", String(64)),
                 Column("embedding", VECTOR(self.embedding_dims)),
-                Column("mentions", Integer, default=1),
                 Column("created_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP")),
                 Column("updated_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")),
             ]
@@ -309,14 +307,13 @@ class MemoryGraph(GraphStoreBase):
 
             # Define columns for relationships table
             cols = [
-                Column("id", String(64), primary_key=True, autoincrement=False),
-                Column("source_entity_id", String(64), nullable=False),
+                Column("id", BigInteger, primary_key=True, autoincrement=False),
+                Column("source_entity_id", BigInteger, nullable=False),
                 Column("relationship_type", String(128), nullable=False),
-                Column("destination_entity_id", String(64), nullable=False),
+                Column("destination_entity_id", BigInteger, nullable=False),
                 Column("user_id", String(128)),
                 Column("agent_id", String(128)),
                 Column("run_id", String(128)),
-                Column("mentions", Integer, default=1),
                 Column("created_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP")),
                 Column("updated_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")),
             ]
@@ -766,7 +763,7 @@ class MemoryGraph(GraphStoreBase):
 
     def _execute_single_hop_query(
             self,
-            source_entity_ids: List[str],
+            source_entity_ids: List[int],
             filters: Dict[str, Any],
             hop_number: int,
             visited_edges: set = None,
@@ -788,8 +785,8 @@ class MemoryGraph(GraphStoreBase):
 
         Note:
             - Prevents memory explosion from high-degree nodes
-            - Results are sorted by mentions DESC, created_at DESC before limiting
-            - This ensures most relevant edges are retrieved first
+            - Results are sorted by created_at DESC before limiting
+            - This ensures most recent edges are retrieved first
         """
         if not source_entity_ids:
             return []
@@ -817,14 +814,14 @@ class MemoryGraph(GraphStoreBase):
                     source_entity_id,
                     destination_entity_id,
                     relationship_type,
-                    mentions,
                     created_at,
+                    updated_at,
                     user_id
                 FROM {constants.TABLE_RELATIONSHIPS}
                 WHERE
                     source_entity_id IN :entity_ids
                     AND {filter_conditions}
-                ORDER BY mentions DESC, created_at DESC
+                ORDER BY updated_at DESC, created_at DESC
                 LIMIT :max_edges_per_hop
             ) AS r
             JOIN {constants.TABLE_ENTITIES} e1 ON r.source_entity_id = e1.id
@@ -873,7 +870,7 @@ class MemoryGraph(GraphStoreBase):
 
     def _multi_hop_search(
             self,
-            entity_ids: List[str],
+            entity_ids: List[int],
             filters: Dict[str, Any],
             limit: int
     ) -> List[Dict[str, Any]]:
@@ -1152,7 +1149,6 @@ class MemoryGraph(GraphStoreBase):
             # Get or create source entity
             if source_node:
                 source_id = source_node["id"]
-                self._update_entity_mentions(source_id)
             else:
                 source_id = self._create_entity(source, entity_type_map.get(source, "entity"),
                                                 source_embedding, filters)
@@ -1160,7 +1156,6 @@ class MemoryGraph(GraphStoreBase):
             # Get or create destination entity
             if dest_node:
                 dest_id = dest_node["id"]
-                self._update_entity_mentions(dest_id)
             else:
                 dest_id = self._create_entity(destination, entity_type_map.get(destination, "entity"),
                                               dest_embedding, filters)
@@ -1233,7 +1228,7 @@ class MemoryGraph(GraphStoreBase):
             entity_type: str,
             embedding: List[float],
             filters: Dict[str, Any]
-    ) -> str:
+    ) -> int:
         """Create a new entity in the graph.
 
         Args:
@@ -1243,9 +1238,9 @@ class MemoryGraph(GraphStoreBase):
             filters: Dictionary containing user_id, agent_id, run_id.
 
         Returns:
-            UUID of the created entity.
+            Snowflake ID of the created entity.
         """
-        entity_id = str(uuid.uuid4())
+        entity_id = generate_snowflake_id()
 
         # Prepare data for insertion using pyobvector API
         record = {
@@ -1253,7 +1248,6 @@ class MemoryGraph(GraphStoreBase):
             "name": name,
             "entity_type": entity_type,
             "embedding": embedding,
-            "mentions": 1,
         }
 
         # Use pyobvector upsert method
@@ -1265,53 +1259,18 @@ class MemoryGraph(GraphStoreBase):
         logger.debug("Created entity: %s with id: %s", name, entity_id)
         return entity_id
 
-    def _update_entity_mentions(self, entity_id: str) -> None:
-        """Update the mentions count for an entity.
-
-        Args:
-            entity_id: UUID of the entity to update.
-        """
-        results = self.client.get(
-            table_name=constants.TABLE_ENTITIES,
-            ids=[entity_id],
-            output_column_name=["id", "name", "entity_type", "embedding", "mentions"],
-        )
-
-        rows = results.fetchall()
-        if not rows:
-            logger.warning("Entity %s not found for mention update", entity_id)
-            return
-
-        row = rows[0]
-        # Unpack row data.
-        entity_id, name, entity_type, embedding, mentions = row
-
-        # Increment mentions and update using upsert.
-        updated_record = {
-            "id": entity_id,
-            "name": name,
-            "entity_type": entity_type,
-            "embedding": embedding,
-            "mentions": mentions + 1,
-        }
-
-        self.client.upsert(
-            table_name=constants.TABLE_ENTITIES,
-            data=[updated_record],
-        )
-
     def _create_or_update_relationship(
             self,
-            source_id: str,
-            dest_id: str,
+            source_id: int,
+            dest_id: int,
             relationship_type: str,
             filters: Dict[str, Any]
     ) -> Dict[str, str]:
         """Create or update a relationship between two entities.
 
         Args:
-            source_id: UUID of the source entity.
-            dest_id: UUID of the destination entity.
+            source_id: Snowflake ID of the source entity.
+            dest_id: Snowflake ID of the destination entity.
             relationship_type: Type of the relationship.
             filters: Dictionary containing user_id, agent_id, run_id.
 
@@ -1339,33 +1298,21 @@ class MemoryGraph(GraphStoreBase):
         existing_relationships = self.client.get(
             table_name=constants.TABLE_RELATIONSHIPS,
             ids=None,
-            output_column_name=["id", "mentions"],
+            output_column_name=["id"],
             where_clause=[where_clause_with_params]
         )
 
         existing_rows = existing_relationships.fetchall()
-        if existing_rows:
-            # Relationship exists, update mentions only
-            existing_row = existing_rows[0]
-            existing_id = existing_row[0]
-            new_mentions = existing_row[1] + 1
-
-            self.client.update(
-                table_name=constants.TABLE_RELATIONSHIPS,
-                values_clause=[{"mentions": new_mentions}],
-                where_clause=[text(f"id = '{existing_id}'")],
-            )
-        else:
+        if not existing_rows:
             # Relationship doesn't exist, create new one
             new_record = {
-                "id": str(uuid.uuid4()),
+                "id": generate_snowflake_id(),
                 "source_entity_id": source_id,
                 "relationship_type": relationship_type,
                 "destination_entity_id": dest_id,
                 "user_id": filters["user_id"],
                 "agent_id": filters.get("agent_id"),
                 "run_id": filters.get("run_id"),
-                "mentions": 1,
             }
 
             self.client.insert(
