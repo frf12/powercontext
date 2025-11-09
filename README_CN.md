@@ -1,11 +1,18 @@
-# PowerMem - 智能AI记忆系统
-
-[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-
 [English](README.md) | [中文](README_CN.md) | [日本語](README_JP.md)
 
-PowerMem 是一个 AI 驱动的智能记忆管理系统，为 AI 应用提供持久化记忆层。
+<p align="center">
+    <a href="https://github.com/oceanbase/powermem/blob/master/LICENSE">
+        <img alt="license" src="https://img.shields.io/badge/license-Apache%202.0-green.svg" />
+    </a>
+    <a href="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg">
+        <img alt="pyversions" src="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg" />
+    </a>
+    <a href="https://deepwiki.com/oceanbase/powermem">
+        <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg" />
+    </a>
+</p>
+
+# PowerMem - 智能AI记忆系统
 
 在 AI 应用开发中，如何让大语言模型持久化地"记住"历史对话、用户偏好和上下文信息是一个核心挑战。PowerMem 融合向量检索、全文检索和图数据库的混合存储架构，并引入认知科学的艾宾浩斯遗忘曲线理论，为 AI 应用构建了强大的记忆基础设施。系统还提供完善的多智能体支持能力，包括智能体记忆隔离、跨智能体协作共享、细粒度权限控制和隐私保护机制，让多个 AI 智能体能够在保持独立记忆空间的同时实现高效协作。
 特别地，PowerMem 在 OceanBase 数据库上进行了深度优化，包括向量检索与全文搜索的混合检索能力、支持子存储（Sub Stores）实现数据分区管理、自动向量索引配置以及多种向量索引类型（HNSW、IVF、FLAT 等）的灵活选择，为大规模企业应用提供了卓越的性能和可扩展性。无论是构建智能客服系统、个性化 AI 助手，还是多智能体协作平台，PowerMem 都能提供企业级的记忆管理能力，让 AI 真正具备"记忆"能力。

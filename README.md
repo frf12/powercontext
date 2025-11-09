@@ -1,11 +1,18 @@
-# PowerMem - Intelligent Memory System
-
-[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-
 [English](README.md) | [中文](README_CN.md) | [日本語](README_JP.md)
 
-PowerMem is an AI-powered intelligent memory management system that provides a persistent memory layer for AI applications.
+<p align="center">
+    <a href="https://github.com/oceanbase/powermem/blob/master/LICENSE">
+        <img alt="license" src="https://img.shields.io/badge/license-Apache%202.0-green.svg" />
+    </a>
+    <a href="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg">
+        <img alt="pyversions" src="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg" />
+    </a>
+    <a href="https://deepwiki.com/oceanbase/powermem">
+        <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg" />
+    </a>
+</p>
+
+# PowerMem - Intelligent Memory System
 
 In AI application development, enabling large language models to persistently "remember" historical conversations, user preferences, and contextual information is a core challenge. PowerMem combines a hybrid storage architecture of vector retrieval, full-text search, and graph databases, and introduces the Ebbinghaus forgetting curve theory from cognitive science to build a powerful memory infrastructure for AI applications. The system also provides comprehensive multi-agent support capabilities, including agent memory isolation, cross-agent collaboration and sharing, fine-grained permission control, and privacy protection mechanisms, enabling multiple AI agents to achieve efficient collaboration while maintaining independent memory spaces.
 

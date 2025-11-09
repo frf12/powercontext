@@ -1,11 +1,18 @@
-# PowerMem - インテリジェントメモリシステム
-
-[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-
 [English](README.md) | [中文](README_CN.md) | [日本語](README_JP.md)
 
-PowerMem は、AI アプリケーションに永続的なメモリレイヤーを提供する AI 駆動のインテリジェントメモリ管理システムです。
+<p align="center">
+    <a href="https://github.com/oceanbase/powermem/blob/master/LICENSE">
+        <img alt="license" src="https://img.shields.io/badge/license-Apache%202.0-green.svg" />
+    </a>
+    <a href="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg">
+        <img alt="pyversions" src="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg" />
+    </a>
+    <a href="https://deepwiki.com/oceanbase/powermem">
+        <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg" />
+    </a>
+</p>
+
+# PowerMem - インテリジェントメモリシステム
 
 AI アプリケーション開発において、大規模言語モデルが履歴会話、ユーザー設定、コンテキスト情報を永続的に「記憶」できるようにすることは、核心的な課題です。PowerMem は、ベクトル検索、全文検索、グラフデータベースのハイブリッドストレージアーキテクチャを組み合わせ、認知科学のエビングハウス忘却曲線理論を導入して、AI アプリケーション向けの強力なメモリインフラストラクチャを構築します。システムは、エージェントメモリの分離、エージェント間のコラボレーションと共有、きめ細かい権限制御、プライバシー保護メカニズムを含む、包括的なマルチエージェントサポート機能も提供し、複数の AI エージェントが独立したメモリ空間を維持しながら効率的なコラボレーションを実現できるようにします。
 
@@ -13,7 +20,7 @@ AI アプリケーション開発において、大規模言語モデルが履�
 
 ## アーキテクチャ
 
-![アーキテクチャ図](docs/images/powermem_ja.png)
+![アーキテクチャ図](docs/images/powermem_jp.png)
 
 PowerMem は、以下をサポートするモジュラーアーキテクチャで構築されています：
 
