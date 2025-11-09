@@ -13,7 +13,7 @@ AI アプリケーション開発において、大規模言語モデルが履�
 
 ## アーキテクチャ
 
-[アーキテクチャ図](docs/images/powermem_ja.png)
+![アーキテクチャ図](docs/images/powermem_ja.png)
 
 PowerMem は、以下をサポートするモジュラーアーキテクチャで構築されています：
 

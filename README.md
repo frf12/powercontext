@@ -13,7 +13,7 @@ PowerMem is deeply optimized for OceanBase database, including hybrid retrieval 
 
 ## Architecture
 
-[Architecture Diagram](docs/images/powermem_en.png)
+![Architecture Diagram](docs/images/powermem_en.png)
 
 PowerMem is built with a modular architecture that supports:
 

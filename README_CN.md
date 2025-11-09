@@ -12,7 +12,7 @@ PowerMem 是一个 AI 驱动的智能记忆管理系统，为 AI 应用提供持
 
 ## 架构
 
-[架构图](docs/images/powermem_cn.png)
+![架构图](docs/images/powermem_cn.png)
 
 PowerMem 采用模块化架构，支持：
 
