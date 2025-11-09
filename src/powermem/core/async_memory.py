@@ -440,6 +440,9 @@ class AsyncMemory(MemoryBase):
             else:
                 messages = parse_vision_messages(messages)
             
+            # Use self.agent_id as fallback if agent_id is not provided
+            agent_id = agent_id or self.agent_id
+            
             # Check if intelligent memory should be used
             use_infer = infer and isinstance(messages, list) and len(messages) > 0
             
@@ -514,6 +517,9 @@ class AsyncMemory(MemoryBase):
         if not content or not content.strip():
             raise ValueError(f"Refusing to store empty content. Original messages: {messages}")
         
+        # Use self.agent_id as fallback if agent_id is not provided
+        agent_id = agent_id or self.agent_id
+        
         # Store in database asynchronously
         memory_data = {
             "content": content,
@@ -583,6 +589,9 @@ class AsyncMemory(MemoryBase):
         prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Intelligent add mode: extract facts, consolidate with existing memories."""
+        # Use self.agent_id as fallback if agent_id is not provided
+        agent_id = agent_id or self.agent_id
+        
         # Step 1: Extract facts from messages
         logger.info("Extracting facts from messages...")
         facts = await self._extract_facts(messages)
@@ -855,6 +864,9 @@ class AsyncMemory(MemoryBase):
             category = enhanced_metadata.get("category", "")
             enhanced_metadata = {k: v for k, v in enhanced_metadata.items() if k != "category"}
         
+        # Use self.agent_id as fallback if agent_id is not provided
+        agent_id = agent_id or self.agent_id
+        
         # Create memory data
         memory_data = {
             "content": content,
@@ -884,6 +896,9 @@ class AsyncMemory(MemoryBase):
         metadata: Optional[Dict[str, Any]] = None,
     ):
         """Update a memory asynchronously with optional embeddings."""
+        # Use self.agent_id as fallback if agent_id is not provided
+        agent_id = agent_id or self.agent_id
+        
         # Validate content is not empty
         if not content or not content.strip():
             raise ValueError(f"Cannot update memory with empty content: '{content}'")

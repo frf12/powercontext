@@ -1,6 +1,6 @@
 # powermem - Intelligent Memory System
 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
 powermem is an AI-powered intelligent memory management system that provides a persistent memory layer for LLM applications. It enables applications to store, retrieve, and manage memories intelligently across multiple agents and users.

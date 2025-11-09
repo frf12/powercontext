@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-e2e test-coverage test-fast test-slow lint format clean build upload docs
+.PHONY: help install install-dev test test-unit test-integration test-e2e test-coverage test-fast test-slow lint format clean build build-package build-check publish-pypi publish-testpypi install-build-tools upload docs
 
 help: ## Show help information
 	@echo "powermem Project Build Tools"
@@ -93,9 +93,60 @@ clean-test: ## Clean test artifacts only
 	rm -rf htmlcov/
 	rm -rf .mypy_cache/
 
-# Build
-build: ## Build package
-	python -m build --outdir build
+# Build and Package
+build: ## Build package (legacy, use build-package)
+	@echo "Use 'make build-package' instead"
+	$(MAKE) build-package
+
+build-package: clean ## Build distribution packages (wheel and sdist)
+	@echo "Building distribution packages..."
+	python -m build
+	@echo "Build complete! Distribution files are in dist/"
+	@ls -lh dist/
+
+build-check: build-package ## Check the built package
+	@echo "Checking built package..."
+	python -m twine check dist/*
+	@echo "Package check passed!"
+
+install-build-tools: ## Install build and upload tools
+	@echo "Installing build tools..."
+	pip install --upgrade build twine
+	@echo "Build tools installed!"
+
+# PyPI Publishing
+publish-pypi: build-check ## Publish to PyPI (requires credentials)
+	@echo "Publishing to PyPI..."
+	@echo "Make sure you have:"
+	@echo "   1. Updated version in pyproject.toml"
+	@echo "   2. Tested the package locally"
+	@echo "   3. Created a git tag for the version"
+	@read -p "Continue with upload to PyPI? (y/N) " -n 1 -r; \
+	echo; \
+	if [[ ! $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "Upload cancelled."; \
+		exit 1; \
+	fi
+	python -m twine upload dist/*
+	@echo "Upload complete!"
+	@echo "Package available at: https://pypi.org/project/powermem/"
+
+publish-testpypi: build-check ## Publish to TestPyPI (for testing)
+	@echo "Publishing to TestPyPI..."
+	@read -p "Continue with upload to TestPyPI? (y/N) " -n 1 -r; \
+	echo; \
+	if [[ ! $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "Upload cancelled."; \
+		exit 1; \
+	fi
+	python -m twine upload --repository testpypi dist/*
+	@echo "Upload complete!"
+	@echo "Package available at: https://test.pypi.org/project/powermem/"
+
+install-local: build-package ## Install package locally from dist/
+	@echo "Installing package locally..."
+	pip install --force-reinstall dist/powermem-*.whl
+	@echo "Package installed locally!"
 
 # Benchmark and performance
 benchmark: ## Run performance tests
