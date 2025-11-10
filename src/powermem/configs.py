@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from powermem.integrations.embeddings.configs import EmbedderConfig
 from powermem.integrations.llm import LlmConfig
 from powermem.storage.configs import VectorStoreConfig, GraphStoreConfig
+from powermem.integrations.rerank.configs import RerankConfig
 
 
 class IntelligentMemoryConfig(BaseModel):
@@ -186,6 +187,10 @@ class MemoryConfig(BaseModel):
         description="Configuration for the graph",
         default_factory=GraphStoreConfig,
     )
+    reranker: Optional[RerankConfig] = Field(
+        description="Configuration for the reranker",
+        default=None,
+    )
     version: str = Field(
         description="The version of the API",
         default="v1.1",
@@ -236,3 +241,5 @@ class MemoryConfig(BaseModel):
             self.audit = AuditConfig()
         if self.logging is None:
             self.logging = LoggingConfig()
+        if self.reranker is None:
+            self.reranker = RerankConfig()

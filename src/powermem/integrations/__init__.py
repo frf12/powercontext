@@ -7,9 +7,11 @@ This module provides integrations with LLMs, embeddings, rerank, and other servi
 from .llm.factory import LLMFactory
 from .embeddings.factory import EmbedderFactory
 from .rerank.factory import RerankFactory
+from .rerank.configs import RerankConfig
 
 __all__ = [
     "LLMFactory",
     "EmbedderFactory",
     "RerankFactory",
+    "RerankConfig",
 ]

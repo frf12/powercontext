@@ -18,6 +18,7 @@ from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
+from ..integrations.rerank.factory import RerankFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
@@ -165,17 +166,28 @@ class Memory(MemoryBase):
 
         # Initialize reranker if configured
         reranker = None
-        rerank_config = self.config.get('rerank', {})
-        if rerank_config:
-            try:
-                from ..integrations import RerankFactory
-                provider = rerank_config.get('provider', 'qwen')
-                reranker_params = rerank_config.get('config', {})
-                reranker = RerankFactory.create(provider, reranker_params)
-                logger.info(f"Reranker initialized: {provider}")
-            except Exception as e:
-                logger.warning(f"Failed to initialize reranker: {e}")
-                reranker = None
+        if self.memory_config and hasattr(self.memory_config, 'reranker'):
+            rerank_obj = self.memory_config.reranker
+            if rerank_obj.enabled:
+                try:
+                    provider = rerank_obj.provider
+                    reranker_params = rerank_obj.config if rerank_obj.config else {}
+                    reranker = RerankFactory.create(provider, reranker_params)
+                    logger.info(f"Reranker initialized from MemoryConfig: {provider}")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize reranker from MemoryConfig: {e}")
+                    reranker = None
+        else:
+            rerank_config = self.config.get('reranker', {})
+            if rerank_config:
+                try:
+                    provider = rerank_config.get('provider', 'qwen')
+                    reranker_params = rerank_config.get('config', {})
+                    reranker = RerankFactory.create(provider, reranker_params)
+                    logger.info(f"Reranker initialized from JSON config: {provider}")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize reranker from JSON config: {e}")
+                    reranker = None
         
         # Initialize components
         vector_store_config = self._get_component_config('vector_store')
