@@ -201,6 +201,7 @@ elif DB_TYPE == "postgres":
     }
 DEFAULT_CONFIG = {
     "version": "v1.1",
+    "reranker": {"enabled":True,"provider": "qwen", "config": {"model": "qwen3-rerank","api_key": OPENAI_API_KEY}},
     "vector_store": vector_store,
     # "graph_store": {
     #     "provider": "neo4j",
