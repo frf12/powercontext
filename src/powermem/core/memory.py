@@ -163,8 +163,28 @@ class Memory(MemoryBase):
         self.llm_provider = llm_provider or self._get_provider('llm', 'mock')
         self.embedding_provider = embedding_provider or self._get_provider('embedder', 'mock')
 
+        # Initialize reranker if configured
+        reranker = None
+        rerank_config = self.config.get('rerank', {})
+        if rerank_config:
+            try:
+                from ..integrations import RerankFactory
+                provider = rerank_config.get('provider', 'qwen')
+                reranker_params = rerank_config.get('config', {})
+                reranker = RerankFactory.create(provider, reranker_params)
+                logger.info(f"Reranker initialized: {provider}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize reranker: {e}")
+                reranker = None
+        
         # Initialize components
         vector_store_config = self._get_component_config('vector_store')
+        
+        # Pass reranker to vector store if it's OceanBase
+        if self.storage_type.lower() == 'oceanbase' and reranker:
+            vector_store_config['reranker'] = reranker
+            logger.debug("Reranker passed to OceanBase vector store")
+        
         vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
 
         # Extract graph_store config
