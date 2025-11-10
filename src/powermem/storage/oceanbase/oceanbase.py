@@ -821,9 +821,9 @@ class OceanBaseVectorStore(VectorStoreBase):
                        fusion_method: str = "rrf", k: int = 60):
         """Perform hybrid search combining vector and full-text search with optional reranking."""
         # Determine candidate limit for reranking
-        # If reranker is enabled, retrieve more candidates for better reranking
         candidate_limit = limit * 3 if self.reranker else limit
-        
+        coarse_ranked_limit = limit * 2 if self.reranker else limit
+
         # Perform vector search and full-text search in parallel for better performance
         with ThreadPoolExecutor(max_workers=2) as executor:
             # Submit both searches concurrently
@@ -835,7 +835,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Step 1: Coarse ranking - Combine results using RRF or weighted fusion
         coarse_ranked_results = self._combine_search_results(
-            vector_results, fts_results, candidate_limit, fusion_method, k
+            vector_results, fts_results, coarse_ranked_limit, fusion_method, k
         )
         logger.debug(f"Coarse ranking completed, candidates: {len(coarse_ranked_results)}")
         
