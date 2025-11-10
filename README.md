@@ -1,37 +1,69 @@
-# powermem - Intelligent Memory System
+[English](README.md) | [中文](README_CN.md) | [日本語](README_JP.md)
 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+<p align="center">
+    <a href="https://github.com/oceanbase/powermem/blob/master/LICENSE">
+        <img alt="license" src="https://img.shields.io/badge/license-Apache%202.0-green.svg" />
+    </a>
+    <a href="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg">
+        <img alt="pyversions" src="https://img.shields.io/badge/python%20-3.10.0%2B-blue.svg" />
+    </a>
+    <a href="https://deepwiki.com/oceanbase/powermem">
+        <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg" />
+    </a>
+</p>
 
-powermem is an AI-powered intelligent memory management system that provides a persistent memory layer for LLM applications. It enables applications to store, retrieve, and manage memories intelligently across multiple agents and users.
+# PowerMem - Intelligent Memory System
 
-## ✨ Key Features
+In AI application development, enabling large language models to persistently "remember" historical conversations, user preferences, and contextual information is a core challenge. PowerMem combines a hybrid storage architecture of vector retrieval, full-text search, and graph databases, and introduces the Ebbinghaus forgetting curve theory from cognitive science to build a powerful memory infrastructure for AI applications. The system also provides comprehensive multi-agent support capabilities, including agent memory isolation, cross-agent collaboration and sharing, fine-grained permission control, and privacy protection mechanisms, enabling multiple AI agents to achieve efficient collaboration while maintaining independent memory spaces.
 
-### 🧠 Intelligent Memory Management
+PowerMem is deeply optimized for OceanBase database, including hybrid retrieval capabilities of vector search and full-text search, support for Sub Stores for data partitioning management, automatic vector index configuration, and flexible selection of various vector index types (HNSW, IVF, FLAT, etc.), providing excellent performance and scalability for large-scale enterprise applications. Whether building intelligent customer service systems, personalized AI assistants, or multi-agent collaboration platforms, PowerMem provides enterprise-grade memory management capabilities, enabling AI to truly have "memory" capabilities.
+
+## Architecture
+
+![Architecture Diagram](docs/images/powermem_en.png)
+
+PowerMem is built with a modular architecture that supports:
+
+- **Core Memory Engine**: Base memory operations and intelligent management
+- **Agent Framework**: Multi-agent support with collaboration and permissions
+- **Storage Adapters**: Pluggable storage backends (vector, graph, and hybrid)
+- **Graph Storage**: Relationship-based graph storage for complex memory interconnections
+- **LLM Integrations**: Multiple LLM provider support
+- **Embedding Services**: Various embedding model integrations
+
+For detailed architecture information, see the [Architecture Guide](docs/architecture/overview.md).
+
+## Key Features
+
+### Intelligent Memory Management
 - **Ebbinghaus Forgetting Curve**: Smart memory optimization based on cognitive science
 - **Automatic Importance Scoring**: AI-powered memory importance evaluation
 - **Memory Decay & Reinforcement**: Dynamic memory retention based on usage patterns
 - **Intelligent Retrieval**: Context-aware memory search and ranking
 
-### 🤖 Multi-Agent Support
+### Multi-Agent Support
 - **Agent Isolation**: Separate memory spaces for different agents
 - **Cross-Agent Collaboration**: Shared memory access and collaboration tracking
 - **Permission Control**: Fine-grained access control for agent memories
 - **Privacy Protection**: Built-in privacy controls and data protection
 
-### 💾 Multiple Storage Backends
-- **OceanBase**: Default enterprise-grade, scalable vector database
+### Multiple Storage Backends
+- **OceanBase**: Default enterprise-grade, scalable vector database with deep optimizations:
+  - Hybrid retrieval capabilities of vector search and full-text search
+  - Sub Stores support for data partitioning management
+  - Automatic vector index configuration
+  - Flexible selection of various vector index types (HNSW, IVF, FLAT, etc.)
 - **SQLite**: Lightweight, file-based storage for development
 - **PostgreSQL**: Open-source vector database solution
 - **Custom Adapters**: Extensible storage architecture
 
-### 🕸️ Graph-Based Memory Storage
+### Graph-Based Memory Storage
 - **Knowledge Graph**: Extract entities and relationships to build knowledge graphs
 - **Graph Retrieval**: Multi-hop graph traversal for complex memory relationships
 - **Relationship Search**: Discover connections between memories through graph queries
 - **Hybrid Storage**: Combine vector search with graph relationships for enhanced retrieval
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -67,7 +99,7 @@ for memory in memories:
 
 For more detailed examples and usage patterns, see the [Getting Started Guide](docs/guides/0001-getting_started.md).
 
-## 📚 Documentation
+## Documentation
 
 - **[Getting Started](docs/guides/0001-getting_started.md)**: Installation and quick start guide
 - **[Configuration Guide](docs/guides/0002-configuration.md)**: Complete configuration options
@@ -77,20 +109,7 @@ For more detailed examples and usage patterns, see the [Getting Started Guide](d
 - **[Architecture Guide](docs/architecture/overview.md)**: System architecture and design
 - **[Examples](docs/examples/overview.md)**: Interactive Jupyter notebooks and use cases
 
-## 🏗️ Architecture
-
-powermem is built with a modular architecture that supports:
-
-- **Core Memory Engine**: Base memory operations and intelligent management
-- **Agent Framework**: Multi-agent support with collaboration and permissions
-- **Storage Adapters**: Pluggable storage backends (vector, graph, and hybrid)
-- **Graph Storage**: Relationship-based graph storage for complex memory interconnections
-- **LLM Integrations**: Multiple LLM provider support
-- **Embedding Services**: Various embedding model integrations
-
-For detailed architecture information, see the [Architecture Guide](docs/architecture/overview.md).
-
-## 🔧 Development
+## Development
 
 ### Setup Development Environment
 
@@ -103,17 +122,17 @@ cd powermem
 pip install -e ".[dev,test,llm,vector_stores]"
 ```
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see our contributing guidelines and code of conduct.
 
-## 📞 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/oceanbase/powermem/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/oceanbase/powermem/discussions)
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
