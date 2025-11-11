@@ -16,6 +16,7 @@ Each scenario is available as both:
 - **[Scenario 4: Async Operations](scenario_4_async_operations.ipynb)** - Async memory operations
 - **[Scenario 5: Custom Integration](scenario_5_custom_integration.ipynb)** - Custom integrations
 - **[Scenario 6: Sub Stores](scenario_6_sub_stores.ipynb)** - Sub Memory partitioning
+- **[Scenario 7: Multimodal Capability](scenario_7_multimodal.ipynb)** - Image and multimedia processing
 
 ### Markdown Documentation
 
@@ -25,6 +26,7 @@ Each scenario is available as both:
 - [Scenario 4: Async Operations](scenario_4_async_operations.md)
 - [Scenario 5: Custom Integration](scenario_5_custom_integration.md)
 - [Scenario 6: Sub Stores](scenario_6_sub_stores.md)
+- [Scenario 7: Multimodal Capability](scenario_7_multimodal.md)
 
 ## Quick Start
 
@@ -65,6 +67,7 @@ Each notebook includes:
 4. **Check Scenario 4** - Learn async operations
 5. **Scenario 5** - Custom integrations for advanced users
 6. **Scenario 6** - Sub stores for memory partitioning and optimization
+7. **Scenario 7** - Multimodal capability for image and multimedia processing
 
 ## Requirements
 

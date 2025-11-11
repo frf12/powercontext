@@ -304,8 +304,24 @@ def parse_vision_messages(messages: List[Dict[str, Any]], llm: Any = None, visio
 
         content = msg["content"]
         if isinstance(content, list):
-            description = get_image_description(msg, llm, vision_details)
-            returned_messages.append({"role": msg["role"], "content": description})
+            # Process multimodal message list, handling text and images separately
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        # Keep text content
+                        text_content = item.get("text", "")
+                        if text_content:
+                            returned_messages.append({"role": msg["role"], "content": text_content})
+                    elif item.get("type") == "image_url":
+                        # Convert image to description
+                        image_url = item.get("image_url", {}).get("url")
+                        if image_url:
+                            try:
+                                description = get_image_description(image_url, llm, vision_details)
+                                if description:
+                                    returned_messages.append({"role": msg["role"], "content": description})
+                            except Exception as e:
+                                raise Exception(f"Error while processing image {image_url}: {e}")
         elif isinstance(content, dict) and content.get("type") == "image_url":
             image_url = content.get("image_url", {}).get("url")
             try:
