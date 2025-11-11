@@ -868,9 +868,10 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         # Extract document texts from candidates
         documents = [result.payload.get('data', '') for result in candidates]
-        
+
+        instruct = "Given a user search query and a candidate passage, determine how relevant the passage is to answering the query. Score higher if the passage directly addresses the user's intent or provides useful information related to the query."
         # Call reranker to get reranked indices and scores
-        reranked_indices = self.reranker.rerank(query, documents, top_n=limit)
+        reranked_indices = self.reranker.rerank(query, documents, top_n=limit,instruct=instruct)
         
         # Reconstruct results with rerank scores
         final_results = []

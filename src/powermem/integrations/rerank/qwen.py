@@ -50,7 +50,8 @@ class QwenRerank(RerankBase):
         self, 
         query: str, 
         documents: List[str], 
-        top_n: Optional[int] = None
+        top_n: Optional[int] = None,
+        instruct: Optional[str] = None
     ) -> List[Tuple[int, float]]:
         """
         Rerank documents based on relevance to the query using Qwen3 Rerank model.
@@ -59,6 +60,7 @@ class QwenRerank(RerankBase):
             query (str): The search query
             documents (List[str]): List of document texts to rerank
             top_n (Optional[int]): Number of top results to return. If None, uses config.top_n
+            instruct (Optional[str]): Instruct for rerank
 
         Returns:
             List[Tuple[int, float]]: List of (document_index, relevance_score) tuples,
@@ -83,14 +85,23 @@ class QwenRerank(RerankBase):
         
         try:
             # Call the Rerank API
-            # Note: documents parameter should be a list of strings directly
-            response = TextReRank.call(
-                model=self.config.model,
-                query=query,
-                documents=documents,  # Pass documents as list of strings directly
-                top_n=effective_top_n,
-                return_documents=False,  # We don't need the full documents, just indices and scores
-            )
+            if instruct is not None:
+                response = TextReRank.call(
+                    model=self.config.model,
+                    query=query,
+                    documents=documents,
+                    top_n=effective_top_n,
+                    return_documents=False,
+                    instruct=instruct
+                )
+            else:
+                response = TextReRank.call(
+                    model=self.config.model,
+                    query=query,
+                    documents=documents,
+                    top_n=effective_top_n,
+                    return_documents=False,
+                )
 
             # Check response status
             if response.status_code != 200:
@@ -119,7 +130,8 @@ class QwenRerank(RerankBase):
         self, 
         query: str, 
         documents: List[str], 
-        top_n: Optional[int] = None
+        top_n: Optional[int] = None,
+        instruct: Optional[str] = None
     ) -> List[Tuple[str, float]]:
         """
         Rerank documents and return texts with scores instead of indices.
@@ -128,13 +140,14 @@ class QwenRerank(RerankBase):
             query (str): The search query
             documents (List[str]): List of document texts to rerank
             top_n (Optional[int]): Number of top results to return
+            instruct (Optional[str]): Instruct for rerank
 
         Returns:
             List[Tuple[str, float]]: List of (document_text, relevance_score) tuples,
                                      sorted by relevance score in descending order
         """
         # Get reranked indices and scores
-        reranked_results = self.rerank(query, documents, top_n)
+        reranked_results = self.rerank(query, documents, top_n,instruct)
         
         # Map indices back to document texts
         results_with_texts = [
