@@ -822,7 +822,6 @@ class OceanBaseVectorStore(VectorStoreBase):
         """Perform hybrid search combining vector and full-text search with optional reranking."""
         # Determine candidate limit for reranking
         candidate_limit = limit * 3 if self.reranker else limit
-        coarse_ranked_limit = limit * 2 if self.reranker else limit
 
         # Perform vector search and full-text search in parallel for better performance
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -835,7 +834,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Step 1: Coarse ranking - Combine results using RRF or weighted fusion
         coarse_ranked_results = self._combine_search_results(
-            vector_results, fts_results, coarse_ranked_limit, fusion_method, k
+            vector_results, fts_results, candidate_limit, fusion_method, k
         )
         logger.debug(f"Coarse ranking completed, candidates: {len(coarse_ranked_results)}")
         
@@ -884,7 +883,26 @@ class OceanBaseVectorStore(VectorStoreBase):
             result.payload['_rerank_score'] = rerank_score
             final_results.append(result)
         
+        # Reorder results: high scores on both ends, low scores in the middle
+        if len(final_results) > 1:
+            reordered = [None] * len(final_results)
+            left = 0
+            right = len(final_results) - 1
+            
+            for i, result in enumerate(final_results):
+                if i % 2 == 0:
+                    # Even indices go to the left side
+                    reordered[left] = result
+                    left += 1
+                else:
+                    # Odd indices go to the right side
+                    reordered[right] = result
+                    right -= 1
+            
+            final_results = reordered
+        
         logger.debug(f"Rerank completed: {len(final_results)} results")
+
         return final_results
 
     def _combine_search_results(self, vector_results: List[OutputData], fts_results: List[OutputData],
