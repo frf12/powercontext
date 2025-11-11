@@ -15,6 +15,7 @@ Each scenario is available as both:
 - **[Scenario 3: Multi-Agent](scenario_3_multi_agent.ipynb)** - Multi-agent scenarios
 - **[Scenario 4: Async Operations](scenario_4_async_operations.ipynb)** - Async memory operations
 - **[Scenario 5: Custom Integration](scenario_5_custom_integration.ipynb)** - Custom integrations
+- **[Scenario 6: Sub Stores](scenario_6_sub_stores.ipynb)** - Sub Memory partitioning
 
 ### Markdown Documentation
 
@@ -23,6 +24,7 @@ Each scenario is available as both:
 - [Scenario 3: Multi-Agent](scenario_3_multi_agent.md)
 - [Scenario 4: Async Operations](scenario_4_async_operations.md)
 - [Scenario 5: Custom Integration](scenario_5_custom_integration.md)
+- [Scenario 6: Sub Stores](scenario_6_sub_stores.md)
 
 ## Quick Start
 
@@ -61,7 +63,8 @@ Each notebook includes:
 2. **Explore Scenario 2** - Understand intelligent memory features
 3. **Try Scenario 3** - Work with multi-agent scenarios
 4. **Check Scenario 4** - Learn async operations
-5. **Advanced users**: See Scenario 5 for custom integrations
+5. **Scenario 5** - Custom integrations for advanced users
+6. **Scenario 6** - Sub stores for memory partitioning and optimization
 
 ## Requirements
 
