@@ -15,7 +15,7 @@ Each scenario is available as both:
 - **[Scenario 3: Multi-Agent](scenario_3_multi_agent.ipynb)** - Multi-agent scenarios
 - **[Scenario 4: Async Operations](scenario_4_async_operations.ipynb)** - Async memory operations
 - **[Scenario 5: Custom Integration](scenario_5_custom_integration.ipynb)** - Custom integrations
-- **[Scenario 6: Sub Stores](scenario_6_sub_stores.ipynb)** - 内存分区管理 (Memory partitioning)
+- **[Scenario 6: Sub Stores](scenario_6_sub_stores.ipynb)** - Sub Memory partitioning
 
 ### Markdown Documentation
 
@@ -24,7 +24,7 @@ Each scenario is available as both:
 - [Scenario 3: Multi-Agent](scenario_3_multi_agent.md)
 - [Scenario 4: Async Operations](scenario_4_async_operations.md)
 - [Scenario 5: Custom Integration](scenario_5_custom_integration.md)
-- [Scenario 6: Sub Stores](scenario_6_sub_stores.md) - 内存分区管理
+- [Scenario 6: Sub Stores](scenario_6_sub_stores.md)
 
 ## Quick Start
 
