@@ -10,6 +10,7 @@ Comprehensive guides for using powermem effectively.
 - **[Multi-Agent Guide](0004-multi_agent.md)** - Multi-agent scenarios
 - **[Integrations Guide](0005-integrations.md)** - Third-party integrations
 - **[Sub Stores Guide](0006-sub_stores.md)** - Advanced sub-store configuration
+- **[Multimodal Capability](../examples/scenario_7_multimodal.md)** - Image and multimedia processing
 
 ## Quick Navigation
 
@@ -18,3 +19,4 @@ Comprehensive guides for using powermem effectively.
 - **Multi-agent?** See [Multi-Agent Guide](0004-multi_agent.md)
 - **Advanced features?** Check [Sub Stores Guide](0006-sub_stores.md)
 - **Integrations?** Check [Integrations Guide](0005-integrations.md)
+- **Multimodal?** See [Multimodal Capability](../examples/scenario_7_multimodal.md)
