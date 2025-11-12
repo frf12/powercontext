@@ -63,6 +63,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
             vector_weight: float = 0.5,
             fts_weight: float = 0.5,
+            reranker: Optional[Any] = None,
             **kwargs,
     ):
         """
@@ -99,6 +100,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         self.fulltext_parser = fulltext_parser
         self.vector_weight = vector_weight
         self.fts_weight = fts_weight
+        self.reranker = reranker
 
         # Validate fulltext parser
         if self.fulltext_parser not in constants.OCEANBASE_SUPPORTED_FULLTEXT_PARSERS:
@@ -817,22 +819,91 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _hybrid_search(self, query: str, vectors: List[List[float]], limit: int = 5, filters: Optional[Dict] = None,
                        fusion_method: str = "rrf", k: int = 60):
-        """Perform hybrid search combining vector and full-text search."""
+        """Perform hybrid search combining vector and full-text search with optional reranking."""
+        # Determine candidate limit for reranking
+        candidate_limit = limit * 3 if self.reranker else limit
+
         # Perform vector search and full-text search in parallel for better performance
         with ThreadPoolExecutor(max_workers=2) as executor:
             # Submit both searches concurrently
-            vector_future = executor.submit(self._vector_search, query, vectors, limit, filters)
-            fts_future = executor.submit(self._fulltext_search, query, limit, filters)
+            vector_future = executor.submit(self._vector_search, query, vectors, candidate_limit, filters)
+            fts_future = executor.submit(self._fulltext_search, query, candidate_limit, filters)
             # Wait for both to complete and get results
             vector_results = vector_future.result()
             fts_results = fts_future.result()
 
-        # Combine and rerank results using specified fusion method
-        hybrid_results = self._combine_search_results(
-            vector_results, fts_results, limit, fusion_method, k
+        # Step 1: Coarse ranking - Combine results using RRF or weighted fusion
+        coarse_ranked_results = self._combine_search_results(
+            vector_results, fts_results, candidate_limit, fusion_method, k
         )
-        logger.debug(f"_hybrid_search results, len : {len(hybrid_results)}")
-        return hybrid_results
+        logger.debug(f"Coarse ranking completed, candidates: {len(coarse_ranked_results)}")
+        
+        # Step 2: Fine ranking - Use Rerank model for precision sorting (if enabled)
+        if self.reranker and query and coarse_ranked_results:
+            try:
+                final_results = self._apply_rerank(query, coarse_ranked_results, limit)
+                logger.debug(f"Rerank applied, final results: {len(final_results)}")
+                return final_results
+            except Exception as e:
+                logger.warning(f"Rerank failed, falling back to coarse ranking: {e}")
+                return coarse_ranked_results[:limit]
+        else:
+            # No reranker, return coarse ranking results
+            return coarse_ranked_results[:limit]
+
+    def _apply_rerank(self, query: str, candidates: List[OutputData], limit: int) -> List[OutputData]:
+        """
+        Apply Rerank model for precision sorting.
+        
+        Args:
+            query: Search query text
+            candidates: Candidate results from coarse ranking
+            limit: Number of final results to return
+            
+        Returns:
+            List of reranked OutputData objects
+        """
+        if not candidates:
+            return []
+        
+        # Extract document texts from candidates
+        documents = [result.payload.get('data', '') for result in candidates]
+
+        # Call reranker to get reranked indices and scores
+        reranked_indices = self.reranker.rerank(query, documents, top_n=limit)
+        
+        # Reconstruct results with rerank scores
+        final_results = []
+        for idx, rerank_score in reranked_indices:
+            result = candidates[idx]
+            # Preserve original scores in payload
+            result.payload['_fusion_score'] = result.score
+            # Update score to rerank score
+            result.score = rerank_score
+            result.payload['_rerank_score'] = rerank_score
+            final_results.append(result)
+        
+        # Reorder results: high scores on both ends, low scores in the middle
+        if len(final_results) > 1:
+            reordered = [None] * len(final_results)
+            left = 0
+            right = len(final_results) - 1
+            
+            for i, result in enumerate(final_results):
+                if i % 2 == 0:
+                    # Even indices go to the left side
+                    reordered[left] = result
+                    left += 1
+                else:
+                    # Odd indices go to the right side
+                    reordered[right] = result
+                    right -= 1
+            
+            final_results = reordered
+        
+        logger.debug(f"Rerank completed: {len(final_results)} results")
+
+        return final_results
 
     def _combine_search_results(self, vector_results: List[OutputData], fts_results: List[OutputData],
                                 limit: int, fusion_method: str = "rrf", k: int = 60):
