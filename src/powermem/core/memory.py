@@ -227,7 +227,8 @@ class Memory(MemoryBase):
             self.storage = SubStorageAdapter(vector_store, self.embedding)
             logger.info("Using SubStorageAdapter with sub-store support")
         else:
-            # Use basic StorageAdapter for single store operations
+            if sub_stores_list:
+                logger.warning("The sub_stores function currently only supports oceanbase")
             self.storage = StorageAdapter(vector_store, self.embedding)
             logger.info("Using basic StorageAdapter")
 
