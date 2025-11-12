@@ -179,7 +179,7 @@ class Memory(MemoryBase):
                     reranker = None
         else:
             rerank_config = self.config.get('reranker', {})
-            if rerank_config:
+            if rerank_config is not None and rerank_config.get('enabled', False):
                 try:
                     provider = rerank_config.get('provider', 'qwen')
                     reranker_params = rerank_config.get('config', {})
@@ -238,7 +238,8 @@ class Memory(MemoryBase):
             self.storage = SubStorageAdapter(vector_store, self.embedding)
             logger.info("Using SubStorageAdapter with sub-store support")
         else:
-            # Use basic StorageAdapter for single store operations
+            if sub_stores_list:
+                logger.warning("The sub_stores function currently only supports oceanbase")
             self.storage = StorageAdapter(vector_store, self.embedding)
             logger.info("Using basic StorageAdapter")
 

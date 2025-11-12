@@ -5,12 +5,34 @@ This module provides OceanBase-based graph storage for memory data.
 """
 import json
 import logging
+import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-from pyobvector import ObVecClient, l2_distance, VECTOR, VecIndexType
 from sqlalchemy import bindparam, text, MetaData, Column, String, Index, Table, BigInteger
 from sqlalchemy.dialects.mysql import TIMESTAMP
+from sqlalchemy.exc import SAWarning
+
+# Suppress SQLAlchemy warnings about unknown schema content from pyobvector
+# These warnings occur because SQLAlchemy doesn't recognize OceanBase VECTOR index syntax
+# This is harmless as pyobvector handles VECTOR types correctly
+warnings.filterwarnings(
+    "ignore",
+    message="Unknown schema content",
+    category=SAWarning,
+    module="pyobvector.*"
+)
+
+# Suppress pkg_resources deprecation warning from jieba internal usage
+# This warning is from jieba's internal use of deprecated pkg_resources API
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API",
+    category=UserWarning,
+    module="jieba.*"
+)
+
+from pyobvector import ObVecClient, l2_distance, VECTOR, VecIndexType
 
 from powermem.integrations import EmbedderFactory, LLMFactory
 from powermem.storage.base import GraphStoreBase
