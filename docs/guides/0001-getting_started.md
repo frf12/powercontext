@@ -10,16 +10,6 @@ Welcome to powermem! This guide will help you get started quickly.
 pip install powermem
 ```
 
-### With Dependencies
-
-```bash
-# With LLM and vector store dependencies
-pip install powermem[llm,vector_stores]
-
-# For development with all dependencies
-pip install powermem[dev,test,llm,vector_stores,extras]
-```
-
 ## Quick Start
 
 ### Simplest Example

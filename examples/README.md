@@ -35,6 +35,22 @@ This directory contains various examples demonstrating how to use powermem with 
   - Conflict resolution (contradiction handling)
   - Comparison between simple and intelligent modes
 
+### 4. Healthcare Support Bot (`healthcare_support_bot/`)
+- **Database**: OceanBase
+- **Purpose**: AI Healthcare Support Bot using PowerMem + LangChain
+- **Features**: Patient memory management, symptom tracking, medical history, intelligent context retrieval
+- **Run**: 
+  - Demo mode: `python examples/langchain/healthcare_support_bot.py --mode demo`
+  - Interactive mode: `python examples/langchain/healthcare_support_bot.py --mode interactive`
+- **Demonstrates**:
+  - Integration with LangChain for conversation handling
+  - Persistent patient memory across conversations with OceanBase
+  - Intelligent fact extraction (symptoms, medications, history)
+  - Context-aware responses based on patient history
+  - Privacy-aware patient data isolation
+  - Multi-turn conversation support
+  - Scalable storage with OceanBase vector database
+
 ## Configuration Files
 
 - `configs/powermem.env` - OceanBase configuration template (copy from `configs/powermem.env.example` if needed)
@@ -69,6 +85,11 @@ This directory contains various examples demonstrating how to use powermem with 
    # Run specific scenario in intelligent memory demo
    python examples/intelligent_memory_demo.py 1  # Run scenario 1
    python examples/intelligent_memory_demo.py compare  # Compare modes
+   
+   # Healthcare Support Bot (PowerMem + LangChain integration with OceanBase)
+   cd examples/healthcare_support_bot
+   python healthcare_support_bot.py --mode demo  # Predefined demo conversation
+   python healthcare_support_bot.py --mode interactive  # Interactive chat mode
    ```
 
 ## Database Backends
@@ -231,9 +252,18 @@ EMBEDDING_DIMS=1536
 - `pyobvector` - OceanBase vector operations
 - `sqlalchemy` - Database ORM
 
+### LangChain Integration Dependencies (for Healthcare Support Bot)
+- `langchain` - LangChain core library
+- `langchain-community` - Community integrations
+- `langchain-openai` - OpenAI integration (optional, for OpenAI models)
+
 Install all dependencies:
 ```bash
+# Basic dependencies
 pip install python-dotenv dashscope pyobvector sqlalchemy
+
+# For Healthcare Support Bot (LangChain integration)
+pip install langchain langchain-community langchain-openai
 ```
 
 ## Troubleshooting
