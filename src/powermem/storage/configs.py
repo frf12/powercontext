@@ -25,7 +25,6 @@ class VectorStoreConfig(BaseModel):
     _provider_configs: Dict[str, str] = {
         "oceanbase": "OceanBaseConfig",
         "pgvector": "PGVectorConfig",
-        "postgres": "PGVectorConfig",
         "sqlite": "SQLiteConfig",
     }
 
@@ -37,6 +36,9 @@ class VectorStoreConfig(BaseModel):
         """
         provider = self.provider
         config = self.config
+
+        if provider is not None and provider == "postgres":
+            provider = "pgvector"
 
         if provider not in self._provider_configs:
             raise ValueError(f"Unsupported vector store provider: {provider}")
