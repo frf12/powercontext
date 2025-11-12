@@ -227,6 +227,10 @@ class MemoryConfig(BaseModel):
         description="Configuration for application logging",
         default=None,
     )
+    audio_llm: Optional[LlmConfig] = Field(
+        description="Configuration for audio language model",
+        default=None,
+    )
 
 
     def __init__(self, **data):
