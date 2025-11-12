@@ -7,6 +7,7 @@ from powermem.integrations.llm.config.deepseek import DeepSeekConfig
 from powermem.integrations.llm.config.ollama import OllamaConfig
 from powermem.integrations.llm.config.openai import OpenAIConfig
 from powermem.integrations.llm.config.qwen import QwenConfig
+from powermem.integrations.llm.config.qwen_asr import QwenASRConfig
 from powermem.integrations.llm.config.vllm import VllmConfig
 
 
@@ -33,6 +34,7 @@ class LLMFactory:
         "vllm": ("powermem.integrations.llm.vllm.VllmLLM", VllmConfig),
         "langchain": ("powermem.integrations.llm.langchain.LangchainLLM", BaseLLMConfig),
         "qwen": ("powermem.integrations.llm.qwen.QwenLLM", QwenConfig),
+        "qwen_asr": ("powermem.integrations.llm.qwen_asr.QwenASR", QwenASRConfig),
     }
 
     @classmethod
