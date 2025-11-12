@@ -146,10 +146,10 @@ class QwenASR(LLMBase):
             asr_options: Optional[dict] = None,
     ) -> str:
         """
-        Convenience method to transcribe audio from URL or local file path.
+        Convenience method to transcribe audio from URL file path.
 
         Args:
-            audio_url: URL or local file path to the audio file.
+            audio_url: URL file path to the audio file.
             system_text: Optional system message text for customization context.
             asr_options: Optional ASR-specific options (e.g., {"language": "zh", "enable_itn": True}).
 
