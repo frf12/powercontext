@@ -1,4 +1,8 @@
-[English](README.md) | [中文](README_CN.md) | [日本語](README_JP.md)
+<p align="center">
+    <a href="https://github.com/oceanbase/oceanbase">
+        <img alt="OceanBase Logo" src="docs/images/oceanbase_Logo.png" width="50%" />
+    </a>
+</p>
 
 <p align="center">
   <a href="https://powermem.ai">Learn more</a>
@@ -29,15 +33,19 @@
     </a>
 </p>
 
-<p align="center">
-  <strong>⚡ +48.53% Accuracy vs. OpenAI Memory • 🚀 91.76% Faster • 💰 96.53% Fewer Tokens</strong>
-</p>
+[English](README.md) | [中文](README_CN.md) | [日本語](README_JP.md)
 
 ## Highlights
 
-**More Accurate**: **[+48.53% Accuracy]** Outperforms OpenAI Memory in the LOCOMO benchmark
-**Faster**: **[91.76% Faster Response]** Compared to full-context methods, ensuring low latency for large-scale applications
-**More Cost-Effective**: **[96.53% Fewer Tokens]** Significantly reduces costs compared to full-context methods without sacrificing performance
+<div align="center">
+
+<img src="docs/images/benchmark_metrics_en.svg" alt="PowerMem LOCOMO Benchmark Metrics" width="900"/>
+
+</div>
+
+- **More Accurate**: **[48.77% Accuracy Improvement]** More accurate than full-context in the LOCOMO benchmark (78.70% VS 52.9%)
+- **Faster**: **[91.83% Faster Response]** Significantly reduced p95 latency for retrieval compared to full-context (1.44s VS 17.12s)
+- **More Economical**: **[96.53% Token Reduction]** Significantly reduced costs compared to full-context without sacrificing performance (0.9k VS 26k)
 
 - [See Benchmark Details](https://powermem.ai/benchmark)
 
@@ -45,43 +53,23 @@
 
 In AI application development, enabling large language models to persistently "remember" historical conversations, user preferences, and contextual information is a core challenge. PowerMem combines a hybrid storage architecture of vector retrieval, full-text search, and graph databases, and introduces the Ebbinghaus forgetting curve theory from cognitive science to build a powerful memory infrastructure for AI applications. The system also provides comprehensive multi-agent support capabilities, including agent memory isolation, cross-agent collaboration and sharing, fine-grained permission control, and privacy protection mechanisms, enabling multiple AI agents to achieve efficient collaboration while maintaining independent memory spaces.
 
-## Architecture
-
-![Architecture Diagram](docs/images/powermem_en.png)
-
-PowerMem is built with a modular architecture that supports:
-
-- **Core Memory Engine**: Base memory operations and intelligent management
-- **Agent Framework**: Multi-agent support with collaboration and permissions
-- **Storage Adapters**: Pluggable storage backends (vector, graph, and hybrid)
-- **Graph Storage**: Relationship-based graph storage for complex memory interconnections
-- **LLM Integrations**: Multiple LLM provider support
-- **Embedding Services**: Various embedding model integrations
-
-For detailed architecture information, see the [Architecture Guide](docs/architecture/overview.md).
-
-## Key Features
+## Core Features (with demo links below)
 
 ### Intelligent Memory Management
-- **Intelligent Memory Extraction**: Extract memories through LLM models
+- **[Intelligent Memory Extraction](docs/examples/scenario_2_intelligent_memory.md)**: Extract memories through LLM models
 - **Ebbinghaus Forgetting Curve**: Smart memory optimization based on cognitive science
-- **Automatic Importance Scoring**: AI-powered memory importance evaluation
 - **Memory Decay & Reinforcement**: Dynamic memory retention based on usage patterns
-- **Intelligent Retrieval**: Context-aware memory search and ranking
 
 ### Multi-Agent Support
-- **Agent Isolation**: Separate memory spaces for different agents
-- **Cross-Agent Collaboration**: Shared memory access and collaboration tracking
-- **Permission Control**: Fine-grained access control for agent memories
-- **Privacy Protection**: Built-in privacy controls and data protection
+- **[Agent Isolation](docs/examples/scenario_3_multi_agent.md)**: Separate memory spaces for different agents
+
+### Multimodal Support
+- **Text and Image Memory**: Support text and image memory storage and retrieval for richer context understanding
 
 ### Deeply Optimized Data Storage
-- **Multiple Database Support**: Extensible storage architecture supporting OceanBase, SeekDB, PostgreSQL, SQLite, and more
 - **Sub Stores Support**: Partition data management through sub stores to handle ultra-large-scale data
 - **Hybrid Retrieval**: Hybrid retrieval capabilities supporting vector search, full-text search, and graph retrieval
-- **Knowledge Graph**: Support both LLM and NLP modes to extract entities and relationships for building knowledge graphs
-- **Graph Retrieval**: Multi-hop graph traversal for complex memory relationships
-- **Relationship Search**: Discover connections between memories through graph queries
+- **Graph Retrieval**: Support LLM extraction of entities and relationships to build knowledge graphs, enabling multi-hop graph traversal for retrieving complex memory relationships
 - **Hybrid Storage**: Combine vector search with graph relationships for enhanced retrieval
 
 ### Developer Friendly
@@ -92,11 +80,7 @@ For detailed architecture information, see the [Architecture Guide](docs/archite
 ### Installation
 
 ```bash
-# Production environment, includes LLM and vector store dependencies
-pip install powermem[llm,vector_stores]
-
-# Development environment, includes all dependencies
-pip install powermem[dev,test,llm,vector_stores,extras]
+pip install powermem
 ```
 
 ### Basic Usage
@@ -122,8 +106,8 @@ For more detailed examples and usage patterns, see the [Getting Started Guide](d
 
 ## Integrations & Demos
 
-- **Langgraph Integration**: Build customer chatbots using LangGraph + PowerMem ([Example](examples))
-- **LangChain Integration**: Build multi-agent systems using LangChain + PowerMem ([Example](examples))
+- **LangChain Integration**: Build medical support chatbot using LangChain + PowerMem + OceanBase ([Example](examples/langchain/README.md))
+- **Langgraph Integration**: Build customer chatbot using LangGraph + PowerMem ([Example](examples))
 
 ## Documentation
 
@@ -146,7 +130,7 @@ git clone https://github.com/powermem/powermem.git
 cd powermem
 
 # Install development dependencies
-pip install -e ".[dev,test,llm,vector_stores]"
+pip install -e ".[dev,test]"
 ```
 
 ## Contributing
