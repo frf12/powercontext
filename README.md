@@ -53,7 +53,7 @@
 
 In AI application development, enabling large language models to persistently "remember" historical conversations, user preferences, and contextual information is a core challenge. PowerMem combines a hybrid storage architecture of vector retrieval, full-text search, and graph databases, and introduces the Ebbinghaus forgetting curve theory from cognitive science to build a powerful memory infrastructure for AI applications. The system also provides comprehensive multi-agent support capabilities, including agent memory isolation, cross-agent collaboration and sharing, fine-grained permission control, and privacy protection mechanisms, enabling multiple AI agents to achieve efficient collaboration while maintaining independent memory spaces.
 
-## Core Features (with demo links below)
+## Core Features
 
 ### Intelligent Memory Management
 - **[Intelligent Memory Extraction](docs/examples/scenario_2_intelligent_memory.md)**: Extract memories through LLM models
@@ -64,13 +64,12 @@ In AI application development, enabling large language models to persistently "r
 - **[Agent Isolation](docs/examples/scenario_3_multi_agent.md)**: Separate memory spaces for different agents
 
 ### Multimodal Support
-- **Text and Image Memory**: Support text and image memory storage and retrieval for richer context understanding
+- **Text, Image, and Audio Memory**: Support text, image, and audio memory storage and retrieval for richer context understanding
 
 ### Deeply Optimized Data Storage
-- **Sub Stores Support**: Partition data management through sub stores to handle ultra-large-scale data
+- **[Sub Stores Support](docs/examples/scenario_6_sub_stores.md)**: Partition data management through sub stores to handle ultra-large-scale data
 - **Hybrid Retrieval**: Hybrid retrieval capabilities supporting vector search, full-text search, and graph retrieval
 - **Graph Retrieval**: Support LLM extraction of entities and relationships to build knowledge graphs, enabling multi-hop graph traversal for retrieving complex memory relationships
-- **Hybrid Storage**: Combine vector search with graph relationships for enhanced retrieval
 
 ### Developer Friendly
 - **Lightweight Integration**: Support Python SDK/MCP integration, compatible with mem0 usage
@@ -107,7 +106,7 @@ For more detailed examples and usage patterns, see the [Getting Started Guide](d
 ## Integrations & Demos
 
 - **LangChain Integration**: Build medical support chatbot using LangChain + PowerMem + OceanBase ([Example](examples/langchain/README.md))
-- **Langgraph Integration**: Build customer chatbot using LangGraph + PowerMem ([Example](examples))
+- **Langgraph Integration**: Build customer chatbot using LangGraph + PowerMem + OceanBase([Example](examples/langgraph/README.md))
 
 ## Documentation
 
@@ -119,27 +118,11 @@ For more detailed examples and usage patterns, see the [Getting Started Guide](d
 - **[API Documentation](docs/api/overview.md)**: Complete API reference
 - **[Architecture Guide](docs/architecture/overview.md)**: System architecture and design
 - **[Examples](docs/examples/overview.md)**: Interactive Jupyter notebooks and use cases
-
-## Development
-
-### Setup Development Environment
-
-```bash
-# Clone repository
-git clone https://github.com/powermem/powermem.git
-cd powermem
-
-# Install development dependencies
-pip install -e ".[dev,test]"
-```
-
-## Contributing
-
-We welcome contributions! Please see our contributing guidelines and code of conduct.
+- **[Development Documentation](docs/development/overview.md)**: Developer documentation
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/oceanbase/powermem/issues)
+- **Issue Reporting**: [GitHub Issues](https://github.com/oceanbase/powermem/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/oceanbase/powermem/discussions)
 
 ---
