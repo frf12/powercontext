@@ -179,7 +179,7 @@ class Memory(MemoryBase):
                     reranker = None
         else:
             rerank_config = self.config.get('reranker', {})
-            if rerank_config:
+            if rerank_config is not None and rerank_config.get('enabled', False):
                 try:
                     provider = rerank_config.get('provider', 'qwen')
                     reranker_params = rerank_config.get('config', {})
