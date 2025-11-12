@@ -278,13 +278,67 @@ def get_image_description(image_obj: Any, llm: Any, vision_details: Any) -> str:
     return llm.generate_response(messages=messages)
 
 
-def parse_vision_messages(messages: List[Dict[str, Any]], llm: Any = None, vision_details: Any = "auto") -> List[Dict[str, Any]]:
+def _process_content_item(item: Dict[str, Any], role: str, llm: Any, vision_details: Any, audio_llm: Any) -> Optional[str]:
+    """
+    Process a single content item and return processed text content.
+    
+    Args:
+        item: Content item dict
+        role: Message role
+        llm: LLM instance for image description
+        vision_details: Vision details setting
+        audio_llm: Audio LLM instance for transcription
+        
+    Returns:
+        Processed text content or None if item should be skipped
+    """
+    if not isinstance(item, dict):
+        return None
+    
+    item_type = item.get("type")
+    
+    if item_type == "text":
+        text_content = item.get("text", "")
+        return text_content if text_content else None
+    
+    elif item_type == "image_url":
+        image_url = item.get("image_url", {}).get("url")
+        if image_url:
+            try:
+                description = get_image_description(image_url, llm, vision_details)
+                return description if description else None
+            except Exception as e:
+                raise Exception(f"Error while processing image {image_url}: {e}")
+        return None
+    
+    elif item_type == "audio":
+        if audio_llm is not None:
+            audio_content = item.get("content", {})
+            audio_url = audio_content.get("audio") if isinstance(audio_content, dict) else None
+            if audio_url:
+                try:
+                    transcribed_text = audio_llm.transcribe(audio_url=audio_url)
+                    return transcribed_text if transcribed_text else None
+                except Exception as e:
+                    logger.error(f"Error while transcribing audio {audio_url}: {e}")
+                    raise Exception(f"Error while transcribing audio {audio_url}: {e}")
+        else:
+            logger.warning(f"Audio item found but audio_llm is not configured: {item}")
+        return None
+    
+    else:
+        logger.warning(f"Unknown content type: {item_type}")
+        return None
+
+
+def parse_vision_messages(messages: List[Dict[str, Any]], llm: Any = None, vision_details: Any = "auto", audio_llm: Any = None) -> List[Dict[str, Any]]:
     """
 
     Assumes input is already a list of message dicts with 'role' and 'content' fields.
     - Keep system messages unchanged.
     - If message.content is a list (multimodal blocks), call get_image_description and replace content with returned text.
     - If message.content is a dict with type == "image_url", call get_image_description(url, ...) and replace content with returned text.
+    - If message.content contains type == "audio", use audio_llm to transcribe audio to text.
     - Otherwise keep the original message (regular text).
     - When llm is None, behave as pass-through for all messages.
     """
@@ -303,34 +357,30 @@ def parse_vision_messages(messages: List[Dict[str, Any]], llm: Any = None, visio
             continue
 
         content = msg["content"]
+        role = msg["role"]
+        
+        # Normalize content to list format for unified processing
+        items_to_process = []
         if isinstance(content, list):
-            # Process multimodal message list, handling text and images separately
-            for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text":
-                        # Keep text content
-                        text_content = item.get("text", "")
-                        if text_content:
-                            returned_messages.append({"role": msg["role"], "content": text_content})
-                    elif item.get("type") == "image_url":
-                        # Convert image to description
-                        image_url = item.get("image_url", {}).get("url")
-                        if image_url:
-                            try:
-                                description = get_image_description(image_url, llm, vision_details)
-                                if description:
-                                    returned_messages.append({"role": msg["role"], "content": description})
-                            except Exception as e:
-                                raise Exception(f"Error while processing image {image_url}: {e}")
-        elif isinstance(content, dict) and content.get("type") == "image_url":
-            image_url = content.get("image_url", {}).get("url")
-            try:
-                description = get_image_description(image_url, llm, vision_details)
-                returned_messages.append({"role": msg["role"], "content": description})
-            except Exception:
-                raise Exception(f"Error while downloading {image_url}.")
+            items_to_process = content
+        elif isinstance(content, dict):
+            # Handle single dict as image_url or audio
+            if content.get("type") in ("image_url", "audio"):
+                items_to_process = [content]
+            else:
+                # Unknown dict format, passthrough
+                returned_messages.append(msg)
+                continue
         else:
+            # Regular text or other content, passthrough
             returned_messages.append(msg)
+            continue
+        
+        # Process each item
+        for item in items_to_process:
+            processed_content = _process_content_item(item, role, llm, vision_details, audio_llm)
+            if processed_content:
+                returned_messages.append({"role": role, "content": processed_content})
 
     return returned_messages
 

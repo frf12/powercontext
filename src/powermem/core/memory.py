@@ -215,6 +215,17 @@ class Memory(MemoryBase):
         llm_config = self._get_component_config('llm')
         self.llm = LLMFactory.create(self.llm_provider, llm_config)
 
+        # Extract audio_llm config (optional, for audio transcription)
+        audio_llm_config = self._get_component_config('audio_llm')
+        audio_llm_provider = self._get_provider('audio_llm', None)
+        self.audio_llm = None
+        if audio_llm_provider and audio_llm_config:
+            try:
+                self.audio_llm = LLMFactory.create(audio_llm_provider, audio_llm_config)
+                logger.info(f"Audio LLM initialized: {audio_llm_provider}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize audio_llm: {e}")
+
         # Extract embedder config
         embedder_config = self._get_component_config('embedder')
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, None)
@@ -493,9 +504,9 @@ class Memory(MemoryBase):
             except Exception:
                 llm_cfg = {}
             if llm_cfg.get("enable_vision"):
-                messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"))
+                messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"), self.audio_llm)
             else:
-                messages = parse_vision_messages(messages)
+                messages = parse_vision_messages(messages, None, None, self.audio_llm)
             
             # Use self.agent_id as fallback if agent_id is not provided
             agent_id = agent_id or self.agent_id
