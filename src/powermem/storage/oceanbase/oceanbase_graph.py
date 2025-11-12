@@ -459,27 +459,7 @@ class MemoryGraph(GraphStoreBase):
         if not search_output:
             return []
 
-        # ============================================================================
-        # 为什么使用 BM25 进行结果重排序？
-        # ============================================================================
-        # 1. 图搜索的局限性：
-        #    - _search_graph_db 通过向量相似度搜索找到相关实体，然后通过多跳遍历获取关系
-        #    - 但向量搜索主要基于语义相似度，可能返回大量候选结果（最多 limit 个）
-        #    - 这些结果与查询的文本相关性可能不一致（例如：语义相似但关键词不匹配）
-        #
-        # 2. BM25 的作用：
-        #    - BM25 是经典的文本检索排序算法，基于关键词匹配和词频进行评分
-        #    - 能够根据查询中的关键词在文档中的出现频率和位置进行精确排序
-        #    - 结合向量搜索（语义理解）和 BM25（关键词匹配），实现更精准的混合检索
-        #
-        # 3. 工作流程：
-        #    - 第一步：向量搜索找到语义相关的图结构（source-relationship-destination）
-        #    - 第二步：BM25 对候选结果进行文本相关性重排序，选出最相关的 top N
-        #    - 这样既保证了语义理解，又保证了关键词匹配的精确性
-        # ============================================================================
-        
         # Tokenize search outputs for BM25 with improved segmentation
-        # 将每个搜索结果（source + relationship + destination）组合成文本并分词
         search_outputs_sequence = []
         for item in search_output:
             # Combine source, relationship, destination into a single text for better tokenization
@@ -487,18 +467,14 @@ class MemoryGraph(GraphStoreBase):
             tokenized_item = self._tokenize_text(combined_text)
             search_outputs_sequence.append(tokenized_item)
         
-        # 构建 BM25 索引（基于所有候选结果的词袋模型）
         bm25 = BM25Okapi(search_outputs_sequence)
 
         # Tokenize query using the same method
-        # 使用相同的分词方法处理查询，确保分词一致性
         tokenized_query = self._tokenize_text(query)
         
         # Get top N results based on BM25 scores
-        # 计算每个候选结果与查询的 BM25 相关性分数
         scores = bm25.get_scores(tokenized_query)
         # Get indices sorted by score (descending)
-        # 按分数降序排序，获取最相关的 top N 个结果
         sorted_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
         top_n_indices = sorted_indices[:constants.DEFAULT_BM25_TOP_N]
         
