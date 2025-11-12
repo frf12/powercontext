@@ -183,6 +183,14 @@ def load_config_from_env() -> Dict[str, Any]:
             'level': os.getenv('LOGGING_LEVEL', 'DEBUG'),
             'format': os.getenv('LOGGING_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
             'file': os.getenv('LOGGING_FILE', './logs/powermem.log')
+        },
+        'reranker': {
+            'enabled': os.getenv('RERANKER_ENABLED', 'false').lower() == 'true',
+            'provider': os.getenv('RERANKER_PROVIDER', 'qwen'),
+            'config': {
+                'model': os.getenv('RERANKER_MODEL'),
+                'api_key': os.getenv('RERANKER_API_KEY'),
+            }
         }
     }
     

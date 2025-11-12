@@ -18,6 +18,7 @@ from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
+from ..integrations.rerank.factory import RerankFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
@@ -163,8 +164,39 @@ class Memory(MemoryBase):
         self.llm_provider = llm_provider or self._get_provider('llm', 'mock')
         self.embedding_provider = embedding_provider or self._get_provider('embedder', 'mock')
 
+        # Initialize reranker if configured
+        reranker = None
+        if self.memory_config and hasattr(self.memory_config, 'reranker'):
+            rerank_obj = self.memory_config.reranker
+            if rerank_obj.enabled:
+                try:
+                    provider = rerank_obj.provider
+                    reranker_params = rerank_obj.config if rerank_obj.config else {}
+                    reranker = RerankFactory.create(provider, reranker_params)
+                    logger.info(f"Reranker initialized from MemoryConfig: {provider}")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize reranker from MemoryConfig: {e}")
+                    reranker = None
+        else:
+            rerank_config = self.config.get('reranker', {})
+            if rerank_config:
+                try:
+                    provider = rerank_config.get('provider', 'qwen')
+                    reranker_params = rerank_config.get('config', {})
+                    reranker = RerankFactory.create(provider, reranker_params)
+                    logger.info(f"Reranker initialized from JSON config: {provider}")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize reranker from JSON config: {e}")
+                    reranker = None
+        
         # Initialize components
         vector_store_config = self._get_component_config('vector_store')
+        
+        # Pass reranker to vector store if it's OceanBase
+        if self.storage_type.lower() == 'oceanbase' and reranker:
+            vector_store_config['reranker'] = reranker
+            logger.debug("Reranker passed to OceanBase vector store")
+        
         vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
 
         # Extract graph_store config
@@ -195,7 +227,8 @@ class Memory(MemoryBase):
             self.storage = SubStorageAdapter(vector_store, self.embedding)
             logger.info("Using SubStorageAdapter with sub-store support")
         else:
-            # Use basic StorageAdapter for single store operations
+            if sub_stores_list:
+                logger.warning("The sub_stores function currently only supports oceanbase")
             self.storage = StorageAdapter(vector_store, self.embedding)
             logger.info("Using basic StorageAdapter")
 
