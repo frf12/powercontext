@@ -5,11 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://powermem.ai">Learn more</a>
-  ·
   <a href="https://discord.com/invite/74cF8vbNEs">Join Discord</a>
-  ·
-  <a href="https://powermem.ai/benchmark">Benchmark Result</a>
 </p>
 
 <p align="center">
@@ -47,8 +43,6 @@
 - **更快**：**[响应速度快 91.83%]** 相比于 full-context，检索的 p95 延迟显著降低（1.44s VS 17.12s）
 - **更省**：**[Token 用量降低 96.53%]** 相比于full-context，在不牺牲性能的前提下显著降低成本（0.9k VS 26k）
 
-- [Benchmark 详情参见](https://powermem.ai/benchmark)
-
 # PowerMem - 智能AI记忆系统
 
 在 AI 应用开发中，如何让大语言模型持久化地"记住"历史对话、用户偏好和上下文信息是一个核心挑战。PowerMem 融合向量检索、全文检索和图数据库的混合存储架构，并引入认知科学的艾宾浩斯遗忘曲线理论，为 AI 应用构建了强大的记忆基础设施。系统还提供完善的多智能体支持能力，包括智能体记忆隔离、跨智能体协作共享、细粒度权限控制和隐私保护机制，让多个 AI 智能体能够在保持独立记忆空间的同时实现高效协作。
@@ -56,7 +50,7 @@
 ## 核心特性
 
 ### 开发者友好
-- **[轻量级接入方式](docs/examples/scenario_1_basic_usage.md)**：提供简洁的 Python SDK 和 MCP 协议支持，自动从 `.env` 文件加载配置，让开发者快速集成到现有项目中
+- **[轻量级接入方式](docs/examples/scenario_1_basic_usage.md)**：提供简洁的 Python SDK 支持，自动从 `.env` 文件加载配置，让开发者快速集成到现有项目中
 
 ### 智能记忆管理
 - **[记忆的智能提取](docs/examples/scenario_2_intelligent_memory.md)**：通过 LLM 自动从对话中提取关键事实，智能检测重复、更新冲突信息并合并相关记忆，确保记忆库的准确性和一致性

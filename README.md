@@ -5,11 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://powermem.ai">Learn more</a>
   ·
   <a href="https://discord.com/invite/74cF8vbNEs">Join Discord</a>
-  ·
-  <a href="https://powermem.ai/benchmark">Benchmark Result</a>
 </p>
 
 <p align="center">
@@ -47,8 +44,6 @@
 - **Faster**: **[91.83% Faster Response]** Significantly reduced p95 latency for retrieval compared to full-context (1.44s VS 17.12s)
 - **More Economical**: **[96.53% Token Reduction]** Significantly reduced costs compared to full-context without sacrificing performance (0.9k VS 26k)
 
-- [See Benchmark Details](https://powermem.ai/benchmark)
-
 # PowerMem - Intelligent Memory System
 
 In AI application development, enabling large language models to persistently "remember" historical conversations, user preferences, and contextual information is a core challenge. PowerMem combines a hybrid storage architecture of vector retrieval, full-text search, and graph databases, and introduces the Ebbinghaus forgetting curve theory from cognitive science to build a powerful memory infrastructure for AI applications. The system also provides comprehensive multi-agent support capabilities, including agent memory isolation, cross-agent collaboration and sharing, fine-grained permission control, and privacy protection mechanisms, enabling multiple AI agents to achieve efficient collaboration while maintaining independent memory spaces.
@@ -56,7 +51,7 @@ In AI application development, enabling large language models to persistently "r
 ## Core Features
 
 ### Developer Friendly
-- **[Lightweight Integration](docs/examples/scenario_1_basic_usage.md)**: Provides a simple Python SDK and MCP protocol support, automatically loads configuration from `.env` files, enabling developers to quickly integrate into existing projects
+- **[Lightweight Integration](docs/examples/scenario_1_basic_usage.md)**: Provides a simple Python SDK, automatically loads configuration from `.env` files, enabling developers to quickly integrate into existing projects
 
 ### Intelligent Memory Management
 - **[Intelligent Memory Extraction](docs/examples/scenario_2_intelligent_memory.md)**: Automatically extracts key facts from conversations through LLM, intelligently detects duplicates, updates conflicting information, and merges related memories to ensure accuracy and consistency of the memory database

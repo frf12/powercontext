@@ -9,7 +9,7 @@ description = "Intelligent Memory System - Persistent memory layer for LLM appli
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "powermem Team", email = "team@powermem.ai"}
+    {name = "powermem Team", email = "open_oceanbase@oceanbase.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
