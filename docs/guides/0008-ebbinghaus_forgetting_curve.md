@@ -319,9 +319,9 @@ The process involves:
 
 When analyzing retention scores:
 
-- **High retention (>0.7)**: Very recent memories, likely highly relevant
+- **High retention (`>0.7`)**: Very recent memories, likely highly relevant
 - **Medium retention (0.3-0.7)**: Moderately old, may need review soon
-- **Low retention (<0.3)**: Old memories, consider updating or reviewing
+- **Low retention (`<0.3`)**: Old memories, consider updating or reviewing
 
 Now let's retrieve memories and calculate their retention scores:
 
