@@ -85,10 +85,11 @@ pip install powermem
 **✨ 最も簡単な方法**：`.env` ファイルから自動的にメモリを作成！[設定ファイル参照](configs/env.example)
 
 ```python
-from powermem import create_memory
+from powermem import Memory, auto_config
 
 # .env から自動的に読み込む
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 
 # メモリを追加
 memory.add("ユーザーはコーヒーが好き", user_id="user123")
