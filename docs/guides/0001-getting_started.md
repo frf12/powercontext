@@ -12,6 +12,20 @@ pip install powermem
 
 ## Quick Start
 
+### With Configuration
+
+Create a `.env` file:
+
+```env
+LLM_PROVIDER=qwen
+LLM_API_KEY=your_api_key
+LLM_MODEL=qwen-plus
+EMBEDDING_PROVIDER=qwen
+EMBEDDING_API_KEY=your_api_key
+EMBEDDING_MODEL=text-embedding-v4
+DATABASE_PROVIDER=sqlite
+```
+
 ### Simplest Example
 
 ```python
@@ -27,27 +41,6 @@ memory.add(messages="User likes Python programming", user_id="user123")
 results = memory.search("user preferences", user_id="user123")
 for result in results.get('results', []):
     print(f"- {result['memory']}")
-```
-
-### With Configuration
-
-Create a `.env` file:
-
-```env
-LLM_PROVIDER=qwen
-LLM_API_KEY=your_api_key
-LLM_MODEL=qwen-plus
-EMBEDDING_PROVIDER=qwen
-EMBEDDING_API_KEY=your_api_key
-EMBEDDING_MODEL=text-embedding-v4
-```
-
-Then use:
-
-```python
-from powermem import create_memory
-
-memory = create_memory()  # Auto-loads from .env
 ```
 
 ## Basic Concepts

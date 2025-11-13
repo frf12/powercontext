@@ -55,24 +55,22 @@ AI アプリケーション開発において、大規模言語モデルが履�
 
 ## 核心機能
 
+### 開発者フレンドリー
+- **[軽量級アクセス方式](docs/examples/scenario_1_basic_usage.md)**：シンプルな Python SDK と MCP プロトコルサポートを提供し、`.env` ファイルから自動的に設定を読み込み、開発者が既存プロジェクトに迅速に統合できるようにします
+
 ### インテリジェントメモリ管理
-- **[メモリのインテリジェント抽出](docs/examples/scenario_2_intelligent_memory.md)**：LLM モデルによるメモリの抽出
-- **エビングハウス忘却曲線**：認知科学に基づくスマートメモリ最適化
-- **メモリ減衰と強化**：使用パターンに基づく動的メモリ保持
+- **[メモリのインテリジェント抽出](docs/examples/scenario_2_intelligent_memory.md)**：LLM を通じて会話から重要な事実を自動的に抽出し、重複をインテリジェントに検出し、競合する情報を更新し、関連するメモリをマージして、メモリデータベースの正確性と一貫性を確保します
+- **[エビングハウス忘却曲線](docs/examples/scenario_8_ebbinghaus_forgetting_curve.md)**：認知科学の記憶忘却パターンに基づき、メモリ保持率を自動的に計算し、時間減衰重み付けを実装し、最近かつ関連性の高いメモリを優先的に返し、AI システムが人間のように古い情報を自然に「忘却」できるようにします
 
 ### マルチエージェントサポート
-- **[エージェント分離](docs/examples/scenario_3_multi_agent.md)**：異なるエージェント用の独立したメモリ空間
+- **[エージェント共有/分離メモリ](docs/examples/scenario_3_multi_agent.md)**：各エージェントに独立したメモリ空間を提供し、エージェント間のメモリ共有とコラボレーションをサポートし、スコープ制御を通じて柔軟な権限管理を実現します
 
 ### マルチモーダルサポート
-- **テキスト、画像、音声メモリ**：テキスト、画像、音声など複数のモーダルのメモリ保存と検索をサポートし、より豊富なコンテキスト理解を実現
+- **[テキスト、画像、音声メモリ](docs/examples/scenario_7_multimodal.md)**：画像と音声を自動的にテキスト記述に変換して保存し、マルチモーダル混合コンテンツ（テキスト+画像+音声）の検索をサポートし、AI システムがより豊富なコンテキスト情報を理解できるようにします
 
 ### 深く最適化されたデータストレージ
-- **[サブストア（Sub Stores）サポート](docs/examples/scenario_6_sub_stores.md)**：サブストアによるデータのパーティション管理で、超大规模データに対応
-- **ハイブリッド検索**：ベクトル検索、全文検索、グラフ検索のハイブリッド検索機能をサポート
-- **グラフ検索**：LLM によるエンティティと関係の抽出をサポートし、ナレッジグラフを構築。複雑なメモリ関係を検索するためのマルチホップグラフトラバーサル
-
-### 開発者フレンドリー
-- **軽量な統合方式**：Python SDK/MCP の統合方式をサポートし、mem0 の使用と互換性あり
+- **[サブストア（Sub Stores）サポート](docs/examples/scenario_6_sub_stores.md)**：サブストアによるデータのパーティション管理を実装し、自動ルーティングクエリをサポートし、超大规模データのクエリ性能とリソース利用率を大幅に向上させます
+- **[ハイブリッド検索](docs/examples/scenario_2_intelligent_memory.md)**：ベクトル検索、全文検索、グラフ検索のマルチチャネルリコール機能を融合し、LLM を通じてナレッジグラフを構築し、複雑なメモリ関係を正確に検索するためのマルチホップグラフトラバーサルをサポートします
 
 ## クイックスタート
 
@@ -105,8 +103,8 @@ for memory in memories:
 
 ## 統合とデモ
 
-- **LangChain 統合**: LangChain + PowerMem + OceanBase を使用して医療サポートロボットを構築 ([Example](examples/langchain/README.md))
-- **Langgraph 統合**: LangGraph + PowerMem + OceanBase を使用してカスタマーロボットを構築 ([Example](examples/langgraph/README.md))
+- **LangChain 統合**: LangChain + PowerMem + OceanBase を使用して医療サポートロボットを構築、[例を参照](examples/langchain/README.md)
+- **LangGraph 統合**: LangGraph + PowerMem + OceanBase を使用してカスタマーサービスロボットを構築、[例を参照](examples/langgraph/README.md)
 
 ## ドキュメント
 
