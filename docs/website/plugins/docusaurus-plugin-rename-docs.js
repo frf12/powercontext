@@ -1,101 +1,204 @@
 /**
- * Docusaurus plugin to rename document files by removing numeric prefixes
- * 
- * This plugin processes document files and renames them by removing numeric prefixes.
- * For example, it renames:
- * - api/0001-memory.md -> api/memory.md
- * - guides/0002-configuration.md -> guides/configuration.md
- * 
- * This allows the sidebars and links to reference files without prefixes,
- * while the actual files can still have numeric prefixes for ordering in the source.
- * 
- * The plugin runs during the `configureWebpack` phase to ensure files are renamed
- * before Docusaurus processes them.
+ * Docusaurus plugin to sort documents by numeric prefix in filename
+ *
+ * This plugin sorts documents in the sidebar based on numeric prefixes in filenames.
+ * Files with numeric prefixes like 0000-xxx.md, 0001-xxx.md will be sorted accordingly.
+ *
+ * The plugin works by reading the source docs directory (before renaming) to get
+ * the original filenames with numeric prefixes, then sorting sidebar items accordingly.
+ *
+ * Examples:
+ * - 0000-overview.md -> sorted first (position 0)
+ * - 0001-getting_started.md -> sorted second (position 1)
+ * - overview.md (no prefix) -> sorted last (position 999)
  */
 
 const fs = require('fs');
 const path = require('path');
 
 /**
- * Remove numeric prefix from a filename
- * @param {string} filename - The filename
- * @returns {string} - The filename without numeric prefix
+ * Extract numeric prefix from filename
+ * @param {string} filename - The filename (with or without path)
+ * @returns {number|null} - The numeric prefix, or null if not found
  */
-function removeNumericPrefix(filename) {
-  // Match patterns like: 0001-memory.md, 0002-configuration.md
-  const prefixPattern = /^(\d+-)(.+)$/;
-  const match = filename.match(prefixPattern);
-  
+function extractNumericPrefix(filename) {
+  // Match patterns like: 0000-xxx.md, 0001-xxx.md
+  const basename = path.basename(filename, '.md');
+  const prefixPattern = /^(\d+)-(.+)$/;
+  const match = basename.match(prefixPattern);
+
   if (match) {
-    return match[2]; // Return the part after the prefix
+    return parseInt(match[1], 10);
   }
-  
-  return filename;
+
+  return null;
 }
 
 /**
- * Process a directory and rename files with numeric prefixes
- * @param {string} dirPath - The directory path to process
- * @returns {number} - Number of files renamed
+ * Extract numeric prefix from document ID or filename
+ * Since files are no longer renamed, we can extract prefix directly from the docId
+ * or from the actual filename in the docs directory
+ * @param {string} docId - The document ID (e.g., 'guides/0001-getting_started' or 'guides/getting_started')
+ * @param {string} docsPath - Path to the docs directory
+ * @returns {number|null} - The numeric prefix, or null if not found
  */
-function processDirectory(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    return 0;
+function getNumericPrefixFromDocId(docId, docsPath) {
+  // First, try to extract prefix directly from docId (if it contains the prefix)
+  const parts = docId.split('/');
+  const lastPart = parts[parts.length - 1];
+  const prefixPattern = /^(\d+)-(.+)$/;
+  const match = lastPart.match(prefixPattern);
+  if (match) {
+    return parseInt(match[1], 10);
   }
 
-  let renamedCount = 0;
-  const files = fs.readdirSync(dirPath);
-  
+  // If docId doesn't have prefix, look for the actual file in the directory
+  const docPath = path.join(docsPath, docId);
+  const dir = path.dirname(docPath);
+  const baseName = path.basename(docPath);
+
+  if (!fs.existsSync(dir)) {
+    return null;
+  }
+
+  // Look for files with numeric prefix that match the base name
+  const files = fs.readdirSync(dir);
   for (const file of files) {
-    const filePath = path.join(dirPath, file);
-    const stat = fs.statSync(filePath);
-    
-    if (stat.isDirectory()) {
-      // Recursively process subdirectories
-      renamedCount += processDirectory(filePath);
-    } else if (stat.isFile() && file.endsWith('.md')) {
-      // Check if file has numeric prefix
-      const newName = removeNumericPrefix(file);
-      
-      if (newName !== file) {
-        const newPath = path.join(dirPath, newName);
-        
-        // Only rename if the target doesn't exist
-        if (!fs.existsSync(newPath)) {
-          fs.renameSync(filePath, newPath);
-          console.log(`[docusaurus-plugin-rename-docs] Renamed: ${path.relative(process.cwd(), filePath)} -> ${path.relative(process.cwd(), newPath)}`);
-          renamedCount++;
-        } else {
-          console.warn(`[docusaurus-plugin-rename-docs] Skipped: ${path.relative(process.cwd(), filePath)} (target already exists)`);
+    if (file.endsWith('.md')) {
+      const fileMatch = file.match(prefixPattern);
+      if (fileMatch) {
+        // Check if the part after prefix matches the document name
+        const nameAfterPrefix = fileMatch[2].replace(/\.md$/, '');
+        if (nameAfterPrefix === baseName) {
+          return parseInt(fileMatch[1], 10);
         }
       }
     }
   }
-  
-  return renamedCount;
+
+  return null;
 }
 
 /**
- * Docusaurus plugin to rename document files
+ * Custom sidebar items generator that sorts by numeric prefix
+ * This should be used in docusaurus.config.ts as sidebarItemsGenerator
  */
-function docusaurusPluginRenameDocs(context, options) {
-  // Process files immediately when plugin is initialized
-  const docsPath = path.join(context.siteDir, 'docs');
-  
-  if (fs.existsSync(docsPath)) {
-    console.log('[docusaurus-plugin-rename-docs] Processing docs directory to remove numeric prefixes...');
-    const renamedCount = processDirectory(docsPath);
-    if (renamedCount > 0) {
-      console.log(`[docusaurus-plugin-rename-docs] Renamed ${renamedCount} file(s)`);
-    } else {
-      console.log('[docusaurus-plugin-rename-docs] No files needed renaming');
+async function sidebarItemsGenerator(args) {
+  const {defaultSidebarItemsGenerator, item, ...restArgs} = args;
+  // Since files are no longer renamed, we can read directly from args.docsDir
+  // or use the docs directory path
+  let docsPath;
+
+  if (args.docsDir) {
+    docsPath = args.docsDir;
+  } else {
+    // Fallback: try to find docs directory
+    docsPath = path.resolve(process.cwd(), 'docs');
+    if (!fs.existsSync(docsPath)) {
+      docsPath = path.resolve(__dirname, '../../docs');
     }
   }
-  
-  return {
-    name: 'docusaurus-plugin-rename-docs',
-  };
+
+  if (!fs.existsSync(docsPath)) {
+    console.warn(`[docusaurus-plugin-sort-docs] Docs path not found: ${docsPath}`);
+    console.warn(`[docusaurus-plugin-sort-docs] args.docsDir: ${args.docsDir}`);
+    console.warn(`[docusaurus-plugin-sort-docs] process.cwd(): ${process.cwd()}`);
+  } else {
+    console.log(`[docusaurus-plugin-sort-docs] Using docs path: ${docsPath}`);
+  }
+
+  // Call the default generator and handle both sync and async returns
+  const sidebarItems = await Promise.resolve(defaultSidebarItemsGenerator(args));
+
+  /**
+   * Sort sidebar items based on numeric prefix
+   * Items with numeric prefixes are sorted by prefix number
+   * Items without numeric prefixes are sorted alphabetically after numbered items
+   */
+  function sortSidebarItems(items) {
+    // First, map items and calculate sort keys
+    const itemsWithKeys = items.map(item => {
+      let sortKey = null;
+      let sortName = ''; // For alphabetical sorting of items without prefix
+
+      if (item.type === 'doc') {
+        const docId = item.id;
+        // Get numeric prefix from docId or filename
+        const numericPrefix = getNumericPrefixFromDocId(docId, docsPath);
+        if (numericPrefix !== null) {
+          sortKey = numericPrefix;
+          // Debug log (can be removed later)
+          console.log(`[docusaurus-plugin-sort-docs] Doc ${docId} has prefix ${numericPrefix}`);
+        } else {
+          // No prefix: use a large base number (10000) + alphabetical order
+          // Extract the filename for alphabetical sorting
+          const parts = docId.split('/');
+          sortName = parts[parts.length - 1].toLowerCase();
+          sortKey = 10000; // Base value for items without prefix
+        }
+      } else if (item.type === 'category' && item.items) {
+        // Recursively sort category items
+        item.items = sortSidebarItems(item.items);
+        // For categories, use the minimum sort key of their items
+        if (item.items.length > 0) {
+          const firstItem = item.items[0];
+          // Try to get sort key from first item (if it's a doc)
+          if (firstItem.type === 'doc') {
+            const firstDocId = firstItem.id;
+            const firstPrefix = getNumericPrefixFromDocId(firstDocId, docsPath);
+            if (firstPrefix !== null) {
+              sortKey = firstPrefix;
+            } else {
+              const firstParts = firstDocId.split('/');
+              sortName = firstParts[firstParts.length - 1].toLowerCase();
+              sortKey = 10000;
+            }
+          }
+        } else {
+          sortKey = 10000;
+        }
+      }
+
+      return { item, sortKey, sortName };
+    });
+
+    // Debug: log before sorting
+    console.log(`[docusaurus-plugin-sort-docs] Sorting ${itemsWithKeys.length} items`);
+    itemsWithKeys.forEach(({ item, sortKey, sortName }) => {
+      if (item.type === 'doc') {
+        const keyDisplay = sortKey < 10000 ? `sortKey=${sortKey}` : `sortKey=${sortKey} (alphabetical: ${sortName})`;
+        console.log(`  - ${item.id}: ${keyDisplay}`);
+      }
+    });
+
+    // Sort by sort key, then by alphabetical order for items without prefix
+    itemsWithKeys.sort((a, b) => {
+      // First compare by sort key
+      if (a.sortKey !== b.sortKey) {
+        return a.sortKey - b.sortKey;
+      }
+      // If sort keys are equal (both >= 10000, meaning no prefix), sort alphabetically
+      if (a.sortKey >= 10000 && b.sortKey >= 10000) {
+        return a.sortName.localeCompare(b.sortName);
+      }
+      return 0;
+    });
+
+    // Debug: log after sorting
+    console.log(`[docusaurus-plugin-sort-docs] After sorting:`);
+    itemsWithKeys.forEach(({ item, sortKey, sortName }, index) => {
+      if (item.type === 'doc') {
+        const keyDisplay = sortKey < 10000 ? `sortKey=${sortKey}` : `sortKey=${sortKey} (alphabetical: ${sortName})`;
+        console.log(`  ${index + 1}. ${item.id}: ${keyDisplay}`);
+      }
+    });
+
+    // Return items without the sortKey property
+    return itemsWithKeys.map(({ item }) => item);
+  }
+
+  return sortSidebarItems(sidebarItems);
 }
 
-module.exports = docusaurusPluginRenameDocs;
+module.exports = sidebarItemsGenerator;
 

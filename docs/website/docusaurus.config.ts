@@ -37,12 +37,7 @@ const config: Config = {
     },
   },
 
-  plugins: [
-    [
-      require.resolve('./plugins/docusaurus-plugin-rename-docs'),
-      {},
-    ],
-  ],
+  plugins: [],
 
   presets: [
     [
@@ -52,10 +47,10 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           editUrl: undefined,
           routeBasePath: 'docs',
+          sidebarItemsGenerator: require('./plugins/docusaurus-plugin-sort-docs'),
           remarkPlugins: [
             require('./plugins/remark-auto-overview'),
             require('./plugins/remark-normalize-doc-links'),
-            require('./plugins/remark-remove-prefix'),
           ],
         },
         blog: false,
