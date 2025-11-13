@@ -2,23 +2,6 @@
 
 A comprehensive benchmarking suite for PowerMem, including a REST API server for managing memories and a load testing tool based on the LOCOMO dataset.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Quick Start](#quick-start)
-- [Benchmark Server](#benchmark-server)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-  - [Starting the Server](#starting-the-server)
-  - [API Endpoints](#api-endpoints)
-- [Load Testing (LOCOMO)](#load-testing-locomo)
-  - [Prerequisites](#prerequisites-for-load-testing)
-  - [Configuration](#configuring-environment-variables-for-load-testing)
-  - [Running Tests](#running-load-tests)
-  - [Understanding Results](#understanding-test-results)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
 
 ## Overview
 

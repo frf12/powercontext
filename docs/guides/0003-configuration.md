@@ -332,8 +332,3 @@ AUDIT_ENABLED=true
 4. **Environment-specific configs**: Different configs for dev/staging/prod
 5. **Monitor configuration**: Log configuration at startup (without secrets)
 
-## See Also
-
-- [Getting Started Guide](docs/guides/0001-getting_started.md)
-- [Examples](docs/guides/examples/overview.md)
-
