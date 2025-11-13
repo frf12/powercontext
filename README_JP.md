@@ -111,7 +111,7 @@ for memory in memories:
 - **[はじめに](docs/guides/0001-getting_started.md)**：インストールとクイックスタートガイド
 - **[設定ガイド](docs/guides/0003-configuration.md)**：完全な設定オプション
 - **[マルチエージェントガイド](docs/guides/0005-multi_agent.md)**：マルチエージェントのシナリオと例
-- **[統合ガイド](docs/guides/0009-integrations.md)**：LLM と埋め込みプロバイダーの統合
+- **[統合ガイド](docs/guides/0009-integrations.md)**：統合ガイド
 - **[サブストアガイド](docs/guides/0006-sub_stores.md)**：サブストアの使用方法と例
 - **[API ドキュメント](docs/api/overview.md)**：完全な API リファレンス
 - **[アーキテクチャガイド](docs/architecture/overview.md)**：システムアーキテクチャと設計

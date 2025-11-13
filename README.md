@@ -111,7 +111,7 @@ For more detailed examples and usage patterns, see the [Getting Started Guide](d
 - **[Getting Started](docs/guides/0001-getting_started.md)**: Installation and quick start guide
 - **[Configuration Guide](docs/guides/0003-configuration.md)**: Complete configuration options
 - **[Multi-Agent Guide](docs/guides/0005-multi_agent.md)**: Multi-agent scenarios and examples
-- **[Integrations Guide](docs/guides/0009-integrations.md)**: LLM and embedding provider integrations
+- **[Integrations Guide](docs/guides/0009-integrations.md)**: Integrations Guide
 - **[Sub Stores Guide](docs/guides/0006-sub_stores.md)**: Sub stores usage and examples
 - **[API Documentation](docs/api/overview.md)**: Complete API reference
 - **[Architecture Guide](docs/architecture/overview.md)**: System architecture and design
