@@ -890,12 +890,6 @@ memory.add(
 2. Check routing filters match your metadata exactly
 3. Verify queries include the correct filter conditions
 
-## Next Steps
-
-- **API Reference**: See [Memory API](../api/memory) for all sub store related APIs
-- **Configuration Guide**: Refer to [Configuration Guide](../guides/configuration.md) for detailed configuration options
-- **Sub Store Guide**: Check [Sub Store Usage Guide](../guides/sub_stores) for more advanced usage
-
 ## Summary
 
 In this scenario, we learned:

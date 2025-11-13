@@ -1,7 +1,3 @@
-# Scenario 7: Multimodal Capability
-
-This scenario demonstrates PowerMem's multimodal capability - storing and retrieving images, audio, and other multimedia content.
-
 ## Prerequisites
 
 - Python 3.10+
@@ -14,7 +10,7 @@ This scenario demonstrates PowerMem's multimodal capability - storing and retrie
 
 1. Copy the example configuration file:
    ```bash
-   cp configs/minienv.example .env
+   cp configs/env.example .env
    ```
 
 2. Edit the `.env` file and configure multimodal parameters
@@ -32,12 +28,11 @@ Multimodal capability allows PowerMem to process more than just text:
 
 PowerMem automatically converts image and audio content to text descriptions, stores them as memories, making the multimedia content searchable and retrievable.
 
-## Step 1: Add Image Memory Using OpenAI Multimodal Format
+## Add Image Memory Using OpenAI Multimodal Format
 
 Add image-containing memories using the standard OpenAI multimodal message format:
 
 ```python
-# multimodal_example.py
 import os
 from powermem import Memory
 
@@ -109,24 +104,11 @@ print(f"   Memory ID: {result.get('id')}")
 print(f"   Processed content: {result}")
 ```
 
-**Run this code:**
-```bash
-python multimodal_example.py
-```
-
-**Expected output:**
-```
-✅ Successfully added image memory
-   Memory ID: xxxxxx
-   Processed content: {...}
-```
-
-## Step 2: Search Image-Related Memories
+## Search Image-Related Memories
 
 Search for previously added image memories:
 
 ```python
-# multimodal_example.py
 from powermem import Memory
 
 memory = Memory(config=config)
@@ -146,27 +128,13 @@ else:
     print("  No related memories found")
 ```
 
-**Run this code:**
-```bash
-python multimodal_example.py
-```
-
-**Expected output:**
-```
-Query: 'Bob's favorite working state'
-  Result 1: This is Bob's favorite working state...
-    Similarity: 0.8934
-    Metadata: {'type': 'workspace_photo', 'source': 'user_upload'}
-```
-
-## Step 3: Add Audio Memory Using OpenAI Multimodal Format
+## Add Audio Memory Using OpenAI Multimodal Format
 
 Add audio-containing memories using the standard OpenAI multimodal message format. **Important: Audio must be provided as a URL, just like images.**
 
 > **Note:** Audio processing requires `enable_vision: True` to be set in the LLM configuration, even though it's audio content.
 
 ```python
-# multimodal_example.py
 import os
 from powermem import Memory
 
@@ -247,30 +215,17 @@ print(f"   Memory ID: {result.get('id')}")
 print(f"   Processed content: {result}")
 ```
 
-**Run this code:**
-```bash
-python multimodal_example.py
-```
-
-**Expected output:**
-```
-✅ Successfully added audio memory
-   Memory ID: xxxxxx
-   Processed content: {...}
-```
-
 **Key Points:**
 - Audio must be provided as a **URL** (not a local file path)
 - `enable_vision: True` must be set in LLM config (required for audio processing)
 - `audio_llm` configuration is required for audio transcription
 - Audio content is automatically converted to text and stored as searchable memory
 
-## Step 4: Search Audio-Related Memories
+## Search Audio-Related Memories
 
 Search for previously added audio memories:
 
 ```python
-# multimodal_example.py
 from powermem import Memory
 
 memory = Memory(config=config)
@@ -288,19 +243,6 @@ if results.get("results"):
         print(f"    Metadata: {mem.get('metadata', {})}")
 else:
     print("  No related memories found")
-```
-
-**Run this code:**
-```bash
-python multimodal_example.py
-```
-
-**Expected output:**
-```
-Query: 'voice message from Alice'
-  Result 1: This is a voice message from Alice...
-    Similarity: 0.9123
-    Metadata: {'type': 'voice_message', 'source': 'user_upload'}
 ```
 
 ## Configuration Options
@@ -358,5 +300,3 @@ config = {
 - **Qwen**: `qwen-vl-plus`, `qwen-vl-max`
 - **Audio ASR**: `qwen3-asr-flash` (via qwen_asr provider)
 - **Others**: Any model supporting OpenAI vision API format
-
-

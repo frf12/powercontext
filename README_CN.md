@@ -53,27 +53,25 @@
 
 在 AI 应用开发中，如何让大语言模型持久化地"记住"历史对话、用户偏好和上下文信息是一个核心挑战。PowerMem 融合向量检索、全文检索和图数据库的混合存储架构，并引入认知科学的艾宾浩斯遗忘曲线理论，为 AI 应用构建了强大的记忆基础设施。系统还提供完善的多智能体支持能力，包括智能体记忆隔离、跨智能体协作共享、细粒度权限控制和隐私保护机制，让多个 AI 智能体能够在保持独立记忆空间的同时实现高效协作。
 
-## 核心特性（下面的要跳转demo）
-
-### 智能记忆管理
-- **[记忆的智能提取](docs/examples/scenario_2_intelligent_memory.md)**：通过 LLM 模型进行记忆的提取
-- **艾宾浩斯遗忘曲线**：基于认知科学的智能记忆优化
-- **记忆衰减与强化**：基于使用模式的动态记忆保留
-
-### 多智能体支持
-- **[智能体隔离](docs/examples/scenario_3_multi_agent.md)**：为不同智能体提供独立的记忆空间
-
-### 多模态支持
-- **文本与图像记忆**：支持文本和图像两种模态的记忆存储与检索，实现更丰富的上下文理解
-
-### 深度优化数据存储
-- **支持子存储（Sub Stores）**：通过子存储实现数据的分区管理，应对超大规模数据
-- **混合检索**：支持向量检索、全文搜索以及图检索的混合检索能力
-- **图检索**：支持 LLM 提取实体和关系以构建知识图谱，通过多跳图遍历，用于检索复杂的记忆关系
-- **混合存储**：结合向量搜索和图关系以增强检索
+## 核心特性
 
 ### 开发者友好
-- **轻量级接入方式**：支持Python SDK/MCP 的接入方式，兼容mem0的使用；
+- **[轻量级接入方式](docs/examples/scenario_1_basic_usage.md)**：提供简洁的 Python SDK 和 MCP 协议支持，自动从 `.env` 文件加载配置，让开发者快速集成到现有项目中
+
+### 智能记忆管理
+- **[记忆的智能提取](docs/examples/scenario_2_intelligent_memory.md)**：通过 LLM 自动从对话中提取关键事实，智能检测重复、更新冲突信息并合并相关记忆，确保记忆库的准确性和一致性
+- **[艾宾浩斯遗忘曲线](docs/examples/scenario_8_ebbinghaus_forgetting_curve.md)**：基于认知科学的记忆遗忘规律，自动计算记忆保留率并实现时间衰减加权，优先返回最近且相关的记忆，让 AI 系统像人类一样自然"遗忘"过时信息
+
+### 多智能体支持
+- **[智能体共享/隔离记忆](docs/examples/scenario_3_multi_agent.md)**：为每个智能体提供独立的记忆空间，支持跨智能体记忆共享和协作，通过作用域控制实现灵活的权限管理
+
+### 多模态支持
+- **[文本、图像、语音记忆](docs/examples/scenario_7_multimodal.md)**：自动将图像和音频转换为文本描述并存储，支持多模态混合内容（文本+图像+音频）的检索，让 AI 系统理解更丰富的上下文信息
+
+### 深度优化数据存储
+- **[支持子存储（Sub Stores）](docs/examples/scenario_6_sub_stores.md)**：通过子存储实现数据
+的分区管理，支持自动路由查询，显著提升超大规模数据的查询性能和资源利用率
+- **[混合检索](docs/examples/scenario_2_intelligent_memory.md)**：融合向量检索、全文搜索和图检索的多路召回能力，通过 LLM 构建知识图谱并支持多跳图遍历，精准检索复杂的记忆关联关系
 
 ## 快速开始
 
@@ -106,36 +104,20 @@ for memory in memories:
 
 ## 集成与演示
 
-- **LangChain 集成**: 使用 LangChain + PowerMem + OceanBase 构建医疗支持机器人([Example](examples/langchain/README.md))
-- **Langgraph 集成**: 使用 LangGraph + PowerMem 构建客户机器人 ([Example](examples))
+- **LangChain 集成**：基于 LangChain + PowerMem + OceanBase 构建医疗支持机器人，[查看示例](examples/langchain/README.md)
+- **LangGraph 集成**：基于 LangGraph + PowerMem + OceanBase 构建客户服务机器人，[查看示例](examples/langgraph/README.md)
 
 ## 文档
 
 - **[入门指南](docs/guides/0001-getting_started.md)**：安装和快速开始指南
-- **[配置指南](docs/guides/0002-configuration.md)**：完整的配置选项
-- **[多智能体指南](docs/guides/0004-multi_agent.md)**：多智能体场景和示例
-- **[集成指南](docs/guides/0005-integrations.md)**：LLM 和嵌入提供商集成
+- **[配置指南](docs/guides/0003-configuration.md)**：完整的配置选项
+- **[多智能体指南](docs/guides/0005-multi_agent.md)**：多智能体场景和示例
+- **[集成指南](docs/guides/0009-integrations.md)**：集成指南
 - **[子存储指南](docs/guides/0006-sub_stores.md)**：子存储的使用方法和示例
 - **[API 文档](docs/api/overview.md)**：完整的 API 参考
 - **[架构指南](docs/architecture/overview.md)**：系统架构和设计
 - **[示例](docs/examples/overview.md)**：交互式 Jupyter 笔记本和使用案例
-
-## 开发
-
-### 设置开发环境
-
-```bash
-# 克隆仓库
-git clone https://github.com/powermem/powermem.git
-cd powermem
-
-# 安装开发依赖
-pip install -e ".[dev,test]"
-```
-
-## 贡献
-
-我们欢迎贡献！请参阅我们的贡献指南和行为准则。
+- **[开发者文档](docs/development/overview.md)**：开发者文档
 
 ## 支持
 

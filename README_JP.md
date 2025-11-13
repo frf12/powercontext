@@ -53,27 +53,24 @@
 
 AI アプリケーション開発において、大規模言語モデルが履歴会話、ユーザー設定、コンテキスト情報を永続的に「記憶」できるようにすることは、核心的な課題です。PowerMem は、ベクトル検索、全文検索、グラフデータベースのハイブリッドストレージアーキテクチャを組み合わせ、認知科学のエビングハウス忘却曲線理論を導入して、AI アプリケーション向けの強力なメモリインフラストラクチャを構築します。システムは、エージェントメモリの分離、エージェント間のコラボレーションと共有、きめ細かい権限制御、プライバシー保護メカニズムを含む、包括的なマルチエージェントサポート機能も提供し、複数の AI エージェントが独立したメモリ空間を維持しながら効率的なコラボレーションを実現できるようにします。
 
-## 核心機能（下記のデモリンク）
-
-### インテリジェントメモリ管理
-- **[メモリのインテリジェント抽出](docs/examples/scenario_2_intelligent_memory.md)**：LLM モデルによるメモリの抽出
-- **エビングハウス忘却曲線**：認知科学に基づくスマートメモリ最適化
-- **メモリ減衰と強化**：使用パターンに基づく動的メモリ保持
-
-### マルチエージェントサポート
-- **[エージェント分離](docs/examples/scenario_3_multi_agent.md)**：異なるエージェント用の独立したメモリ空間
-
-### マルチモーダルサポート
-- **テキストと画像メモリ**：テキストと画像の2つのモーダルのメモリ保存と検索をサポートし、より豊富なコンテキスト理解を実現
-
-### 深く最適化されたデータストレージ
-- **サブストア（Sub Stores）サポート**：サブストアによるデータのパーティション管理で、超大规模データに対応
-- **ハイブリッド検索**：ベクトル検索、全文検索、グラフ検索のハイブリッド検索機能をサポート
-- **グラフ検索**：LLM によるエンティティと関係の抽出をサポートし、ナレッジグラフを構築。複雑なメモリ関係を検索するためのマルチホップグラフトラバーサル
-- **ハイブリッドストレージ**：ベクトル検索とグラフ関係を組み合わせて検索を強化
+## 核心機能
 
 ### 開発者フレンドリー
-- **軽量な統合方式**：Python SDK/MCP の統合方式をサポートし、mem0 の使用と互換性あり
+- **[軽量級アクセス方式](docs/examples/scenario_1_basic_usage.md)**：シンプルな Python SDK と MCP プロトコルサポートを提供し、`.env` ファイルから自動的に設定を読み込み、開発者が既存プロジェクトに迅速に統合できるようにします
+
+### インテリジェントメモリ管理
+- **[メモリのインテリジェント抽出](docs/examples/scenario_2_intelligent_memory.md)**：LLM を通じて会話から重要な事実を自動的に抽出し、重複をインテリジェントに検出し、競合する情報を更新し、関連するメモリをマージして、メモリデータベースの正確性と一貫性を確保します
+- **[エビングハウス忘却曲線](docs/examples/scenario_8_ebbinghaus_forgetting_curve.md)**：認知科学の記憶忘却パターンに基づき、メモリ保持率を自動的に計算し、時間減衰重み付けを実装し、最近かつ関連性の高いメモリを優先的に返し、AI システムが人間のように古い情報を自然に「忘却」できるようにします
+
+### マルチエージェントサポート
+- **[エージェント共有/分離メモリ](docs/examples/scenario_3_multi_agent.md)**：各エージェントに独立したメモリ空間を提供し、エージェント間のメモリ共有とコラボレーションをサポートし、スコープ制御を通じて柔軟な権限管理を実現します
+
+### マルチモーダルサポート
+- **[テキスト、画像、音声メモリ](docs/examples/scenario_7_multimodal.md)**：画像と音声を自動的にテキスト記述に変換して保存し、マルチモーダル混合コンテンツ（テキスト+画像+音声）の検索をサポートし、AI システムがより豊富なコンテキスト情報を理解できるようにします
+
+### 深く最適化されたデータストレージ
+- **[サブストア（Sub Stores）サポート](docs/examples/scenario_6_sub_stores.md)**：サブストアによるデータのパーティション管理を実装し、自動ルーティングクエリをサポートし、超大规模データのクエリ性能とリソース利用率を大幅に向上させます
+- **[ハイブリッド検索](docs/examples/scenario_2_intelligent_memory.md)**：ベクトル検索、全文検索、グラフ検索のマルチチャネルリコール機能を融合し、LLM を通じてナレッジグラフを構築し、複雑なメモリ関係を正確に検索するためのマルチホップグラフトラバーサルをサポートします
 
 ## クイックスタート
 
@@ -106,41 +103,25 @@ for memory in memories:
 
 ## 統合とデモ
 
-- **LangChain 統合**: LangChain + PowerMem + OceanBase を使用して医療サポートロボットを構築 ([Example](examples/langchain/README.md))
-- **Langgraph 統合**: LangGraph + PowerMem を使用してカスタマーロボットを構築 ([Example](examples))
+- **LangChain 統合**: LangChain + PowerMem + OceanBase を使用して医療サポートロボットを構築、[例を参照](examples/langchain/README.md)
+- **LangGraph 統合**: LangGraph + PowerMem + OceanBase を使用してカスタマーサービスロボットを構築、[例を参照](examples/langgraph/README.md)
 
 ## ドキュメント
 
 - **[はじめに](docs/guides/0001-getting_started.md)**：インストールとクイックスタートガイド
-- **[設定ガイド](docs/guides/0002-configuration.md)**：完全な設定オプション
-- **[マルチエージェントガイド](docs/guides/0004-multi_agent.md)**：マルチエージェントのシナリオと例
-- **[統合ガイド](docs/guides/0005-integrations.md)**：LLM と埋め込みプロバイダーの統合
+- **[設定ガイド](docs/guides/0003-configuration.md)**：完全な設定オプション
+- **[マルチエージェントガイド](docs/guides/0005-multi_agent.md)**：マルチエージェントのシナリオと例
+- **[統合ガイド](docs/guides/0009-integrations.md)**：統合ガイド
 - **[サブストアガイド](docs/guides/0006-sub_stores.md)**：サブストアの使用方法と例
 - **[API ドキュメント](docs/api/overview.md)**：完全な API リファレンス
 - **[アーキテクチャガイド](docs/architecture/overview.md)**：システムアーキテクチャと設計
 - **[例](docs/examples/overview.md)**：インタラクティブな Jupyter ノートブックとユースケース
-
-## 開発
-
-### 開発環境のセットアップ
-
-```bash
-# リポジトリをクローン
-git clone https://github.com/powermem/powermem.git
-cd powermem
-
-# 開発依存関係をインストール
-pip install -e ".[dev,test]"
-```
-
-## 貢献
-
-貢献を歓迎します！貢献ガイドラインと行動規範をご覧ください。
+- **[開発者ドキュメント](docs/development/overview.md)**：開発者ドキュメント
 
 ## サポート
 
-- **問題報告**：[GitHub Issues](https://github.com/oceanbase/powermem/issues)
-- **ディスカッション**：[GitHub Discussions](https://github.com/oceanbase/powermem/discussions)
+- **問題フィードバック**：[GitHub Issues](https://github.com/oceanbase/powermem/issues)
+- **ディスカッション交流**：[GitHub Discussions](https://github.com/oceanbase/powermem/discussions)
 
 ---
 

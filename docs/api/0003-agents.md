@@ -255,7 +255,6 @@ manager.add(
 
 ## See Also
 
-- [Multi-Agent Guide](../guides/multi_agent.md)
-- [Memory API](memory.md)
-- [Configuration API](../guides/configuration.md)
+- [Multi-Agent Guide](docs/guides/0003-multi_agent.md)
+- [Memory API](docs/api/0001-memory.md)
 

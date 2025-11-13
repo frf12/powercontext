@@ -536,9 +536,3 @@ Use `Memory` when:
 - Interactive notebooks
 - Simple use cases without concurrency
 
-## Next Steps
-
-- **Scenario 5**: Learn custom integrations
-- **AsyncMemory API**: See [AsyncMemory API](../api/async_memory.md)
-- **Integrations Guide**: Check [Integrations Guide](../guides/integrations.md)
-

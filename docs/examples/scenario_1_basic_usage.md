@@ -21,11 +21,11 @@ Powermem can automatically load configuration from a `.env` file in your project
 2. Edit the `.env` file and configure
    ```
 
-> **Note:** When you call `create_memory()`, powermem will automatically:
+> **Note:** When you call `auto_config()`, powermem will automatically:
 > - Look for a `.env` file in the current directory
 > - Load configuration from environment variables
 
-For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](../guides/configuration.md).
+For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](docs/guides/0003-configuration.md).
 
 ## Step 1: Setup
 
@@ -33,10 +33,13 @@ First, let's create a simple Python script and import powermem:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-# Create memory instance (auto-loads from .env or uses defaults)
-memory = create_memory()
+# Load configuration (auto-loads from .env or uses defaults)
+config = auto_config()
+
+# Create memory instance
+memory = Memory(config=config)
 
 print("✓ Memory initialized successfully!")
 ```
@@ -57,9 +60,10 @@ Now let's add a simple memory:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 
 # Add a memory
 result = memory.add(
@@ -89,9 +93,10 @@ Let's add several memories for a user:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add multiple memories
@@ -130,9 +135,10 @@ Now let's search for memories:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add some memories first
@@ -174,9 +180,10 @@ Let's add memories with metadata for better organization:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add memories with metadata
@@ -208,9 +215,10 @@ Search memories using metadata filters:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add memories with metadata
@@ -261,9 +269,10 @@ Retrieve all memories for a user:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add some memories
@@ -301,9 +310,10 @@ Update an existing memory:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add a memory (using infer=False for predictable behavior)
@@ -350,9 +360,10 @@ Delete a memory:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add a memory (using infer=False for predictable behavior)
@@ -395,9 +406,10 @@ Delete all memories for a user:
 
 ```python
 # basic_usage_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user123"
 
 # Add some memories
@@ -434,11 +446,14 @@ Here's a complete example combining all the steps:
 
 ```python
 # complete_basic_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
 def main():
+    # Load configuration
+    config = auto_config()
+    
     # Initialize memory
-    memory = create_memory()
+    memory = Memory(config=config)
     user_id = "demo_user"
     
     print("=" * 60)
@@ -509,8 +524,10 @@ python complete_basic_example.py
 Try managing memories for multiple users:
 
 ```python
-from powermem import create_memory
-memory = create_memory()
+from powermem import Memory, auto_config
+
+config = auto_config()
+memory = Memory(config=config)
 
 # Add memories for different users
 memory.add("User 1 likes Python", user_id="user1")
@@ -549,12 +566,3 @@ results = memory.search(
 
 print(results)
 ```
-
-
-
-## Next Steps
-
-- **Scenario 2**: Learn about intelligent memory features
-- **Scenario 3**: Explore multi-agent scenarios
-- **API Reference**: See [Memory API](../api/memory.md)
-

@@ -299,7 +299,6 @@ memory = create_memory()  # Auto-loads Qwen config
 
 ## See Also
 
-- [Getting Started Guide](getting_started.md)
-- [Configuration Guide](configuration.md)
-- [API Reference](../api/)
+- [Getting Started Guide](docs/guides/0001-getting_started.md)
+- [Configuration Guide](docs/guides/0003-configuration.md)
 
