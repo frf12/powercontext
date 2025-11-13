@@ -548,5 +548,5 @@ for i, mem in enumerate(result.get('results', []), 1):
 
 - **Scenario 3**: Explore multi-agent scenarios
 - **Scenario 4**: Learn async operations
-- **Architecture**: See [Intelligent Features](../architecture/intelligent_features.md)
+- **Architecture**: See [Architecture Overview](../architecture/overview) for intelligent memory features
 

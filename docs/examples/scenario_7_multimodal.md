@@ -363,6 +363,6 @@ config = {
 
 - **Scenario 2**: Learn about intelligent memory features
 - **Scenario 4**: Explore async operations
-- **API Reference**: See [Memory API](../api/0001-memory.md)
-- **Configuration Guide**: See [Configuration Guide](../guides/0002-configuration.md)
+- **API Reference**: See [Memory API](../api/memory)
+- **Configuration Guide**: See [Configuration Guide](../guides/configuration.md)
 

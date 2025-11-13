@@ -4,20 +4,6 @@ This section contains step-by-step examples with code and explanations in intera
 
 ## Available Scenarios
 
-Each scenario is available as both:
-- **Jupyter Notebook** (`.ipynb`) - Interactive, runnable examples
-- **Markdown** (`.md`) - Documentation format
-
-### Interactive Notebooks
-
-- **[Scenario 1: Basic Usage](scenario_1_basic_usage.ipynb)** - Learn the basics of powermem
-- **[Scenario 2: Intelligent Memory](scenario_2_intelligent_memory.ipynb)** - Explore intelligent memory features
-- **[Scenario 3: Multi-Agent](scenario_3_multi_agent.ipynb)** - Multi-agent scenarios
-- **[Scenario 4: Async Operations](scenario_4_async_operations.ipynb)** - Async memory operations
-- **[Scenario 5: Custom Integration](scenario_5_custom_integration.ipynb)** - Custom integrations
-- **[Scenario 6: Sub Stores](scenario_6_sub_stores.ipynb)** - Sub Memory partitioning
-- **[Scenario 7: Multimodal Capability](scenario_7_multimodal.ipynb)** - Image and multimedia processing
-
 ### Markdown Documentation
 
 - [Scenario 1: Basic Usage](scenario_1_basic_usage.md)
