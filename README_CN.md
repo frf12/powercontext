@@ -110,9 +110,9 @@ for memory in memories:
 ## 文档
 
 - **[入门指南](docs/guides/0001-getting_started.md)**：安装和快速开始指南
-- **[配置指南](docs/guides/0002-configuration.md)**：完整的配置选项
-- **[多智能体指南](docs/guides/0004-multi_agent.md)**：多智能体场景和示例
-- **[集成指南](docs/guides/0005-integrations.md)**：LLM 和嵌入提供商集成
+- **[配置指南](docs/guides/0003-configuration.md)**：完整的配置选项
+- **[多智能体指南](docs/guides/0005-multi_agent.md)**：多智能体场景和示例
+- **[集成指南](docs/guides/0009-integrations.md)**：LLM 和嵌入提供商集成
 - **[子存储指南](docs/guides/0006-sub_stores.md)**：子存储的使用方法和示例
 - **[API 文档](docs/api/overview.md)**：完整的 API 参考
 - **[架构指南](docs/architecture/overview.md)**：系统架构和设计
