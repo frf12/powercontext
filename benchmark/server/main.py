@@ -1,6 +1,9 @@
 """
 PowerMem Benchmark Server
 
+⚠️ IMPORTANT: This server is NOT the official PowerMem server API.
+It is only used for benchmark testing scenarios and should not be used in production.
+
 This server provides REST APIs for managing and searching memories.
 
 Configuration:

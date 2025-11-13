@@ -892,9 +892,9 @@ memory.add(
 
 ## Next Steps
 
-- **API Reference**: See [Memory API](../api/0001-memory.md) for all sub store related APIs
-- **Configuration Guide**: Refer to [Configuration Guide](../guides/0002-configuration.md) for detailed configuration options
-- **Sub Store Guide**: Check [Sub Store Usage Guide](../guides/0006-sub_stores.md) for more advanced usage
+- **API Reference**: See [Memory API](../api/memory) for all sub store related APIs
+- **Configuration Guide**: Refer to [Configuration Guide](../guides/configuration.md) for detailed configuration options
+- **Sub Store Guide**: Check [Sub Store Usage Guide](../guides/sub_stores) for more advanced usage
 
 ## Summary
 
