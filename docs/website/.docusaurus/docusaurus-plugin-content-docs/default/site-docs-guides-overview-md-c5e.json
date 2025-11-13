@@ -1,0 +1,23 @@
+{
+  "id": "guides/overview",
+  "title": "Guides",
+  "description": "Comprehensive guides for using powermem effectively.",
+  "source": "@site/docs/guides/overview.md",
+  "sourceDirName": "guides",
+  "slug": "/guides/overview",
+  "permalink": "/zh/docs/guides/overview",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Integrations Guide",
+    "permalink": "/zh/docs/guides/integrations"
+  },
+  "next": {
+    "title": "Memory API Reference",
+    "permalink": "/zh/docs/api/memory"
+  }
+}

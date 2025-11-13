@@ -1,0 +1,23 @@
+{
+  "id": "examples/scenario_7_multimodal",
+  "title": "Scenario 7: Multimodal Capability",
+  "description": "This scenario demonstrates PowerMem's multimodal capability - storing and retrieving images, audio, and other multimedia content.",
+  "source": "@site/docs/examples/scenario_7_multimodal.md",
+  "sourceDirName": "examples",
+  "slug": "/examples/scenario_7_multimodal",
+  "permalink": "/zh/docs/examples/scenario_7_multimodal",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Scenario 6: Sub Stores - Memory Partitioning",
+    "permalink": "/zh/docs/examples/scenario_6_sub_stores"
+  },
+  "next": {
+    "title": "Scenario 8: Ebbinghaus Forgetting Curve",
+    "permalink": "/zh/docs/examples/scenario_8_ebbinghaus_forgetting_curve"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "examples/overview",
+  "title": "Examples",
+  "description": "This section contains step-by-step examples with code and explanations in interactive Jupyter notebook format.",
+  "source": "@site/docs/examples/overview.md",
+  "sourceDirName": "examples",
+  "slug": "/examples/overview",
+  "permalink": "/zh/docs/examples/overview",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "API Documentation",
+    "permalink": "/zh/docs/api/overview"
+  },
+  "next": {
+    "title": "Scenario 1: Basic Usage",
+    "permalink": "/zh/docs/examples/scenario_1_basic_usage"
+  }
+}

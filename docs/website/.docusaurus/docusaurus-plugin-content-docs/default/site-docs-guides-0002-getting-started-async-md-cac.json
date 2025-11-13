@@ -1,0 +1,24 @@
+{
+  "id": "guides/getting_started_async",
+  "title": "getting_started_async",
+  "description": "Prerequisites",
+  "source": "@site/docs/guides/0002-getting_started_async.md",
+  "sourceDirName": "guides",
+  "slug": "/guides/getting_started_async",
+  "permalink": "/zh/docs/guides/getting_started_async",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "getting_started",
+    "permalink": "/zh/docs/guides/getting_started"
+  },
+  "next": {
+    "title": "Configuration Guide",
+    "permalink": "/zh/docs/guides/configuration"
+  }
+}

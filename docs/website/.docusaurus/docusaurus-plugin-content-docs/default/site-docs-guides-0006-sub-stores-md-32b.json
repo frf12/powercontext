@@ -1,0 +1,24 @@
+{
+  "id": "guides/sub_stores",
+  "title": "Sub Stores Guide",
+  "description": "Complete guide to using sub stores for advanced memory partitioning and optimization.",
+  "source": "@site/docs/guides/0006-sub_stores.md",
+  "sourceDirName": "guides",
+  "slug": "/guides/sub_stores",
+  "permalink": "/zh/docs/guides/sub_stores",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 6,
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "multi_agent",
+    "permalink": "/zh/docs/guides/multi_agent"
+  },
+  "next": {
+    "title": "multimodal",
+    "permalink": "/zh/docs/guides/multimodal"
+  }
+}

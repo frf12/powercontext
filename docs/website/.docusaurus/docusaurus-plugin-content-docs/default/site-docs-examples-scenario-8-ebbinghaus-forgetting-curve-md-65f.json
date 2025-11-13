@@ -1,0 +1,23 @@
+{
+  "id": "examples/scenario_8_ebbinghaus_forgetting_curve",
+  "title": "Scenario 8: Ebbinghaus Forgetting Curve",
+  "description": "This scenario demonstrates how to implement and utilize the Ebbinghaus Forgetting Curve in PowerMem to optimize memory retrieval based on time-based decay patterns.",
+  "source": "@site/docs/examples/scenario_8_ebbinghaus_forgetting_curve.md",
+  "sourceDirName": "examples",
+  "slug": "/examples/scenario_8_ebbinghaus_forgetting_curve",
+  "permalink": "/zh/docs/examples/scenario_8_ebbinghaus_forgetting_curve",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Scenario 7: Multimodal Capability",
+    "permalink": "/zh/docs/examples/scenario_7_multimodal"
+  },
+  "next": {
+    "title": "powermem Architecture",
+    "permalink": "/zh/docs/architecture/overview"
+  }
+}

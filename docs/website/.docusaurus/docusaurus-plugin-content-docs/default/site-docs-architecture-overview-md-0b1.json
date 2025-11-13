@@ -1,0 +1,23 @@
+{
+  "id": "architecture/overview",
+  "title": "powermem Architecture",
+  "description": "powermem is an AI-powered intelligent memory management system that mimics human memory mechanisms to provide persistent memory capabilities for LLM applications. This document provides a comprehensive overview of the system architecture.",
+  "source": "@site/docs/architecture/overview.md",
+  "sourceDirName": "architecture",
+  "slug": "/architecture/overview",
+  "permalink": "/zh/docs/architecture/overview",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Scenario 8: Ebbinghaus Forgetting Curve",
+    "permalink": "/zh/docs/examples/scenario_8_ebbinghaus_forgetting_curve"
+  },
+  "next": {
+    "title": "PowerMem Benchmark",
+    "permalink": "/zh/docs/benchmark/overview"
+  }
+}

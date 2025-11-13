@@ -1,0 +1,162 @@
+{
+  "docusaurus-plugin-content-docs": {
+    "default": {
+      "path": "/zh/docs",
+      "versions": [
+        {
+          "name": "current",
+          "label": "Next",
+          "isLast": true,
+          "path": "/zh/docs",
+          "mainDocId": "guides/getting_started",
+          "docs": [
+            {
+              "id": "api/agents",
+              "path": "/zh/docs/api/agents",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "api/async_memory",
+              "path": "/zh/docs/api/async_memory",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "api/mcp",
+              "path": "/zh/docs/api/mcp",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "api/memory",
+              "path": "/zh/docs/api/memory",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "api/overview",
+              "path": "/zh/docs/api/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "architecture/overview",
+              "path": "/zh/docs/architecture/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "benchmark/overview",
+              "path": "/zh/docs/benchmark/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "development/overview",
+              "path": "/zh/docs/development/overview"
+            },
+            {
+              "id": "examples/overview",
+              "path": "/zh/docs/examples/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_1_basic_usage",
+              "path": "/zh/docs/examples/scenario_1_basic_usage",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_2_intelligent_memory",
+              "path": "/zh/docs/examples/scenario_2_intelligent_memory",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_3_multi_agent",
+              "path": "/zh/docs/examples/scenario_3_multi_agent",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_4_async_operations",
+              "path": "/zh/docs/examples/scenario_4_async_operations",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_5_custom_integration",
+              "path": "/zh/docs/examples/scenario_5_custom_integration",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_6_sub_stores",
+              "path": "/zh/docs/examples/scenario_6_sub_stores",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_7_multimodal",
+              "path": "/zh/docs/examples/scenario_7_multimodal",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "examples/scenario_8_ebbinghaus_forgetting_curve",
+              "path": "/zh/docs/examples/scenario_8_ebbinghaus_forgetting_curve",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/configuration",
+              "path": "/zh/docs/guides/configuration",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/custom_prompts_usage",
+              "path": "/zh/docs/guides/custom_prompts_usage",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/ebbinghaus_forgetting_curve",
+              "path": "/zh/docs/guides/ebbinghaus_forgetting_curve",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/getting_started",
+              "path": "/zh/docs/guides/getting_started",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/getting_started_async",
+              "path": "/zh/docs/guides/getting_started_async",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/integrations",
+              "path": "/zh/docs/guides/integrations",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/multi_agent",
+              "path": "/zh/docs/guides/multi_agent",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/multimodal",
+              "path": "/zh/docs/guides/multimodal",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/overview",
+              "path": "/zh/docs/guides/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/sub_stores",
+              "path": "/zh/docs/guides/sub_stores",
+              "sidebar": "docsSidebar"
+            }
+          ],
+          "draftIds": [],
+          "sidebars": {
+            "docsSidebar": {
+              "link": {
+                "path": "/zh/docs/guides/getting_started",
+                "label": "guides/getting_started"
+              }
+            }
+          }
+        }
+      ],
+      "breadcrumbs": true
+    }
+  }
+}

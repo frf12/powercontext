@@ -1,0 +1,24 @@
+{
+  "id": "api/agents",
+  "title": "Agent APIs Reference",
+  "description": "powermem provides comprehensive multi-agent memory management capabilities.",
+  "source": "@site/docs/api/0003-agents.md",
+  "sourceDirName": "api",
+  "slug": "/api/agents",
+  "permalink": "/zh/docs/api/agents",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {},
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "AsyncMemory API Reference",
+    "permalink": "/zh/docs/api/async_memory"
+  },
+  "next": {
+    "title": "MCP (Model Context Protocol) API Reference",
+    "permalink": "/zh/docs/api/mcp"
+  }
+}
