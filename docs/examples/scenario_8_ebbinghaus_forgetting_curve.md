@@ -19,7 +19,7 @@ This scenario demonstrates how to implement and utilize the Ebbinghaus Forgettin
 
 2. Edit the `.env` file and configure your settings
 
-> **Note:** When you call `create_memory()`, powermem will automatically load configuration from the `.env` file.
+> **Note:** When you call `auto_config()`, powermem will automatically load configuration from the `.env` file.
 
 ## What is the Ebbinghaus Forgetting Curve?
 
@@ -114,10 +114,11 @@ Let's add memories and track their creation time:
 
 ```python
 # ebbinghaus_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 from datetime import datetime
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "student_001"
 
 # Add memories with timestamps in metadata
@@ -179,7 +180,7 @@ Now let's retrieve memories and calculate their retention scores:
 
 ```python
 # ebbinghaus_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 from datetime import datetime
 import math
 
@@ -192,7 +193,8 @@ def calculate_retention(time_elapsed_hours):
     retention = math.exp(-decay_constant * time_elapsed_hours)
     return max(retention, 0.2)
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "student_001"
 
 # Get all memories
@@ -248,7 +250,7 @@ Let's enhance search results by applying retention-based weighting:
 
 ```python
 # ebbinghaus_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 from datetime import datetime
 import math
 
@@ -309,7 +311,8 @@ def search_with_retention_weighting(memory, query, user_id, limit=10):
     return weighted_results[:limit]
 
 # Example usage
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "student_001"
 
 query = "Python programming concepts"
@@ -431,7 +434,7 @@ Based on the forgetting curve, we can implement a spaced repetition system that 
 
 ```python
 # ebbinghaus_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 from datetime import datetime, timedelta
 import math
 
@@ -506,7 +509,8 @@ def get_next_review_time(memory, retention_threshold=0.5):
     return 0, True
 
 # Example: Get review recommendations
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "student_001"
 
 all_memories = memory.get_all(user_id=user_id)
@@ -552,7 +556,7 @@ Here's a complete example that combines all concepts:
 
 ```python
 # ebbinghaus_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 from datetime import datetime, timedelta
 import math
 
@@ -601,7 +605,8 @@ def search_with_retention_weighting(memory, query, user_id, limit=10):
     return weighted_results[:limit]
 
 def main():
-    memory = create_memory()
+    config = auto_config()
+    memory = Memory(config=config)
     user_id = "student_001"
     
     print("=" * 80)

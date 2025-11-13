@@ -23,9 +23,10 @@ First, let's see how to enable intelligent processing:
 
 ```python
 # intelligent_memory_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 
 # Add memory with intelligent processing (infer=True)
 result = memory.add(
@@ -62,9 +63,10 @@ Intelligent memory automatically detects duplicates:
 
 ```python
 # intelligent_memory_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user_001"
 
 # First addition
@@ -121,9 +123,10 @@ When information changes, memories are automatically updated:
 
 ```python
 # intelligent_memory_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user_001"
 
 # Initial information
@@ -178,9 +181,10 @@ New, non-conflicting information is added normally:
 
 ```python
 # intelligent_memory_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user_001"
 
 # Add existing memories
@@ -231,9 +235,10 @@ When contradictory information is detected, the system resolves conflicts:
 
 ```python
 # intelligent_memory_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user_001"
 
 # Add initial preference
@@ -288,9 +293,10 @@ Related memories are consolidated:
 
 ```python
 # intelligent_memory_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 user_id = "user_001"
 
 # Initial memory
@@ -345,10 +351,11 @@ Here's a complete example demonstrating all intelligent features:
 
 ```python
 # complete_intelligent_example.py
-from powermem import create_memory
+from powermem import Memory, auto_config
 
 def main():
-    memory = create_memory()
+    config = auto_config()
+    memory = Memory(config=config)
     user_id = "demo_user"
     
     print("=" * 80)
@@ -455,9 +462,10 @@ python complete_intelligent_example.py
 Compare adding memories with and without intelligent processing:
 
 ```python
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 
 # Simple mode
 print("1. Simple mode (infer=False):")
@@ -486,9 +494,10 @@ print("\n✓ Comparison completed. Intelligent mode extracts facts automatically
 Monitor different memory operations:
 
 ```python
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 
 # Example: Add memory and check the event type
 result = memory.add(
@@ -517,9 +526,10 @@ for mem in result.get('results', []):
 Process longer conversations:
 
 ```python
-from powermem import create_memory
+from powermem import Memory, auto_config
 
-memory = create_memory()
+config = auto_config()
+memory = Memory(config=config)
 
 # Long conversation with multiple facts
 long_conversation = [

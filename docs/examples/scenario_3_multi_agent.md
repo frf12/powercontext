@@ -22,14 +22,14 @@ First, let's create memory instances for different agents:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 
 # Create memory instances for different agents
-support_agent = create_memory(config=config, agent_id="support_agent")
-sales_agent = create_memory(config=config, agent_id="sales_agent")
-tech_agent = create_memory(config=config, agent_id="tech_agent")
+support_agent = Memory(config=config, agent_id="support_agent")
+sales_agent = Memory(config=config, agent_id="sales_agent")
+tech_agent = Memory(config=config, agent_id="tech_agent")
 
 print("✓ Created memory instances for:")
 print("  - Support Agent")
@@ -56,15 +56,15 @@ Each agent adds memories to their own space:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 customer_id = "customer_12345"
 
 # Create agents
-support_agent = create_memory(config=config, agent_id="support_agent")
-sales_agent = create_memory(config=config, agent_id="sales_agent")
-tech_agent = create_memory(config=config, agent_id="tech_agent")
+support_agent = Memory(config=config, agent_id="support_agent")
+sales_agent = Memory(config=config, agent_id="sales_agent")
+tech_agent = Memory(config=config, agent_id="tech_agent")
 
 # Support agent adds memory
 support_agent.add(
@@ -106,14 +106,14 @@ Each agent can search only their own memories:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 customer_id = "customer_12345"
 
 # Create agents
-support_agent = create_memory(config=config, agent_id="support_agent")
-sales_agent = create_memory(config=config, agent_id="sales_agent")
+support_agent = Memory(config=config, agent_id="support_agent")
+sales_agent = Memory(config=config, agent_id="sales_agent")
 
 # Add memories
 support_agent.add(
@@ -166,15 +166,15 @@ Search across all agents by omitting agent_id:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 customer_id = "customer_12345"
 
 # Create agents
-support_agent = create_memory(config=config, agent_id="support_agent")
-sales_agent = create_memory(config=config, agent_id="sales_agent")
-tech_agent = create_memory(config=config, agent_id="tech_agent")
+support_agent = Memory(config=config, agent_id="support_agent")
+sales_agent = Memory(config=config, agent_id="sales_agent")
+tech_agent = Memory(config=config, agent_id="tech_agent")
 
 # Add memories for each agent
 support_agent.add("Customer prefers email support", user_id=customer_id)
@@ -215,15 +215,15 @@ Multiple agents working on the same project:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 project_id = "project_ai_platform"
 
 # Create developer agents
-alice_dev = create_memory(config=config, agent_id="alice_dev")
-bob_dev = create_memory(config=config, agent_id="bob_dev")
-charlie_qa = create_memory(config=config, agent_id="charlie_qa")
+alice_dev = Memory(config=config, agent_id="alice_dev")
+bob_dev = Memory(config=config, agent_id="bob_dev")
+charlie_qa = Memory(config=config, agent_id="charlie_qa")
 
 # Alice adds development memory
 alice_dev.add(
@@ -281,12 +281,12 @@ Using memory scopes to control visibility:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 
 # Create agent
-agent = create_memory(config=config, agent_id="demo_agent")
+agent = Memory(config=config, agent_id="demo_agent")
 
 # Add memories with different scopes
 agent.add(
@@ -346,14 +346,14 @@ Verify that memories are isolated by agent:
 
 ```python
 # multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 config = auto_config()
 user_id = "user123"
 
 # Create two agents
-agent1 = create_memory(config=config, agent_id="agent1")
-agent2 = create_memory(config=config, agent_id="agent2")
+agent1 = Memory(config=config, agent_id="agent1")
+agent2 = Memory(config=config, agent_id="agent2")
 
 # Agent1 adds memory
 agent1.add("Agent1's memory", user_id=user_id)
@@ -394,7 +394,7 @@ Here's a complete multi-agent example:
 
 ```python
 # complete_multi_agent_example.py
-from powermem import create_memory, auto_config
+from powermem import Memory, auto_config
 
 def main():
     config = auto_config()
@@ -405,9 +405,9 @@ def main():
     print("=" * 80)
     
     # Create agents
-    support_agent = create_memory(config=config, agent_id="support_agent")
-    sales_agent = create_memory(config=config, agent_id="sales_agent")
-    tech_agent = create_memory(config=config, agent_id="tech_agent")
+    support_agent = Memory(config=config, agent_id="support_agent")
+    sales_agent = Memory(config=config, agent_id="sales_agent")
+    tech_agent = Memory(config=config, agent_id="tech_agent")
     
     print("\n[Step 1] Adding Agent-Specific Memories")
     print("-" * 60)
@@ -483,8 +483,8 @@ Create a team scenario with multiple developers:
 config = auto_config()
 project_id = "project_xyz"
 
-dev1 = create_memory(config=config, agent_id="dev1")
-dev2 = create_memory(config=config, agent_id="dev2")
+dev1 = Memory(config=config, agent_id="dev1")
+dev2 = Memory(config=config, agent_id="dev2")
 
 # Each developer adds project memories
 dev1.add("Implemented feature X", run_id=project_id)
@@ -502,8 +502,8 @@ Create a customer service scenario:
 config = auto_config()
 customer_id = "customer_123"
 
-agent1 = create_memory(config=config, agent_id="cs_agent_1")
-agent2 = create_memory(config=config, agent_id="cs_agent_2")
+agent1 = Memory(config=config, agent_id="cs_agent_1")
+agent2 = Memory(config=config, agent_id="cs_agent_2")
 
 # Both agents work with same customer
 agent1.add("Customer reported issue A", user_id=customer_id)
@@ -518,7 +518,7 @@ history = agent1.search("customer issues", user_id=customer_id)
 Experiment with different memory scopes:
 
 ```python
-agent = create_memory(config=config, agent_id="agent")
+agent = Memory(config=config, agent_id="agent")
 
 # Add memories with different scopes
 agent.add("Private memory", metadata={"scope": "AGENT"})
