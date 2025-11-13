@@ -746,9 +746,3 @@ def update_review_schedule(memory_id, user_performance):
 4. **Spaced repetition**: Use the forgetting curve to schedule optimal review times
 5. **Practical applications**: Apply these concepts to learning systems, recommendation engines, and memory optimization
 
-## Next Steps
-
-- **Scenario 2**: Learn about intelligent memory features
-- **Scenario 3**: Explore multi-agent scenarios
-- **API Reference**: See [Memory API](../api/memory.md)
-

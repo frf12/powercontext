@@ -359,10 +359,4 @@ config = {
 - **Audio ASR**: `qwen3-asr-flash` (via qwen_asr provider)
 - **Others**: Any model supporting OpenAI vision API format
 
-## Next Steps
-
-- **Scenario 2**: Learn about intelligent memory features
-- **Scenario 4**: Explore async operations
-- **API Reference**: See [Memory API](../api/0001-memory.md)
-- **Configuration Guide**: See [Configuration Guide](../guides/0002-configuration.md)
 

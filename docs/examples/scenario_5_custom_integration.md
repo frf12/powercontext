@@ -520,9 +520,3 @@ class CachedEmbedder(EmbedderBase):
 4. **Testing**: Test custom providers thoroughly
 5. **Documentation**: Document custom implementations
 
-## Next Steps
-
-- **API Reference**: See [API Documentation](../api/)
-- **Architecture**: Understand [System Architecture](../architecture/)
-- **Guides**: Check [Integration Guide](../guides/integrations.md)
-

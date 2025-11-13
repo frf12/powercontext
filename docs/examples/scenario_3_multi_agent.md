@@ -534,9 +534,3 @@ print("\nShared memories (GROUP scope):")
 shared = agent.search("memory", filters={"metadata.scope": "GROUP"})
 ```
 
-## Next Steps
-
-- **Scenario 4**: Learn async operations
-- **Multi-Agent Guide**: See [Multi-Agent Guide](../guides/multi_agent.md)
-- **Agent APIs**: Check [Agent APIs](../api/agents.md)
-

@@ -334,7 +334,6 @@ AUDIT_ENABLED=true
 
 ## See Also
 
-- [Getting Started Guide](getting_started.md)
-- [Configuration API](../api/configuration.md)
-- [Examples](../examples/)
+- [Getting Started Guide](docs/guides/0001-getting_started.md)
+- [Examples](docs/guides/examples/overview.md)
 

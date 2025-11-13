@@ -250,7 +250,7 @@ When `infer=True` (default), Memory automatically:
 
 **Note:** Intelligent processing is enabled by default. Set `infer=False` to disable it for simple storage operations.
 
-See [Intelligent Memory Guide](../guides/intelligent_memory.md) for more details.
+See [Intelligent Memory Guide](docs/guides/intelligent_memory.md) for more details.
 
 ### Error Handling
 

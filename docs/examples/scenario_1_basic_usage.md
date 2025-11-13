@@ -25,7 +25,7 @@ Powermem can automatically load configuration from a `.env` file in your project
 > - Look for a `.env` file in the current directory
 > - Load configuration from environment variables
 
-For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](../guides/0002-configuration.md).
+For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](docs/guides/0002-configuration.md).
 
 ## Step 1: Setup
 
@@ -566,12 +566,3 @@ results = memory.search(
 
 print(results)
 ```
-
-
-
-## Next Steps
-
-- **Scenario 2**: Learn about intelligent memory features
-- **Scenario 3**: Explore multi-agent scenarios
-- **API Reference**: See [Memory API](../api/memory.md)
-
