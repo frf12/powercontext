@@ -159,7 +159,7 @@ if not OPENAI_API_KEY:
 
 # HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "/app/history/history.db")
 #OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://172.28.119.32:8081")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://xx.xx.xx.xx:xxxx")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen3-max")
 
 EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "text-embedding-v4")
@@ -174,7 +174,7 @@ if DB_TYPE == "oceanbase":
             "host": "127.0.0.1",
             "port": "2881",
             "user": "root@ai_work",
-            "password": "oceanbaseV5",
+            "password": "********",
             "db_name": "ai_work",
             "collection_name": "powermem_collection",
             "embedding_model_dims": 1536,
@@ -191,7 +191,7 @@ elif DB_TYPE == "postgres":
             "host": "127.0.0.1",
             "port": "5432",
             "user": "postgres",
-            "password": "postgres",
+            "password": "********",
             "dbname": "ai_work",
             "collection_name": "memories",
             "embedding_model_dims": 1536,
