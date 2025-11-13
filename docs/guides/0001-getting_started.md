@@ -10,21 +10,25 @@ Welcome to powermem! This guide will help you get started quickly.
 pip install powermem
 ```
 
-## Quick Start
+## Configuration
 
-### With Configuration
+Powermem can automatically load configuration from a `.env` file in your project directory. This is the recommended way to configure powermem for your use case.
 
-Create a `.env` file:
+### Creating a `.env` File
 
-```env
-LLM_PROVIDER=qwen
-LLM_API_KEY=your_api_key
-LLM_MODEL=qwen-plus
-EMBEDDING_PROVIDER=qwen
-EMBEDDING_API_KEY=your_api_key
-EMBEDDING_MODEL=text-embedding-v4
-DATABASE_PROVIDER=sqlite
-```
+1. Copy the example configuration file:
+   ```bash
+   cp configs/minienv.example .env
+   ```
+
+2. Edit the `.env` file and configure
+   ```
+
+> **Note:** When you call `create_memory()`, powermem will automatically:
+> - Look for a `.env` file in the current directory
+> - Load configuration from environment variables
+
+For more configuration options, see the full example in `configs/env.example` or refer to the [Configuration Guide](../guides/0002-configuration.md).
 
 ### Simplest Example
 
@@ -164,51 +168,6 @@ memory.delete(memory_id=123)
 
 # Delete all user memories
 memory.delete_all(user_id="user123")
-```
-
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file:
-
-```env
-LLM_PROVIDER=qwen
-LLM_API_KEY=your_api_key
-LLM_MODEL=qwen-plus
-EMBEDDING_PROVIDER=qwen
-EMBEDDING_API_KEY=your_api_key
-EMBEDDING_MODEL=text-embedding-v4
-DATABASE_PROVIDER=sqlite
-```
-
-### Programmatic Configuration
-
-```python
-from powermem import Memory
-
-config = {
-    'llm': {
-        'provider': 'qwen',
-        'config': {
-            'api_key': 'your_api_key',
-            'model': 'qwen-plus'
-        }
-    },
-    'embedder': {
-        'provider': 'qwen',
-        'config': {
-            'api_key': 'your_api_key',
-            'model': 'text-embedding-v4'
-        }
-    },
-    'vector_store': {
-        'provider': 'sqlite',
-        'config': {'path': './memories.db'}
-    }
-}
-
-memory = Memory(config=config)
 ```
 
 ## Next Steps

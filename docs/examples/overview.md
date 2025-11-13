@@ -8,27 +8,16 @@ Each scenario is available as both:
 - **Jupyter Notebook** (`.ipynb`) - Interactive, runnable examples
 - **Markdown** (`.md`) - Documentation format
 
-### Interactive Notebooks
-
-- **[Scenario 1: Basic Usage](scenario_1_basic_usage.ipynb)** - Learn the basics of powermem
-- **[Scenario 2: Intelligent Memory](scenario_2_intelligent_memory.ipynb)** - Explore intelligent memory features
-- **[Scenario 3: Multi-Agent](scenario_3_multi_agent.ipynb)** - Multi-agent scenarios
-- **[Scenario 4: Async Operations](scenario_4_async_operations.ipynb)** - Async memory operations
-- **[Scenario 5: Custom Integration](scenario_5_custom_integration.ipynb)** - Custom integrations
-- **[Scenario 6: Sub Stores](scenario_6_sub_stores.ipynb)** - Sub Memory partitioning
-- **[Scenario 7: Multimodal Capability](scenario_7_multimodal.ipynb)** - Image and multimedia processing
-- **[Scenario 8: Ebbinghaus Forgetting Curve](scenario_8_ebbinghaus_forgetting_curve.ipynb)** - Time-based memory decay and retention optimization
-
 ### Markdown Documentation
 
-- [Scenario 1: Basic Usage](scenario_1_basic_usage.md)
-- [Scenario 2: Intelligent Memory](scenario_2_intelligent_memory.md)
-- [Scenario 3: Multi-Agent](scenario_3_multi_agent.md)
-- [Scenario 4: Async Operations](scenario_4_async_operations.md)
-- [Scenario 5: Custom Integration](scenario_5_custom_integration.md)
-- [Scenario 6: Sub Stores](scenario_6_sub_stores.md)
-- [Scenario 7: Multimodal Capability](scenario_7_multimodal.md)
-- [Scenario 8: Ebbinghaus Forgetting Curve](scenario_8_ebbinghaus_forgetting_curve.md)
+- [Scenario 1: Basic Usage](docs/examples/scenario_1_basic_usage.md)
+- [Scenario 2: Intelligent Memory](docs/examples/scenario_2_intelligent_memory.md)
+- [Scenario 3: Multi-Agent](docs/examples/scenario_3_multi_agent.md)
+- [Scenario 4: Async Operations](docs/examples/scenario_4_async_operations.md)
+- [Scenario 5: Custom Integration](docs/examples/scenario_5_custom_integration.md)
+- [Scenario 6: Sub Stores](docs/examples/scenario_6_sub_stores.md)
+- [Scenario 7: Multimodal Capability](docs/examples/scenario_7_multimodal.md)
+- [Scenario 8: Ebbinghaus Forgetting Curve](docs/examples/scenario_8_ebbinghaus_forgetting_curve.md)
 
 ## Quick Start
 
