@@ -45,6 +45,7 @@ from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WIND
 from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryGenerationError,
     topic_memory_stage_budget,
+    validate_topic_memory_stage_capacity,
 )
 from powercontext.builtin.handoff_report.adapters import RuntimeHandoffReadAdapter, RuntimeWorkContinuityReadAdapter
 from powercontext.builtin.handoff_report.application import HandoffReportApplication
@@ -389,11 +390,12 @@ def _topic_memory_processing_bindings(
     if injected_embedding_model is not None or injected_token_estimator is not None:
         raise BuiltinConfigurationError("topic-memory-child-resources")
     try:
-        topic_memory_stage_budget(
+        budget = topic_memory_stage_budget(
             context_window_tokens=config.inference.generation_model_context_window_tokens,
             max_requests=config.inference.generation_max_requests,
             model_settings=config.inference.generation_model_settings,
         )
+        validate_topic_memory_stage_capacity(budget, contexts.token_estimator)
     except TopicMemoryGenerationError as error:
         raise BuiltinConfigurationError("topic-memory-generation-budget") from error
     spec = TopicMemoryWorkerSpec(config=config)

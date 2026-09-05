@@ -28,7 +28,9 @@ from powercontext.builtin.artifacts.topic_memory import MAX_TOPIC_MEMORY_SEARCH_
 from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryGenerationError,
     topic_memory_stage_budget,
+    validate_topic_memory_stage_capacity,
 )
+from powercontext.builtin.inference import character_token_estimator
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -183,11 +185,12 @@ class InferenceConfig(BaseModel):
             raise ValueError("generation_model_settings.max_tokens must be a positive integer")  # noqa: TRY003
         if self.generation_model is not None:
             try:
-                topic_memory_stage_budget(
+                budget = topic_memory_stage_budget(
                     context_window_tokens=self.generation_model_context_window_tokens,
                     max_requests=self.generation_max_requests,
                     model_settings=self.generation_model_settings,
                 )
+                validate_topic_memory_stage_capacity(budget, character_token_estimator())
             except TopicMemoryGenerationError as error:
                 raise ValueError(  # noqa: TRY003
                     f"Topic Memory generation budget is invalid: {error.error_code}"

@@ -65,7 +65,12 @@ from powercontext.builtin.artifacts.topic_memory.relatedness import (
     topic_memory_related_components,
     topic_memory_vector_centroid,
 )
-from powercontext.builtin.inference import EmbeddingModel, StructuredGenerator, TokenEstimator
+from powercontext.builtin.inference import (
+    EmbeddingModel,
+    StructuredGenerator,
+    TokenEstimator,
+    character_token_estimator,
+)
 from powercontext.builtin.inference.usage import bind_usage_reporter
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
@@ -80,7 +85,13 @@ from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingWorkerOutcome,
 )
 from powercontext.builtin.runtime.config import BuiltinConfig
-from powercontext.builtin.sources import CONTENT_SOURCE_NAME, SourceCursor
+from powercontext.builtin.sources import (
+    CONTENT_SOURCE_NAME,
+    EXTERNAL_SKILL_SNAPSHOT_SOURCE_NAME,
+    ContentCapture,
+    ExternalSkillSnapshotCapture,
+    SourceCursor,
+)
 from powercontext.builtin.statistics import ModelUsageOperation, ModelUsagePurpose
 from powercontext.errors import RevisionConflictError
 
@@ -412,36 +423,61 @@ class TopicMemoryProcessor:
         self,
         evidence: tuple[TopicMemoryEvidence, ...],
         stage: str,
-    ) -> tuple[tuple[TopicMemoryEvidence, ...], ...]:
+    ) -> Iterable[tuple[TopicMemoryEvidence, ...]]:
         if stage == "probe" and self._stages.fits(TopicMemoryProbeInput(evidence=evidence), stage):
-            return (evidence,)
-        batches: list[tuple[TopicMemoryEvidence, ...]] = []
+            yield evidence
+            return
         for item in evidence:
-            remaining = item.content
-            while remaining:
-                low = 1
-                high = len(remaining)
-                accepted = 0
-                while low <= high:
-                    middle = (low + high) // 2
-                    fragment = item.model_copy(update={"content": remaining[:middle]})
-                    value: BaseModel = (
-                        TopicMemoryProbeInput(evidence=(fragment,))
-                        if stage == "probe"
-                        else TopicMemoryTemporaryInput(work_id="work-fragment", evidence=(fragment,))
-                    )
-                    if self._stages.fits(value, stage):
-                        accepted = middle
-                        low = middle + 1
-                    else:
-                        high = middle - 1
+            offset = 0
+            fragment_hint = 1
+            while offset < len(item.content):
+                accepted = self._largest_evidence_fragment(item, offset, stage, fragment_hint)
                 if accepted == 0:
                     raise TopicMemoryGenerationError("input_budget_exceeded")
-                batches.append((item.model_copy(update={"content": remaining[:accepted]}),))
-                if len(batches) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
-                    raise TopicMemoryGenerationError("evidence_fragment_limit")
-                remaining = remaining[accepted:]
-        return tuple(batches)
+                yield (item.model_copy(update={"content": item.content[offset : offset + accepted]}),)
+                offset += accepted
+                fragment_hint = accepted
+
+    def _largest_evidence_fragment(
+        self,
+        item: TopicMemoryEvidence,
+        offset: int,
+        stage: str,
+        hint: int,
+    ) -> int:
+        remaining = len(item.content) - offset
+        accepted = 0
+        trial = min(hint, remaining)
+        while self._evidence_fragment_fits(item, offset, trial, stage):
+            accepted = trial
+            if trial == remaining:
+                return accepted
+            trial = min(remaining, trial * 2)
+        low = accepted + 1
+        high = trial - 1
+        while low <= high:
+            middle = (low + high) // 2
+            if self._evidence_fragment_fits(item, offset, middle, stage):
+                accepted = middle
+                low = middle + 1
+            else:
+                high = middle - 1
+        return accepted
+
+    def _evidence_fragment_fits(
+        self,
+        item: TopicMemoryEvidence,
+        offset: int,
+        size: int,
+        stage: str,
+    ) -> bool:
+        fragment = item.model_copy(update={"content": item.content[offset : offset + size]})
+        value: BaseModel = (
+            TopicMemoryProbeInput(evidence=(fragment,))
+            if stage == "probe"
+            else TopicMemoryTemporaryInput(work_id="work-fragment", evidence=(fragment,))
+        )
+        return self._stages.fits(value, stage)
 
     @staticmethod
     def _global_targets_bind(
@@ -907,13 +943,21 @@ def _canonical_source_content(source_type: str, materialized: object) -> str:
         if not materialized.strip():
             raise TopicMemoryGenerationError("unsupported_evidence")
         return materialized
-    if not isinstance(materialized, BaseModel):
+    if source_type == CONTENT_SOURCE_NAME and isinstance(materialized, ContentCapture):
+        payload = {
+            "content": materialized.content,
+            "metadata": materialized.metadata,
+        }
+    elif source_type == EXTERNAL_SKILL_SNAPSHOT_SOURCE_NAME and isinstance(
+        materialized,
+        ExternalSkillSnapshotCapture,
+    ):
+        payload = {
+            "manifest": materialized.snapshot.manifest,
+            "mode": materialized.mode.value,
+        }
+    else:
         raise TopicMemoryGenerationError("unsupported_evidence")
-    payload = materialized.model_dump(mode="json", exclude_none=False)
-    if source_type == CONTENT_SOURCE_NAME:
-        if not isinstance(payload, dict) or not isinstance(payload.get("content"), str):
-            raise TopicMemoryGenerationError("unsupported_evidence")
-        payload.pop("source_id", None)
     content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if not content.strip():
         raise TopicMemoryGenerationError("unsupported_evidence")
@@ -1008,6 +1052,7 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
         BudgetedTopicMemoryGenerator,
         topic_memory_stage_budget,
         topic_memory_stage_fixed_prompt,
+        validate_topic_memory_stage_capacity,
     )
     from powercontext.builtin.inference.pydantic_ai import InferenceLimits, PydanticAIStructuredGenerator
     from powercontext.builtin.inference.usage import UsageReportingEmbeddingModel, UsageReportingStructuredGenerator
@@ -1027,6 +1072,7 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
         max_requests=inference.generation_max_requests,
         model_settings=inference.generation_model_settings,
     )
+    validate_topic_memory_stage_capacity(budget, character_token_estimator())
     limits = InferenceLimits(
         timeout_seconds=inference.generation_timeout_seconds,
         max_requests=inference.generation_max_requests,
