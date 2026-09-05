@@ -25,6 +25,7 @@ from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryReconcileInput,
     TopicMemoryTemporaryOutput,
     topic_memory_stage_budget,
+    validate_topic_memory_stage_capacity,
 )
 from powercontext.builtin.artifacts.topic_memory.relatedness import (
     topic_memory_lexical_signature,
@@ -64,6 +65,24 @@ def test_stage_budget_applies_run_level_reserve_and_user_wire_cap() -> None:
         topic_memory_stage_budget(context_window_tokens=10_000, max_requests=2, model_settings={"max_tokens": True})
     with pytest.raises(TopicMemoryGenerationError, match="output_budget_exceeded"):
         topic_memory_stage_budget(context_window_tokens=100, max_requests=2, model_settings={})
+
+
+def test_stage_capacity_accounts_for_real_fixed_prompts_and_minimum_inputs() -> None:
+    estimator = character_token_estimator()
+    default_budget = topic_memory_stage_budget(
+        context_window_tokens=125_000,
+        max_requests=2,
+        model_settings={},
+    )
+    validate_topic_memory_stage_capacity(default_budget, estimator)
+
+    undersized = topic_memory_stage_budget(
+        context_window_tokens=1_000,
+        max_requests=2,
+        model_settings={},
+    )
+    with pytest.raises(TopicMemoryGenerationError, match="input_budget_exceeded"):
+        validate_topic_memory_stage_capacity(undersized, estimator)
 
 
 def test_budgeted_generator_rejects_before_provider_call() -> None:

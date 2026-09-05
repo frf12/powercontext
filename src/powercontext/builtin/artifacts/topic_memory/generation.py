@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from functools import cache
 from math import floor
 from typing import Generic, TypeVar
 
@@ -291,6 +292,75 @@ TOPIC_MEMORY_TEMPORARY_INSTRUCTIONS = """Summarize an oversized work item into a
 TOPIC_MEMORY_RECONCILE_INSTRUCTIONS = """Coordinate related proposals without merging two historical identities."""
 
 
+@cache
+def _topic_memory_minimum_stage_requests() -> tuple[str, ...]:
+    evidence = TopicMemoryEvidence(evidence_id="e", source_type="content", content="x")
+    probe = TopicMemoryProbeCandidates(
+        probe_id="p",
+        query="x",
+        evidence_ids=(evidence.evidence_id,),
+    )
+    proposal = TopicMemoryProposal(
+        content=TopicMemoryContent(title="x", summary="x", detail="x"),
+        evidence_ids=(evidence.evidence_id,),
+    )
+    contracts: tuple[tuple[str, type[BaseModel], type[BaseModel], BaseModel], ...] = (
+        (
+            TOPIC_MEMORY_PROBE_INSTRUCTIONS,
+            TopicMemoryProbeInput,
+            TopicMemoryProbeOutput,
+            TopicMemoryProbeInput(evidence=(evidence,)),
+        ),
+        (
+            TOPIC_MEMORY_GLOBAL_INSTRUCTIONS,
+            TopicMemoryGlobalInput,
+            TopicMemoryGlobalOutput,
+            TopicMemoryGlobalInput(evidence=(evidence,), probes=(probe,)),
+        ),
+        (
+            TOPIC_MEMORY_PLANNER_INSTRUCTIONS,
+            TopicMemoryPlannerInput,
+            TopicMemoryPlannerOutput,
+            TopicMemoryPlannerInput(probes=(probe,)),
+        ),
+        (
+            TOPIC_MEMORY_EVOLVE_INSTRUCTIONS,
+            TopicMemoryEvolveInput,
+            TopicMemoryEvolveOutput,
+            TopicMemoryEvolveInput(work_id="w", evidence=(evidence,)),
+        ),
+        (
+            TOPIC_MEMORY_TEMPORARY_INSTRUCTIONS,
+            TopicMemoryTemporaryInput,
+            TopicMemoryTemporaryOutput,
+            TopicMemoryTemporaryInput(work_id="w", evidence=(evidence,)),
+        ),
+        (
+            TOPIC_MEMORY_RECONCILE_INSTRUCTIONS,
+            TopicMemoryReconcileInput,
+            TopicMemoryReconcileOutput,
+            TopicMemoryReconcileInput(component_id="c", proposals=(proposal,)),
+        ),
+    )
+    return tuple(
+        f"{topic_memory_stage_fixed_prompt(instructions, input_type, output_type)}\n"
+        f"{minimum_input.model_dump_json(exclude_none=False)}"
+        for instructions, input_type, output_type, minimum_input in contracts
+    )
+
+
+def validate_topic_memory_stage_capacity(
+    budget: TopicMemoryStageBudget,
+    estimator: TokenEstimator,
+    /,
+) -> None:
+    """Require every stage's real fixed prompt plus a minimal valid input to fit."""
+
+    for request in _topic_memory_minimum_stage_requests():
+        if estimator.estimate(request) > budget.input_tokens_limit:
+            raise TopicMemoryGenerationError("input_budget_exceeded")
+
+
 __all__ = [
     "MAX_TOPIC_MEMORY_STAGE_ITEMS",
     "TOPIC_MEMORY_EVOLVE_INSTRUCTIONS",
@@ -323,4 +393,5 @@ __all__ = [
     "TopicMemoryTemporaryOutput",
     "topic_memory_stage_budget",
     "topic_memory_stage_fixed_prompt",
+    "validate_topic_memory_stage_capacity",
 ]

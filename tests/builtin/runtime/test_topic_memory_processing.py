@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pickle
 import threading
@@ -14,7 +15,7 @@ from functools import partial
 from typing import Any, Generic, TypeVar, cast
 
 import pytest
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 
 from powercontext.builtin.artifacts.search import analyze_text
 from powercontext.builtin.artifacts.skill import ExternalSkillRegistration, ExternalSkillSnapshot
@@ -91,6 +92,7 @@ from powercontext.builtin.runtime.topic_memory_processing import (
     run_topic_memory_worker,
 )
 from powercontext.builtin.sources import (
+    CONTENT_SOURCE_ADAPTER,
     EXTERNAL_SKILL_SNAPSHOT_SOURCE_ADAPTER,
     ContentCapture,
     ExternalSkillImportMode,
@@ -1224,11 +1226,11 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
         selector_requests: list[str] = []
         try:
             registration = ExternalSkillRegistration(
-                external_skill_id="codex:project:repository/review",
-                host_id="workstation-1",
+                external_skill_id="codex:project:stable-id-sentinel/review",
+                host_id="host-id-sentinel",
                 installation_scope="project",
-                locator="/workspace/.agents/skills/review",
-                fingerprint="a" * 64,
+                locator="/host-path-sentinel/.agents/skills/review",
+                fingerprint="abcdef0123456789" * 4,
                 name="review",
                 description="Review a bounded change.",
             )
@@ -1257,9 +1259,22 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
             )
             assert await selector.select("scope-a", 0, 1) == 1
 
+            proposal = TopicMemoryProposal(
+                content=_content("external-skill"),
+                evidence_ids=("evidence-0001",),
+            )
             stages = _stages(
-                probe=TopicMemoryProbeOutput(),
-                global_output=TopicMemoryGlobalOutput(),
+                probe=TopicMemoryProbeOutput(
+                    probes=(
+                        TopicMemoryProbe(
+                            query="review protocol",
+                            evidence_ids=("evidence-0001",),
+                        ),
+                    )
+                ),
+                global_output=TopicMemoryGlobalOutput(ambiguous=True),
+                planner=TopicMemoryPlannerOutput(items=(TopicMemoryPlanItem(probe_ids=("probe-0001",)),)),
+                evolve=(TopicMemoryEvolveOutput(proposal=proposal),),
             )
             processor = TopicMemoryProcessor(
                 database=profile.database,
@@ -1267,6 +1282,7 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
                 topics=topics,
                 stages=stages,
                 publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics, leases=leases),
+                id_factory=lambda: "topic-external-skill",
             )
             completion = await processor.process(_assignment(term.fence("single-process")))
 
@@ -1277,7 +1293,25 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
             assert selector_input.evidence[0].content == projected
             assert "exact review protocol marker" in projected
             assert '"mode":"fork"' in projected
-            assert '"fingerprint":"' + "a" * 64 + '"' in projected
+            assert set(json.loads(projected)) == {"manifest", "mode"}
+            for sentinel in (
+                "stable-id-sentinel",
+                "host-id-sentinel",
+                "host-path-sentinel",
+                "abcdef0123456789",
+            ):
+                assert sentinel not in projected
+                assert sentinel not in selector_requests[-1]
+                assert all(
+                    sentinel not in cast(BaseModel, value).model_dump_json()
+                    for generator in (
+                        stages.probe,
+                        stages.global_evolver,
+                        stages.planner,
+                        stages.evolver,
+                    )
+                    for value in generator.inputs
+                )
             assert "Exact external Skill snapshot captured" not in projected
         finally:
             await manager.__aexit__(None, None, None)
@@ -1287,18 +1321,20 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
 
 def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail() -> None:
     async def scenario() -> None:
-        manager, profile, sources, topics = await _repositories()
+        manager, profile, _, topics = await _repositories()
+        sources = SourceRepository((*SOURCE_ADAPTERS, CONTENT_SOURCE_ADAPTER))
         try:
-            oversized = "界" * 200_000
+            oversized_metadata = "界" * 2_100_000
+            oversized_capture = ContentCapture(
+                source_id="oversized-content",
+                content="body",
+                metadata={"unbounded": oversized_metadata},
+            )
             async with profile.database.transaction() as connection:
                 first = await sources.add(
                     connection,
                     "scope-a",
-                    NoteSource(
-                        name="oversized-cjk",
-                        materialization=SourceMaterialization.CAPTURED,
-                        body=oversized,
-                    ),
+                    await CONTENT_SOURCE_ADAPTER.resolve(oversized_capture),
                 )
                 second = await sources.add(
                     connection,
@@ -1361,8 +1397,13 @@ def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail
                 cast(TopicMemoryProbeInput, value).evidence[0].content for value in probe.inputs[:first_request_count]
             )
             assert first_completion.outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
-            assert first_request_count > 1
-            assert "".join(fragments) == oversized
+            assert first_request_count > 20
+            projected = "".join(fragments)
+            assert json.loads(projected) == {
+                "content": "body",
+                "metadata": {"unbounded": oversized_metadata},
+            }
+            assert "oversized-content" not in projected
 
             async with profile.database.transaction() as connection:
                 cursor = await SourceCursorRepository().load(
@@ -1599,7 +1640,7 @@ def test_composition_registers_complete_binding_only_with_generation_model() -> 
                 _topic_memory_processing_bindings(incomplete, contexts, ())
 
         invalid_budget = config.model_copy(
-            update={"inference": config.inference.model_copy(update={"generation_model_context_window_tokens": 5})}
+            update={"inference": config.inference.model_copy(update={"generation_model_context_window_tokens": 1_000})}
         )
         async with open_builtin_contexts(invalid_budget) as contexts:
             with pytest.raises(BuiltinConfigurationError, match="budget"):

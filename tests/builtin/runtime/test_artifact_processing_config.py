@@ -57,6 +57,11 @@ def test_artifact_processing_configuration_rejects_invalid_bounds() -> None:
             generation_model="test",
             generation_model_context_window_tokens=5,
         )
+    with pytest.raises(ValidationError, match="input_budget_exceeded"):
+        InferenceConfig(
+            generation_model="test",
+            generation_model_context_window_tokens=1_000,
+        )
 
 
 @pytest.mark.parametrize(
