@@ -42,6 +42,10 @@ from powercontext.builtin.artifacts.memory import (
 )
 from powercontext.builtin.artifacts.skill import AgentSkillProvider, ExternalSkillProvider, SkillGenerator
 from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WINDOW_BINDING
+from powercontext.builtin.artifacts.topic_memory.generation import (
+    TopicMemoryGenerationError,
+    topic_memory_stage_budget,
+)
 from powercontext.builtin.handoff_report.adapters import RuntimeHandoffReadAdapter, RuntimeWorkContinuityReadAdapter
 from powercontext.builtin.handoff_report.application import HandoffReportApplication
 from powercontext.builtin.handoff_report.sqlite import HANDOFF_REPORT_TABLES
@@ -126,6 +130,7 @@ class BuiltinConfigurationError(RuntimeError):
             "topic-memory-child-resources": (
                 "Topic Memory processing requires child-reconstructible inference resources"
             ),
+            "topic-memory-generation-budget": "Topic Memory generation budget is not executable",
             "topic-memory-generation": "Topic Memory processing requires a configured generation model",
             "database": "unsupported built-in database",
         }
@@ -383,6 +388,14 @@ def _topic_memory_processing_bindings(
         return configured
     if injected_embedding_model is not None or injected_token_estimator is not None:
         raise BuiltinConfigurationError("topic-memory-child-resources")
+    try:
+        topic_memory_stage_budget(
+            context_window_tokens=config.inference.generation_model_context_window_tokens,
+            max_requests=config.inference.generation_max_requests,
+            model_settings=config.inference.generation_model_settings,
+        )
+    except TopicMemoryGenerationError as error:
+        raise BuiltinConfigurationError("topic-memory-generation-budget") from error
     spec = TopicMemoryWorkerSpec(config=config)
     entrypoint = partial(run_topic_memory_worker, spec)
     selector = TopicMemoryWindowSelector(

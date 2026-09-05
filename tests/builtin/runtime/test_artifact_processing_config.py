@@ -52,6 +52,11 @@ def test_artifact_processing_configuration_rejects_invalid_bounds() -> None:
         RuntimeConfig(topic_memory_history_max_candidates=21)
     with pytest.raises(ValidationError, match="max_tokens"):
         InferenceConfig(generation_model="test", generation_model_settings={"max_tokens": True})
+    with pytest.raises(ValidationError, match="output_budget_exceeded"):
+        InferenceConfig(
+            generation_model="test",
+            generation_model_context_window_tokens=5,
+        )
 
 
 @pytest.mark.parametrize(

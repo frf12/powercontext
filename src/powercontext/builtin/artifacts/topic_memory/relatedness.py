@@ -107,7 +107,10 @@ def topic_memory_related_components(  # noqa: C901
     signatures = tuple(topic_memory_lexical_signature(proposal.content) for proposal in proposals)
     for left in range(len(proposals)):
         for right in range(left + 1, len(proposals)):
-            if proposals[left].candidate_id is not None and proposals[left].candidate_id == proposals[right].candidate_id:
+            if (
+                proposals[left].candidate_id is not None
+                and proposals[left].candidate_id == proposals[right].candidate_id
+            ):
                 union(left, right)
                 continue
             if secondary_candidates[left] & secondary_candidates[right]:

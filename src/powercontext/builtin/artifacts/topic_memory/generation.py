@@ -172,10 +172,21 @@ class TopicMemoryHistoricalSlot(_TopicMemoryStageModel):
     detail: str
 
 
+class TopicMemoryHistoricalPreview(_TopicMemoryStageModel):
+    """One deduplicated lightweight candidate used only by the Planner."""
+
+    candidate_id: str = Field(min_length=1, max_length=64)
+    title: str
+    summary: str
+    snippet: str | None = None
+
+
 class TopicMemoryProbeCandidates(_TopicMemoryStageModel):
     probe_id: str = Field(min_length=1, max_length=64)
+    query: str = Field(min_length=1, max_length=8_192)
+    keywords: tuple[str, ...] = Field(default=(), max_length=64)
     evidence_ids: tuple[str, ...] = Field(min_length=1)
-    candidates: tuple[TopicMemoryHistoricalSlot, ...] = Field(default=(), max_length=MAX_TOPIC_MEMORY_STAGE_ITEMS)
+    candidate_ids: tuple[str, ...] = Field(default=(), max_length=MAX_TOPIC_MEMORY_STAGE_ITEMS)
 
 
 class TopicMemoryProposal(_TopicMemoryStageModel):
@@ -228,6 +239,7 @@ class TopicMemoryPlanItem(_TopicMemoryStageModel):
 
 class TopicMemoryPlannerInput(_TopicMemoryStageModel):
     probes: tuple[TopicMemoryProbeCandidates, ...] = Field(min_length=1, max_length=MAX_TOPIC_MEMORY_STAGE_ITEMS)
+    historical: tuple[TopicMemoryHistoricalPreview, ...] = Field(default=(), max_length=MAX_TOPIC_MEMORY_STAGE_ITEMS)
 
 
 class TopicMemoryPlannerOutput(_TopicMemoryStageModel):
@@ -272,7 +284,8 @@ class TopicMemoryReconcileOutput(_TopicMemoryStageModel):
 
 TOPIC_MEMORY_PROBE_INSTRUCTIONS = """Identify up to 20 durable topic probes. Cite only supplied evidence_id values."""
 TOPIC_MEMORY_GLOBAL_INSTRUCTIONS = """Evolve the whole Window into at most 20 topics using only opaque ids."""
-TOPIC_MEMORY_PLANNER_INSTRUCTIONS = """Partition every probe exactly once into at most 20 bounded work items."""
+TOPIC_MEMORY_PLANNER_INSTRUCTIONS = """Partition every probe exactly once into at most 20 bounded work items.
+Use only a candidate_id listed by every probe in its work item, and group every probe that lists a chosen candidate."""
 TOPIC_MEMORY_EVOLVE_INSTRUCTIONS = """Create or revise one topic. Return content and cited opaque evidence only."""
 TOPIC_MEMORY_TEMPORARY_INSTRUCTIONS = """Summarize an oversized work item into at most 20 temporary topics."""
 TOPIC_MEMORY_RECONCILE_INSTRUCTIONS = """Coordinate related proposals without merging two historical identities."""
@@ -293,6 +306,7 @@ __all__ = [
     "TopicMemoryGenerationError",
     "TopicMemoryGlobalInput",
     "TopicMemoryGlobalOutput",
+    "TopicMemoryHistoricalPreview",
     "TopicMemoryHistoricalSlot",
     "TopicMemoryPlanItem",
     "TopicMemoryPlannerInput",
