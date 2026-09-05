@@ -1327,7 +1327,7 @@ def test_planner_bounds_twenty_legal_cjk_previews_before_provider_call() -> None
     asyncio.run(scenario())
 
 
-def test_related_coordination_skips_candidate_union_above_stage_contract() -> None:
+def test_related_coordination_fails_closed_for_candidate_union_above_stage_contract() -> None:
     async def scenario() -> None:
         manager, profile, sources, _ = await _repositories()
         published = {
@@ -1390,10 +1390,10 @@ def test_related_coordination_skips_candidate_union_above_stage_contract() -> No
                 TopicMemoryProposal(content=_content("shared-b"), evidence_ids=("evidence-0002",)),
             )
 
-            coordinated, candidates = await processor._coordinate("scope-a", proposals, {}, evidence)
+            candidates: dict[str, PublishedTopicMemory] = {}
+            with pytest.raises(TopicMemoryGenerationError, match="related_history_limit"):
+                await processor._coordinate("scope-a", proposals, candidates, evidence)
 
-            assert len(coordinated) == 2
-            assert all(item.candidate_id is None for item in coordinated)
             assert len(candidates) == 21
             assert stages.reconciler.inputs == []
         finally:
@@ -1402,7 +1402,7 @@ def test_related_coordination_skips_candidate_union_above_stage_contract() -> No
     asyncio.run(scenario())
 
 
-def test_related_coordination_skips_full_history_that_exceeds_stage_budget() -> None:
+def test_related_coordination_fails_closed_and_keeps_cursor_when_history_exceeds_budget() -> None:
     async def scenario() -> None:
         manager, profile, sources, _ = await _repositories()
         historical = TopicMemory(
@@ -1421,42 +1421,76 @@ def test_related_coordination_skips_full_history_that_exceeds_stage_budget() -> 
             current_artifact=historical.as_ref(),
         )
 
-        class FakeTopics:
-            async def search(self, _connection, _scope_id, _query, **_kwargs):
-                return TopicMemorySearchResult(
-                    mode="fts",
-                    hits=(
-                        TopicMemorySearchHit(
-                            artifact_ref=historical.as_ref(),
-                            title=historical.content.title,
-                            summary=historical.content.summary,
-                            score=90,
-                            matched_by=("topic_fts",),
-                        ),
+        try:
+            leases = ArtifactProcessingLeaseRepository()
+            async with profile.database.transaction() as connection:
+                await sources.add(
+                    connection,
+                    "scope-a",
+                    NoteSource(
+                        name="new-state",
+                        materialization=SourceMaterialization.CAPTURED,
+                        body="new shared state",
                     ),
                 )
+                term = await leases.start_single_process_term(connection, "holder")
 
-            async def get_exact(self, _connection, _scope_id, _ref):
-                return published
+            class FakeTopics:
+                def __init__(self) -> None:
+                    self.calls = 0
 
-        try:
-            stages = _stages(probe=TopicMemoryProbeOutput(), global_output=TopicMemoryGlobalOutput())
+                async def search(self, _connection, _scope_id, _query, **_kwargs):
+                    self.calls += 1
+                    hits = ()
+                    if self.calls == 2:
+                        hits = (
+                            TopicMemorySearchHit(
+                                artifact_ref=historical.as_ref(),
+                                title=historical.content.title,
+                                summary=historical.content.summary,
+                                score=90,
+                                matched_by=("topic_fts",),
+                            ),
+                        )
+                    return TopicMemorySearchResult(mode="fts", hits=hits)
+
+                async def get_exact(self, _connection, _scope_id, _ref):
+                    return published
+
+            class UnexpectedPublisher:
+                async def publish(self, *_args, **_kwargs):
+                    raise AssertionError("unexpected publish")  # noqa: TRY003
+
+            def unexpected_id() -> str:
+                raise AssertionError("unexpected identity")  # noqa: TRY003
+
+            proposal = TopicMemoryProposal(content=_content("shared"), evidence_ids=("evidence-0001",))
+            stages = _stages(
+                probe=TopicMemoryProbeOutput(
+                    probes=(TopicMemoryProbe(query="shared durable state", evidence_ids=("evidence-0001",)),)
+                ),
+                global_output=TopicMemoryGlobalOutput(proposals=(proposal,)),
+            )
             processor = TopicMemoryProcessor(
                 database=profile.database,
                 sources=sources,
                 topics=cast(Any, FakeTopics()),
                 stages=stages,
-                publisher=cast(Any, None),
+                publisher=cast(Any, UnexpectedPublisher()),
+                id_factory=unexpected_id,
             )
-            evidence = (TopicMemoryEvidence(evidence_id="evidence-0001", source_type="note", content="new state"),)
-            proposals = (TopicMemoryProposal(content=_content("shared"), evidence_ids=("evidence-0001",)),)
 
-            coordinated, candidates = await processor._coordinate("scope-a", proposals, {}, evidence)
+            with pytest.raises(TopicMemoryGenerationError, match="input_budget_exceeded"):
+                await processor.process(_assignment(term.fence("single-process")))
 
-            assert len(coordinated) == 1
-            assert coordinated[0].candidate_id is None
-            assert len(candidates) == 1
             assert stages.reconciler.inputs == []
+            async with profile.database.transaction() as connection:
+                cursor = await SourceCursorRepository().load(
+                    connection,
+                    "scope-a",
+                    TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
+                )
+            assert cursor is None
         finally:
             await manager.__aexit__(None, None, None)
 

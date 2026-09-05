@@ -707,8 +707,7 @@ class TopicMemoryProcessor:
                 coordinated.extend(members)
                 continue
             if len(history_ids) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
-                coordinated.extend(members)
-                continue
+                raise TopicMemoryGenerationError("related_history_limit")
             reconcile_input = TopicMemoryReconcileInput(
                 component_id=f"component-{component_index:04d}",
                 proposals=members,
@@ -717,8 +716,7 @@ class TopicMemoryProcessor:
                 ),
             )
             if not self._stages.fits(reconcile_input, "reconcile"):
-                coordinated.extend(members)
-                continue
+                raise TopicMemoryGenerationError("input_budget_exceeded")
             with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
                 reconciled = (await self._stages.reconciler.generate(reconcile_input)).output.proposals
             self._validate_reconciliation(
