@@ -175,6 +175,12 @@ class SourceRepository:
             raise InvalidStoredColumnError("journal_position", "an integer")
         return int(value)
 
+    async def read_value(self, source: Source, /) -> object:
+        """Read one decoded Source through the same registered adapter route."""
+
+        adapter = self._adapter_for_value(source)
+        return await adapter.read(cast(Any, source))
+
     def _adapter_for_value(self, source: Source) -> _AnySourceAdapter:
         try:
             return self._by_source[type(source)]

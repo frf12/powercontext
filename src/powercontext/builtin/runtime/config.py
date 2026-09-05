@@ -25,6 +25,10 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, JsonValue, Secret
 from powercontext.builtin.artifacts.memory.prompts import MemoryExtractionProfile
 from powercontext.builtin.artifacts.skill import AgentSkillTarget, CodexSkillRoot
 from powercontext.builtin.artifacts.topic_memory import MAX_TOPIC_MEMORY_SEARCH_LIMIT
+from powercontext.builtin.artifacts.topic_memory.generation import (
+    TopicMemoryGenerationError,
+    topic_memory_stage_budget,
+)
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -177,6 +181,17 @@ class InferenceConfig(BaseModel):
             not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1
         ):
             raise ValueError("generation_model_settings.max_tokens must be a positive integer")  # noqa: TRY003
+        if self.generation_model is not None:
+            try:
+                topic_memory_stage_budget(
+                    context_window_tokens=self.generation_model_context_window_tokens,
+                    max_requests=self.generation_max_requests,
+                    model_settings=self.generation_model_settings,
+                )
+            except TopicMemoryGenerationError as error:
+                raise ValueError(  # noqa: TRY003
+                    f"Topic Memory generation budget is invalid: {error.error_code}"
+                ) from error
         return self
 
 

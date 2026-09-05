@@ -102,15 +102,12 @@ def test_schema_caps_and_opaque_evidence_are_fail_closed() -> None:
             "evidence_ids": ["e1"],
         })
     proposals = tuple(
-        TopicMemoryProposal(content=_content(f"topic-{index}", "detail"), evidence_ids=("e1",))
-        for index in range(21)
+        TopicMemoryProposal(content=_content(f"topic-{index}", "detail"), evidence_ids=("e1",)) for index in range(21)
     )
     with pytest.raises(ValidationError):
         TopicMemoryGlobalOutput(proposals=proposals)
     with pytest.raises(ValidationError):
-        TopicMemoryPlannerOutput(
-            items=tuple(TopicMemoryPlanItem(probe_ids=(f"probe-{index}",)) for index in range(21))
-        )
+        TopicMemoryPlannerOutput(items=tuple(TopicMemoryPlanItem(probe_ids=(f"probe-{index}",)) for index in range(21)))
     with pytest.raises(ValidationError):
         TopicMemoryTemporaryOutput(proposals=proposals)
     with pytest.raises(ValidationError):

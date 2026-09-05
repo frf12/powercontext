@@ -94,19 +94,13 @@ def test_source_capture_to_multi_window_create_update_noop(tmp_path) -> None:
             unexpected = _QueueGenerator()
             stages = TopicMemoryStageSet(
                 probe=_QueueGenerator(
-                    TopicMemoryProbeOutput(
-                        probes=(TopicMemoryProbe(query="zircon", evidence_ids=("evidence-0001",)),)
-                    ),
-                    TopicMemoryProbeOutput(
-                        probes=(TopicMemoryProbe(query="zircon", evidence_ids=("evidence-0001",)),)
-                    ),
+                    TopicMemoryProbeOutput(probes=(TopicMemoryProbe(query="zircon", evidence_ids=("evidence-0001",)),)),
+                    TopicMemoryProbeOutput(probes=(TopicMemoryProbe(query="zircon", evidence_ids=("evidence-0001",)),)),
                     TopicMemoryProbeOutput(probes=()),
                 ),
                 global_evolver=_QueueGenerator(
                     TopicMemoryGlobalOutput(
-                        proposals=(
-                            TopicMemoryProposal(content=_content("created"), evidence_ids=("evidence-0001",)),
-                        )
+                        proposals=(TopicMemoryProposal(content=_content("created"), evidence_ids=("evidence-0001",)),)
                     ),
                     TopicMemoryGlobalOutput(
                         proposals=(
@@ -234,9 +228,7 @@ def test_secondary_retrieval_reconciles_a_create_into_an_exact_update(tmp_path) 
             stages = TopicMemoryStageSet(
                 probe=_QueueGenerator(
                     TopicMemoryProbeOutput(
-                        probes=(
-                            TopicMemoryProbe(query="no-historical-match", evidence_ids=("evidence-0001",)),
-                        )
+                        probes=(TopicMemoryProbe(query="no-historical-match", evidence_ids=("evidence-0001",)),)
                     )
                 ),
                 global_evolver=_QueueGenerator(TopicMemoryGlobalOutput(proposals=(provisional,))),

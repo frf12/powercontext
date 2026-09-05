@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,7 +22,10 @@ from typing_extensions import override
 
 from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef
+from powercontext.builtin.artifacts.search import analyze_text
 from powercontext.builtin.artifacts.topic_memory import (
+    MAX_TOPIC_MEMORY_QUERY_LENGTH,
+    MAX_TOPIC_MEMORY_QUERY_TERMS,
     TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
     PublishedTopicMemory,
     TopicMemory,
@@ -41,6 +45,7 @@ from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryGenerationError,
     TopicMemoryGlobalInput,
     TopicMemoryGlobalOutput,
+    TopicMemoryHistoricalPreview,
     TopicMemoryHistoricalSlot,
     TopicMemoryPlannerInput,
     TopicMemoryPlannerOutput,
@@ -75,7 +80,7 @@ from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingWorkerOutcome,
 )
 from powercontext.builtin.runtime.config import BuiltinConfig
-from powercontext.builtin.sources import SourceCursor
+from powercontext.builtin.sources import CONTENT_SOURCE_NAME, SourceCursor
 from powercontext.builtin.statistics import ModelUsageOperation, ModelUsagePurpose
 from powercontext.errors import RevisionConflictError
 
@@ -104,7 +109,9 @@ class TopicMemoryStageSet:
 
     def fits(self, value: BaseModel, stage: str = "") -> bool:
         fixed = self.fixed_prompts.get(stage, stage)
-        return self.estimator.estimate(f"{fixed}\n{value.model_dump_json(exclude_none=False)}") <= self.input_tokens_limit
+        return (
+            self.estimator.estimate(f"{fixed}\n{value.model_dump_json(exclude_none=False)}") <= self.input_tokens_limit
+        )
 
 
 class TopicMemoryWorkerSpec(BaseModel):
@@ -162,10 +169,10 @@ class TopicMemoryWindowSelector:
             range(source_after + 1, source_ceiling + 1)
         ):
             raise TopicMemoryGenerationError("source_window_changed")
-        return await asyncio.to_thread(self._largest_prefix, stored, source_after)
+        evidence = await _project_window(stored, self._sources)
+        return await asyncio.to_thread(self._largest_prefix, evidence, source_after)
 
-    def _largest_prefix(self, stored: tuple[StoredSource, ...], source_after: int) -> int:
-        evidence = tuple(_project_evidence(index, item) for index, item in enumerate(stored, start=1))
+    def _largest_prefix(self, evidence: tuple[TopicMemoryEvidence, ...], source_after: int) -> int:
         selected = 0
         for size in range(1, len(evidence) + 1):
             request = f"{self._probe_fixed_prompt}\n{TopicMemoryProbeInput(evidence=evidence[:size]).model_dump_json()}"
@@ -263,7 +270,8 @@ class TopicMemoryAtomicPublisher:
                 len(stored) != count
                 or tuple(item.journal_position for item in stored)
                 != tuple(range(assignment.source_after + 1, assignment.source_through + 1))
-                or tuple((item.ref, item.value) for item in stored) != tuple((item.ref, item.value) for item in expected)
+                or tuple((item.ref, item.value) for item in stored)
+                != tuple((item.ref, item.value) for item in expected)
             ):
                 raise TopicMemoryGenerationError("source_window_changed")
             allowed_sources = {(item.ref.source_type, item.ref.source_id) for item in stored}
@@ -337,7 +345,7 @@ class TopicMemoryProcessor:
         try:
             stored = await self._read_window(assignment)
             evidence = {_evidence_id(index): item for index, item in enumerate(stored, start=1)}
-            projected = tuple(_project_evidence(index, item) for index, item in enumerate(stored, start=1))
+            projected = await _project_window(stored, self._sources)
             proposals, candidates = await self._generate(assignment.scope_id, projected)
             operations = await self._prepare_operations(assignment.scope_id, proposals, candidates, evidence)
             await self._publisher.publish(assignment, evidence, operations)
@@ -369,12 +377,10 @@ class TopicMemoryProcessor:
         scope_id: str,
         evidence: tuple[TopicMemoryEvidence, ...],
     ) -> tuple[tuple[TopicMemoryProposal, ...], dict[str, PublishedTopicMemory]]:
-        with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
-            probe_output = (await self._stages.probe.generate(TopicMemoryProbeInput(evidence=evidence))).output
-        self._validate_probes(probe_output.probes, evidence)
-        if not probe_output.probes:
+        probes = await self._probe(evidence)
+        if not probes:
             return (), {}
-        probe_candidates, candidates = await self._history(scope_id, probe_output.probes)
+        probe_candidates, candidates, planner_history = await self._history(scope_id, probes)
         global_input = TopicMemoryGlobalInput(
             evidence=evidence,
             probes=probe_candidates,
@@ -383,24 +389,84 @@ class TopicMemoryProcessor:
         if self._stages.fits(global_input, "global"):
             with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
                 global_output = (await self._stages.global_evolver.generate(global_input)).output
-            if not global_output.ambiguous:
+            if not global_output.ambiguous and self._global_targets_bind(global_output.proposals, candidates):
                 proposals = self._validate_proposals(global_output.proposals, evidence, candidates)
                 return await self._coordinate(scope_id, proposals, candidates, evidence)
-        proposals = await self._plan(probe_candidates, evidence, candidates)
+        proposals = await self._plan(probe_candidates, planner_history, evidence, candidates)
         return await self._coordinate(scope_id, proposals, candidates, evidence)
+
+    async def _probe(self, evidence: tuple[TopicMemoryEvidence, ...]) -> tuple[TopicMemoryProbe, ...]:
+        batches = self._evidence_batches(evidence, "probe")
+        probes: list[TopicMemoryProbe] = []
+        for batch in batches:
+            with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
+                output = (await self._stages.probe.generate(TopicMemoryProbeInput(evidence=batch))).output
+            probes.extend(output.probes)
+            if len(probes) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
+                raise TopicMemoryGenerationError("probe_limit")
+        result = tuple(probes)
+        self._validate_probes(result, evidence)
+        return result
+
+    def _evidence_batches(
+        self,
+        evidence: tuple[TopicMemoryEvidence, ...],
+        stage: str,
+    ) -> tuple[tuple[TopicMemoryEvidence, ...], ...]:
+        if stage == "probe" and self._stages.fits(TopicMemoryProbeInput(evidence=evidence), stage):
+            return (evidence,)
+        batches: list[tuple[TopicMemoryEvidence, ...]] = []
+        for item in evidence:
+            remaining = item.content
+            while remaining:
+                low = 1
+                high = len(remaining)
+                accepted = 0
+                while low <= high:
+                    middle = (low + high) // 2
+                    fragment = item.model_copy(update={"content": remaining[:middle]})
+                    value: BaseModel = (
+                        TopicMemoryProbeInput(evidence=(fragment,))
+                        if stage == "probe"
+                        else TopicMemoryTemporaryInput(work_id="work-fragment", evidence=(fragment,))
+                    )
+                    if self._stages.fits(value, stage):
+                        accepted = middle
+                        low = middle + 1
+                    else:
+                        high = middle - 1
+                if accepted == 0:
+                    raise TopicMemoryGenerationError("input_budget_exceeded")
+                batches.append((item.model_copy(update={"content": remaining[:accepted]}),))
+                if len(batches) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
+                    raise TopicMemoryGenerationError("evidence_fragment_limit")
+                remaining = remaining[accepted:]
+        return tuple(batches)
+
+    @staticmethod
+    def _global_targets_bind(
+        proposals: tuple[TopicMemoryProposal, ...],
+        candidates: Mapping[str, PublishedTopicMemory],
+    ) -> bool:
+        targets = [proposal.candidate_id for proposal in proposals if proposal.candidate_id is not None]
+        return len(targets) == len(set(targets)) and all(target in candidates for target in targets)
 
     async def _history(
         self,
         scope_id: str,
         probes: tuple[TopicMemoryProbe, ...],
-    ) -> tuple[tuple[TopicMemoryProbeCandidates, ...], dict[str, PublishedTopicMemory]]:
+    ) -> tuple[
+        tuple[TopicMemoryProbeCandidates, ...],
+        dict[str, PublishedTopicMemory],
+        tuple[TopicMemoryHistoricalPreview, ...],
+    ]:
         ranked: dict[tuple[str, int], tuple[float, int, TopicMemorySearchHit]] = {}
         hits_by_probe: list[tuple[TopicMemorySearchHit, ...]] = []
         for probe_index, probe in enumerate(probes):
-            result = await self._search(scope_id, " ".join((probe.query, *probe.keywords)))
-            selected = tuple(hit for hit in result if hit.score >= self._history_threshold)
+            result = await self._search(scope_id, _bounded_probe_query(probe))
+            selected = _distinct_hits(hit for hit in result if hit.score >= self._history_threshold)
             if len(selected) < self._history_min:
-                selected = result[: self._history_min]
+                selected = _distinct_hits(result)[: self._history_min]
             selected = selected[: self._history_max]
             hits_by_probe.append(selected)
             for hit in selected:
@@ -422,19 +488,27 @@ class TopicMemoryProcessor:
         projected = tuple(
             TopicMemoryProbeCandidates(
                 probe_id=f"probe-{index:04d}",
+                query=probe.query,
+                keywords=probe.keywords,
                 evidence_ids=probe.evidence_ids,
-                candidates=tuple(
-                    _historical_slot(
-                        id_by_key[_artifact_key(hit.artifact_ref)],
-                        candidates[id_by_key[_artifact_key(hit.artifact_ref)]],
-                    )
+                candidate_ids=tuple(
+                    id_by_key[_artifact_key(hit.artifact_ref)]
                     for hit in hits
                     if _artifact_key(hit.artifact_ref) in id_by_key
                 ),
             )
             for index, (probe, hits) in enumerate(zip(probes, hits_by_probe, strict=True), start=1)
         )
-        return projected, candidates
+        planner_history = tuple(
+            TopicMemoryHistoricalPreview(
+                candidate_id=id_by_key[key],
+                title=ranked[key][2].title,
+                summary=ranked[key][2].summary,
+                snippet=ranked[key][2].snippet,
+            )
+            for key in ordered_keys
+        )
+        return projected, candidates, planner_history
 
     async def _search(self, scope_id: str, query: str) -> tuple[TopicMemorySearchHit, ...]:
         query_vector = None
@@ -459,11 +533,14 @@ class TopicMemoryProcessor:
     async def _plan(  # noqa: C901
         self,
         probes: tuple[TopicMemoryProbeCandidates, ...],
+        planner_history: tuple[TopicMemoryHistoricalPreview, ...],
         evidence: tuple[TopicMemoryEvidence, ...],
         candidates: Mapping[str, PublishedTopicMemory],
     ) -> tuple[TopicMemoryProposal, ...]:
         with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
-            plan = (await self._stages.planner.generate(TopicMemoryPlannerInput(probes=probes))).output
+            plan = (
+                await self._stages.planner.generate(TopicMemoryPlannerInput(probes=probes, historical=planner_history))
+            ).output
         expected_probes = {probe.probe_id for probe in probes}
         observed = [probe_id for item in plan.items for probe_id in item.probe_ids]
         if set(observed) != expected_probes or len(observed) != len(set(observed)):
@@ -472,12 +549,25 @@ class TopicMemoryProcessor:
         if len(targets) != len(set(targets)) or any(target not in candidates for target in targets):
             raise TopicMemoryGenerationError("invalid_plan")
         probe_map = {probe.probe_id: probe for probe in probes}
+        for item in plan.items:
+            if item.candidate_id is None:
+                continue
+            item_probes = set(item.probe_ids)
+            if any(item.candidate_id not in probe_map[probe_id].candidate_ids for probe_id in item.probe_ids):
+                raise TopicMemoryGenerationError("invalid_plan")
+            shared_probes = {probe.probe_id for probe in probes if item.candidate_id in probe.candidate_ids}
+            if not shared_probes <= item_probes:
+                raise TopicMemoryGenerationError("invalid_plan")
         evidence_map = {item.evidence_id: item for item in evidence}
         proposals: list[TopicMemoryProposal] = []
         for index, item in enumerate(plan.items, start=1):
             ids = tuple(dict.fromkeys(eid for pid in item.probe_ids for eid in probe_map[pid].evidence_ids))
             work_evidence = tuple(evidence_map[eid] for eid in ids)
-            historical = None if item.candidate_id is None else _historical_slot(item.candidate_id, candidates[item.candidate_id])
+            historical = (
+                None
+                if item.candidate_id is None
+                else _historical_slot(item.candidate_id, candidates[item.candidate_id])
+            )
             evolve_input = TopicMemoryEvolveInput(
                 work_id=f"work-{index:04d}",
                 evidence=work_evidence,
@@ -488,20 +578,28 @@ class TopicMemoryProcessor:
                     proposal = (await self._stages.evolver.generate(evolve_input)).output.proposal
             else:
                 temporary: list[TopicMemoryProposal] = []
-                for chunk_index, source in enumerate(work_evidence, start=1):
-                    temporary_input = TopicMemoryTemporaryInput(work_id=evolve_input.work_id, evidence=(source,))
-                    if not self._stages.fits(temporary_input, "temporary"):
-                        raise TopicMemoryGenerationError("input_budget_exceeded")
-                    with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
-                        output = (await self._stages.temporary.generate(temporary_input)).output
-                    for temp in output.proposals:
-                        if temp.candidate_id is not None or not set(temp.evidence_ids) <= {source.evidence_id}:
-                            raise TopicMemoryGenerationError("invalid_temporary")
-                        temporary.append(
-                            temp.model_copy(update={"proposal_id": f"temp-{index:04d}-{chunk_index:04d}-{len(temporary):04d}"})
+                fragment_index = 0
+                for source in work_evidence:
+                    for batch in self._evidence_batches((source,), "temporary"):
+                        fragment_index += 1
+                        temporary_input = TopicMemoryTemporaryInput(
+                            work_id=evolve_input.work_id,
+                            evidence=batch,
                         )
-                        if len(temporary) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
-                            raise TopicMemoryGenerationError("temporary_limit")
+                        with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
+                            output = (await self._stages.temporary.generate(temporary_input)).output
+                        for temp in output.proposals:
+                            if temp.candidate_id is not None or not set(temp.evidence_ids) <= {source.evidence_id}:
+                                raise TopicMemoryGenerationError("invalid_temporary")
+                            temporary.append(
+                                temp.model_copy(
+                                    update={
+                                        "proposal_id": (f"temp-{index:04d}-{fragment_index:04d}-{len(temporary):04d}")
+                                    }
+                                )
+                            )
+                            if len(temporary) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
+                                raise TopicMemoryGenerationError("temporary_limit")
                 flattened = TopicMemoryEvolveInput(
                     work_id=evolve_input.work_id,
                     temporary=tuple(temporary),
@@ -570,7 +668,10 @@ class TopicMemoryProcessor:
             members = tuple(proposals[index] for index in component)
             creates = tuple(member for member in members if member.candidate_id is None)
             history_ids = sorted(
-                {*(member.candidate_id for member in members if member.candidate_id is not None), *(cid for index in component for cid in secondary[index])}
+                {
+                    *(member.candidate_id for member in members if member.candidate_id is not None),
+                    *(cid for index in component for cid in secondary[index]),
+                }
                 - {None}
             )
             if len(history_ids) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
@@ -581,7 +682,9 @@ class TopicMemoryProcessor:
             reconcile_input = TopicMemoryReconcileInput(
                 component_id=f"component-{component_index:04d}",
                 proposals=members,
-                historical=tuple(_historical_slot(candidate_id, candidates[candidate_id]) for candidate_id in history_ids),
+                historical=tuple(
+                    _historical_slot(candidate_id, candidates[candidate_id]) for candidate_id in history_ids
+                ),
             )
             if not self._stages.fits(reconcile_input, "reconcile"):
                 raise TopicMemoryGenerationError("input_budget_exceeded")
@@ -728,8 +831,7 @@ class TopicMemoryProcessor:
         ):
             raise TopicMemoryGenerationError("identity_merge")
         if any(
-            item.proposal_id not in output_by_id
-            or output_by_id[item.proposal_id].candidate_id != item.candidate_id
+            item.proposal_id not in output_by_id or output_by_id[item.proposal_id].candidate_id != item.candidate_id
             for item in input_by_id.values()
             if item.candidate_id is not None
         ):
@@ -772,25 +874,50 @@ class TopicMemoryProcessor:
         )
 
 
-def _project_evidence(index: int, stored: StoredSource) -> TopicMemoryEvidence:
-    value = stored.value
-    content = getattr(value, "content", None)
-    if not isinstance(content, str) or not content.strip():
-        description = getattr(value, "description", None)
-        content = (
-            description
-            if isinstance(description, str) and description.strip()
-            else f"{stored.ref.source_type} source evidence"
-        )
-    metadata = getattr(value, "metadata", {})
-    if not isinstance(metadata, dict):
-        metadata = {}
+async def _project_window(
+    stored: tuple[StoredSource, ...],
+    sources: SourceRepository,
+) -> tuple[TopicMemoryEvidence, ...]:
+    result: list[TopicMemoryEvidence] = []
+    for index, item in enumerate(stored, start=1):
+        result.append(await _project_evidence(index, item, sources))
+    return tuple(result)
+
+
+async def _project_evidence(
+    index: int,
+    stored: StoredSource,
+    sources: SourceRepository,
+) -> TopicMemoryEvidence:
+    materialized = await sources.read_value(stored.value)
+    content = await asyncio.to_thread(
+        _canonical_source_content,
+        stored.ref.source_type,
+        materialized,
+    )
     return TopicMemoryEvidence(
         evidence_id=_evidence_id(index),
         source_type=stored.ref.source_type,
         content=content,
-        metadata=metadata,
     )
+
+
+def _canonical_source_content(source_type: str, materialized: object) -> str:
+    if isinstance(materialized, str):
+        if not materialized.strip():
+            raise TopicMemoryGenerationError("unsupported_evidence")
+        return materialized
+    if not isinstance(materialized, BaseModel):
+        raise TopicMemoryGenerationError("unsupported_evidence")
+    payload = materialized.model_dump(mode="json", exclude_none=False)
+    if source_type == CONTENT_SOURCE_NAME:
+        if not isinstance(payload, dict) or not isinstance(payload.get("content"), str):
+            raise TopicMemoryGenerationError("unsupported_evidence")
+        payload.pop("source_id", None)
+    content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if not content.strip():
+        raise TopicMemoryGenerationError("unsupported_evidence")
+    return content
 
 
 def _evidence_id(index: int) -> str:
@@ -806,6 +933,37 @@ def _opaque_ordinal(value: str) -> int:
 
 def _historical_slot(candidate_id: str, published: PublishedTopicMemory) -> TopicMemoryHistoricalSlot:
     return TopicMemoryHistoricalSlot(candidate_id=candidate_id, **published.topic.content.model_dump())
+
+
+def _bounded_probe_query(probe: TopicMemoryProbe) -> str:
+    """Close model-authored probes over the R4 query contract before I/O."""
+
+    raw = " ".join(value.strip() for value in (probe.query, *probe.keywords) if value.strip())
+    terms = tuple(dict.fromkeys(analyze_text(raw).split()))
+    selected: list[str] = []
+    characters = 0
+    for term in terms[:MAX_TOPIC_MEMORY_QUERY_TERMS]:
+        separator = int(bool(selected))
+        available = MAX_TOPIC_MEMORY_QUERY_LENGTH - characters - separator
+        if available < 1:
+            break
+        selected.append(term[:available])
+        characters += separator + min(len(term), available)
+    if selected:
+        return " ".join(selected)
+    fallback = raw[:MAX_TOPIC_MEMORY_QUERY_LENGTH].strip()
+    return fallback or "_"
+
+
+def _distinct_hits(values: Iterable[TopicMemorySearchHit]) -> tuple[TopicMemorySearchHit, ...]:
+    observed: set[tuple[str, int]] = set()
+    result: list[TopicMemorySearchHit] = []
+    for hit in values:
+        key = _artifact_key(hit.artifact_ref)
+        if key not in observed:
+            observed.add(key)
+            result.append(hit)
+    return tuple(result)
 
 
 def _artifact_key(ref: ArtifactRef) -> tuple[str, int]:
