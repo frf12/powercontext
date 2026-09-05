@@ -35,9 +35,11 @@ from powercontext.builtin.artifacts.topic_memory import (
 from powercontext.builtin.artifacts.topic_memory.generation import (
     TOPIC_MEMORY_PROBE_INSTRUCTIONS,
     TopicMemoryEvidence,
+    TopicMemoryEvolveInput,
     TopicMemoryEvolveOutput,
     TopicMemoryGenerationError,
     TopicMemoryGlobalOutput,
+    TopicMemoryHistoricalPreview,
     TopicMemoryPlanItem,
     TopicMemoryPlannerInput,
     TopicMemoryPlannerOutput,
@@ -1060,6 +1062,58 @@ def test_global_structural_ambiguity_falls_back_to_lightweight_planner(
             ),
             id="shared-candidate-split-across-work-items",
         ),
+        pytest.param(
+            (
+                TopicMemoryProbeCandidates(
+                    probe_id="probe-0001",
+                    query="first",
+                    evidence_ids=("evidence-0001",),
+                    candidate_ids=("candidate-0001",),
+                ),
+                TopicMemoryProbeCandidates(
+                    probe_id="probe-0002",
+                    query="second",
+                    evidence_ids=("evidence-0002",),
+                    candidate_ids=("candidate-0001",),
+                ),
+            ),
+            TopicMemoryPlannerOutput(
+                items=(
+                    TopicMemoryPlanItem(probe_ids=("probe-0001",)),
+                    TopicMemoryPlanItem(probe_ids=("probe-0002",)),
+                )
+            ),
+            id="shared-candidate-split-across-create-items",
+        ),
+        pytest.param(
+            (
+                TopicMemoryProbeCandidates(
+                    probe_id="probe-0001",
+                    query="first",
+                    evidence_ids=("evidence-0001",),
+                    candidate_ids=("candidate-0001",),
+                ),
+                TopicMemoryProbeCandidates(
+                    probe_id="probe-0002",
+                    query="second",
+                    evidence_ids=("evidence-0002",),
+                    candidate_ids=("candidate-0001", "candidate-0002"),
+                ),
+                TopicMemoryProbeCandidates(
+                    probe_id="probe-0003",
+                    query="third",
+                    evidence_ids=("evidence-0003",),
+                    candidate_ids=("candidate-0002",),
+                ),
+            ),
+            TopicMemoryPlannerOutput(
+                items=(
+                    TopicMemoryPlanItem(probe_ids=("probe-0001", "probe-0002")),
+                    TopicMemoryPlanItem(probe_ids=("probe-0003",)),
+                )
+            ),
+            id="overlapping-candidate-chain-split",
+        ),
     ],
 )
 def test_planner_rejects_unbound_or_inconsistently_split_targets(
@@ -1099,6 +1153,316 @@ def test_planner_rejects_unbound_or_inconsistently_split_targets(
     asyncio.run(scenario())
 
 
+def test_planner_allows_independent_candidate_components() -> None:
+    async def scenario() -> None:
+        probes = (
+            TopicMemoryProbeCandidates(
+                probe_id="probe-0001",
+                query="first",
+                evidence_ids=("evidence-0001",),
+                candidate_ids=("candidate-0001",),
+            ),
+            TopicMemoryProbeCandidates(
+                probe_id="probe-0002",
+                query="second",
+                evidence_ids=("evidence-0002",),
+                candidate_ids=("candidate-0002",),
+            ),
+        )
+        stages = _stages(
+            probe=TopicMemoryProbeOutput(),
+            global_output=TopicMemoryGlobalOutput(),
+            planner=TopicMemoryPlannerOutput(
+                items=(
+                    TopicMemoryPlanItem(probe_ids=("probe-0001",)),
+                    TopicMemoryPlanItem(probe_ids=("probe-0002",)),
+                )
+            ),
+            evolve=(TopicMemoryEvolveOutput(), TopicMemoryEvolveOutput()),
+        )
+        processor = TopicMemoryProcessor(
+            database=cast(Any, None),
+            sources=cast(Any, None),
+            topics=cast(Any, None),
+            stages=stages,
+            publisher=cast(Any, None),
+        )
+        evidence = (
+            TopicMemoryEvidence(evidence_id="evidence-0001", source_type="note", content="first"),
+            TopicMemoryEvidence(evidence_id="evidence-0002", source_type="note", content="second"),
+        )
+
+        assert (
+            await processor._plan(
+                probes,
+                (),
+                evidence,
+                cast(Any, {"candidate-0001": object(), "candidate-0002": object()}),
+            )
+            == ()
+        )
+
+    asyncio.run(scenario())
+
+
+def test_planner_uses_deterministic_candidate_components_when_preview_cannot_fit() -> None:
+    async def scenario() -> None:
+        probes = (
+            TopicMemoryProbeCandidates(
+                probe_id="probe-0001",
+                query="甲" * 8_192,
+                evidence_ids=("evidence-0001",),
+                candidate_ids=("candidate-0001",),
+            ),
+            TopicMemoryProbeCandidates(
+                probe_id="probe-0002",
+                query="乙" * 8_192,
+                evidence_ids=("evidence-0002",),
+                candidate_ids=("candidate-0001", "candidate-0002"),
+            ),
+            TopicMemoryProbeCandidates(
+                probe_id="probe-0003",
+                query="丙" * 8_192,
+                evidence_ids=("evidence-0003",),
+                candidate_ids=("candidate-0002",),
+            ),
+        )
+        stages = _stages(
+            probe=TopicMemoryProbeOutput(),
+            global_output=TopicMemoryGlobalOutput(),
+            evolve=(TopicMemoryEvolveOutput(),),
+            limit=1_000,
+        )
+        processor = TopicMemoryProcessor(
+            database=cast(Any, None),
+            sources=cast(Any, None),
+            topics=cast(Any, None),
+            stages=stages,
+            publisher=cast(Any, None),
+        )
+        evidence = tuple(
+            TopicMemoryEvidence(
+                evidence_id=f"evidence-{index:04d}",
+                source_type="note",
+                content=f"evidence {index}",
+            )
+            for index in range(1, 4)
+        )
+
+        assert (
+            await processor._plan(
+                probes,
+                (),
+                evidence,
+                cast(Any, {"candidate-0001": object(), "candidate-0002": object()}),
+            )
+            == ()
+        )
+        assert stages.planner.inputs == []
+        evolve_input = cast(TopicMemoryEvolveInput, stages.evolver.inputs[0])
+        assert tuple(item.evidence_id for item in evolve_input.evidence) == (
+            "evidence-0001",
+            "evidence-0002",
+            "evidence-0003",
+        )
+
+    asyncio.run(scenario())
+
+
+def test_planner_bounds_twenty_legal_cjk_previews_before_provider_call() -> None:
+    async def scenario() -> None:
+        probes = tuple(
+            TopicMemoryProbeCandidates(
+                probe_id=f"probe-{index:04d}",
+                query="查询" * 4_096,
+                keywords=("关键词" * 4_096,),
+                evidence_ids=(f"evidence-{index:04d}",),
+            )
+            for index in range(1, 21)
+        )
+        history = tuple(
+            TopicMemoryHistoricalPreview(
+                candidate_id=f"candidate-{index:04d}",
+                title="标题" * 256,
+                summary="摘要" * 4_000,
+                snippet="片段" * 4_000,
+            )
+            for index in range(1, 21)
+        )
+        plan = TopicMemoryPlannerOutput(
+            items=tuple(TopicMemoryPlanItem(probe_ids=(f"probe-{index:04d}",)) for index in range(1, 21))
+        )
+        stages = _stages(
+            probe=TopicMemoryProbeOutput(),
+            global_output=TopicMemoryGlobalOutput(),
+            planner=plan,
+            evolve=tuple(TopicMemoryEvolveOutput() for _ in range(20)),
+        )
+        processor = TopicMemoryProcessor(
+            database=cast(Any, None),
+            sources=cast(Any, None),
+            topics=cast(Any, None),
+            stages=stages,
+            publisher=cast(Any, None),
+        )
+        evidence = tuple(
+            TopicMemoryEvidence(
+                evidence_id=f"evidence-{index:04d}",
+                source_type="note",
+                content=f"evidence {index}",
+            )
+            for index in range(1, 21)
+        )
+
+        assert await processor._plan(probes, history, evidence, {}) == ()
+
+        planner_input = cast(TopicMemoryPlannerInput, stages.planner.inputs[0])
+        assert stages.fits(planner_input, "planner")
+        assert all(len(item.query) <= 512 for item in planner_input.probes)
+        assert all(sum(map(len, item.keywords)) <= 512 for item in planner_input.probes)
+        assert all(
+            max(len(item.title), len(item.summary), len(item.snippet or "")) <= 512 for item in planner_input.historical
+        )
+
+    asyncio.run(scenario())
+
+
+def test_related_coordination_skips_candidate_union_above_stage_contract() -> None:
+    async def scenario() -> None:
+        manager, profile, sources, _ = await _repositories()
+        published = {
+            f"history-{index:04d}": PublishedTopicMemory(
+                topic=TopicMemory(
+                    artifact_id=f"history-{index:04d}",
+                    revision=1,
+                    content=_content(f"history-{index:04d}"),
+                ),
+                published_at=datetime(2026, 1, 1, tzinfo=UTC),
+                is_current=True,
+                current_artifact=TopicMemory(
+                    artifact_id=f"history-{index:04d}",
+                    revision=1,
+                    content=_content(f"history-{index:04d}"),
+                ).as_ref(),
+            )
+            for index in range(1, 22)
+        }
+
+        class FakeTopics:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def search(self, _connection, _scope_id, _query, **_kwargs):
+                self.calls += 1
+                selected = range(1, 12) if self.calls == 1 else range(11, 22)
+                return TopicMemorySearchResult(
+                    mode="fts",
+                    hits=tuple(
+                        TopicMemorySearchHit(
+                            artifact_ref=published[f"history-{index:04d}"].topic.as_ref(),
+                            title=f"history {index}",
+                            summary="shared durable state",
+                            score=90,
+                            matched_by=("topic_fts",),
+                        )
+                        for index in selected
+                    ),
+                )
+
+            async def get_exact(self, _connection, _scope_id, ref):
+                return published[ref.artifact_id]
+
+        try:
+            stages = _stages(probe=TopicMemoryProbeOutput(), global_output=TopicMemoryGlobalOutput())
+            processor = TopicMemoryProcessor(
+                database=profile.database,
+                sources=sources,
+                topics=cast(Any, FakeTopics()),
+                stages=stages,
+                publisher=cast(Any, None),
+            )
+            evidence = (
+                TopicMemoryEvidence(evidence_id="evidence-0001", source_type="note", content="first"),
+                TopicMemoryEvidence(evidence_id="evidence-0002", source_type="note", content="second"),
+            )
+            proposals = (
+                TopicMemoryProposal(content=_content("shared-a"), evidence_ids=("evidence-0001",)),
+                TopicMemoryProposal(content=_content("shared-b"), evidence_ids=("evidence-0002",)),
+            )
+
+            coordinated, candidates = await processor._coordinate("scope-a", proposals, {}, evidence)
+
+            assert len(coordinated) == 2
+            assert all(item.candidate_id is None for item in coordinated)
+            assert len(candidates) == 21
+            assert stages.reconciler.inputs == []
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_related_coordination_skips_full_history_that_exceeds_stage_budget() -> None:
+    async def scenario() -> None:
+        manager, profile, sources, _ = await _repositories()
+        historical = TopicMemory(
+            artifact_id="history-large",
+            revision=1,
+            content=TopicMemoryContent(
+                title="large history",
+                summary="shared durable state",
+                detail="界" * 125_000,
+            ),
+        )
+        published = PublishedTopicMemory(
+            topic=historical,
+            published_at=datetime(2026, 1, 1, tzinfo=UTC),
+            is_current=True,
+            current_artifact=historical.as_ref(),
+        )
+
+        class FakeTopics:
+            async def search(self, _connection, _scope_id, _query, **_kwargs):
+                return TopicMemorySearchResult(
+                    mode="fts",
+                    hits=(
+                        TopicMemorySearchHit(
+                            artifact_ref=historical.as_ref(),
+                            title=historical.content.title,
+                            summary=historical.content.summary,
+                            score=90,
+                            matched_by=("topic_fts",),
+                        ),
+                    ),
+                )
+
+            async def get_exact(self, _connection, _scope_id, _ref):
+                return published
+
+        try:
+            stages = _stages(probe=TopicMemoryProbeOutput(), global_output=TopicMemoryGlobalOutput())
+            processor = TopicMemoryProcessor(
+                database=profile.database,
+                sources=sources,
+                topics=cast(Any, FakeTopics()),
+                stages=stages,
+                publisher=cast(Any, None),
+            )
+            evidence = (TopicMemoryEvidence(evidence_id="evidence-0001", source_type="note", content="new state"),)
+            proposals = (TopicMemoryProposal(content=_content("shared"), evidence_ids=("evidence-0001",)),)
+
+            coordinated, candidates = await processor._coordinate("scope-a", proposals, {}, evidence)
+
+            assert len(coordinated) == 1
+            assert coordinated[0].candidate_id is None
+            assert len(candidates) == 1
+            assert stages.reconciler.inputs == []
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
 def test_probe_query_is_bounded_before_embedding_and_repository_io() -> None:
     async def scenario() -> None:
         manager, profile, sources, _ = await _repositories()
@@ -1126,7 +1490,7 @@ def test_probe_query_is_bounded_before_embedding_and_repository_io() -> None:
                 publisher=cast(Any, None),
                 embedding_model=cast(EmbeddingModel, RecordingEmbedding()),
             )
-            query = "root " + "x" * (MAX_TOPIC_MEMORY_QUERY_LENGTH - len("root "))
+            query = "部署环境" * 2_048
             keywords = tuple(f"keyword-{index}" for index in range(MAX_TOPIC_MEMORY_QUERY_TERMS))
 
             await processor._history(
@@ -1134,8 +1498,12 @@ def test_probe_query_is_bounded_before_embedding_and_repository_io() -> None:
                 (TopicMemoryProbe(query=query, keywords=keywords, evidence_ids=("evidence-0001",)),),
             )
 
-            assert observed_queries == embedded_queries
+            assert observed_queries != embedded_queries
             assert len(observed_queries[0]) <= MAX_TOPIC_MEMORY_QUERY_LENGTH
+            assert len(embedded_queries[0]) <= MAX_TOPIC_MEMORY_QUERY_LENGTH
+            assert embedded_queries[0].startswith("部署环境")
+            assert "u_" not in embedded_queries[0]
+            assert "b_" not in embedded_queries[0]
             terms = analyze_text(observed_queries[0]).split()
             assert len(set(terms)) <= MAX_TOPIC_MEMORY_QUERY_TERMS
         finally:
@@ -1319,12 +1687,12 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
     asyncio.run(scenario())
 
 
-def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail() -> None:
+def test_oversized_source_is_not_split_and_retries_before_contiguous_tail() -> None:
     async def scenario() -> None:
         manager, profile, _, topics = await _repositories()
         sources = SourceRepository((*SOURCE_ADAPTERS, CONTENT_SOURCE_ADAPTER))
         try:
-            oversized_metadata = "界" * 2_100_000
+            oversized_metadata = "界" * 200_000
             oversized_capture = ContentCapture(
                 source_id="oversized-content",
                 content="body",
@@ -1358,10 +1726,10 @@ def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail
             )
             assert await selector.select("scope-a", 0, second.journal_position) == first.journal_position
 
-            probe = _RepeatingGenerator(TopicMemoryProbeOutput())
+            small_probe = _RepeatingGenerator(TopicMemoryProbeOutput())
             unexpected = _QueueGenerator()
-            stages = TopicMemoryStageSet(
-                probe=probe,
+            small_stages = TopicMemoryStageSet(
+                probe=small_probe,
                 global_evolver=unexpected,
                 planner=unexpected,
                 evolver=unexpected,
@@ -1378,27 +1746,56 @@ def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail
                 },
             )
             leases = ArtifactProcessingLeaseRepository()
+            small_processor = TopicMemoryProcessor(
+                database=profile.database,
+                sources=sources,
+                topics=topics,
+                stages=small_stages,
+                publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics, leases=leases),
+            )
+
+            with pytest.raises(TopicMemoryGenerationError, match="input_budget_exceeded"):
+                await small_processor.process(
+                    _assignment(
+                        term.fence("single-process"),
+                        through=first.journal_position,
+                    )
+                )
+            assert small_probe.inputs == []
+
+            async with profile.database.transaction() as connection:
+                cursor = await SourceCursorRepository().load(
+                    connection,
+                    "scope-a",
+                    TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
+                )
+            assert cursor is None
+
+            large_probe = _RepeatingGenerator(TopicMemoryProbeOutput())
+            large_stages = TopicMemoryStageSet(
+                probe=large_probe,
+                global_evolver=unexpected,
+                planner=unexpected,
+                evolver=unexpected,
+                temporary=unexpected,
+                reconciler=unexpected,
+                estimator=character_token_estimator(),
+                input_tokens_limit=300_000,
+                fixed_prompts=small_stages.fixed_prompts,
+            )
             processor = TopicMemoryProcessor(
                 database=profile.database,
                 sources=sources,
                 topics=topics,
-                stages=stages,
+                stages=large_stages,
                 publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics, leases=leases),
             )
-
             first_completion = await processor.process(
-                _assignment(
-                    term.fence("single-process"),
-                    through=first.journal_position,
-                )
-            )
-            first_request_count = len(probe.inputs)
-            fragments = tuple(
-                cast(TopicMemoryProbeInput, value).evidence[0].content for value in probe.inputs[:first_request_count]
+                _assignment(term.fence("single-process"), through=first.journal_position)
             )
             assert first_completion.outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
-            assert first_request_count > 20
-            projected = "".join(fragments)
+            assert len(large_probe.inputs) == 1
+            projected = cast(TopicMemoryProbeInput, large_probe.inputs[0]).evidence[0].content
             assert json.loads(projected) == {
                 "content": "body",
                 "metadata": {"unbounded": oversized_metadata},
@@ -1412,10 +1809,6 @@ def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail
                     TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
                 )
             assert cursor is not None and cursor.cursor.sequence == first.journal_position
-            assert await selector.select("scope-a", first.journal_position, second.journal_position) == (
-                second.journal_position
-            )
-
             tail_assignment = ArtifactProcessingWorkAssignment(
                 binding_name=TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
                 scope_id="scope-a",
@@ -1431,7 +1824,7 @@ def test_oversized_source_is_fully_fragmented_and_does_not_block_contiguous_tail
             tail_completion = await processor.process(tail_assignment)
 
             assert tail_completion.outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
-            tail_input = cast(TopicMemoryProbeInput, probe.inputs[first_request_count])
+            tail_input = cast(TopicMemoryProbeInput, large_probe.inputs[1])
             assert tail_input.evidence[0].content == "tail remains reachable"
             async with profile.database.transaction() as connection:
                 cursor = await SourceCursorRepository().load(
