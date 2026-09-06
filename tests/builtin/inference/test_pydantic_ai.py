@@ -484,6 +484,28 @@ def test_embedding_adapter_enforces_unit_normalization_profile() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "embeddings",
+    [
+        ((1.0, 2.0),),
+        ((1.0, 2.0, float("inf")),),
+    ],
+)
+def test_embedding_adapter_preserves_invalid_output_classification(
+    embeddings: tuple[tuple[float, ...], ...],
+) -> None:
+    async def scenario() -> None:
+        adapter = PydanticAIEmbeddingModel(
+            embedder=Embedder(ResultEmbeddingModel(embeddings)),
+            profile=TEST_PROFILE,
+        )
+
+        with pytest.raises(InvalidInferenceOutputError):
+            await adapter.embed(("bounded text",))
+
+    asyncio.run(scenario())
+
+
 def test_embedding_adapter_maps_provider_errors_and_preserves_cause() -> None:
     async def scenario() -> None:
         provider_error = ModelHTTPError(503, "result-model", {"secret": "provider response"})

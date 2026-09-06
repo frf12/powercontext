@@ -15,12 +15,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, ParamSpec, cast
 
 import pytest
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingModel as PydanticAIEmbeddingModelBase
+from pydantic_ai.embeddings import TestEmbeddingModel
+from pydantic_ai.exceptions import ModelHTTPError
 
 from powercontext.artifacts import ArtifactLineage, ArtifactRef
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
@@ -36,6 +42,7 @@ from powercontext.builtin.inference import (
     InferenceUnavailableError,
     InvalidInferenceOutputError,
 )
+from powercontext.builtin.inference.pydantic_ai import PydanticAIEmbeddingModel
 from powercontext.builtin.runtime import (
     BuiltinRuntime,
     GetTopicMemoryRequest,
@@ -44,6 +51,7 @@ from powercontext.builtin.runtime import (
     TopicMemoryProcessingUnavailableError,
 )
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError
+from powercontext.server.logging import JsonFormatter
 
 P = ParamSpec("P")
 
@@ -72,6 +80,23 @@ class _Embedding:
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
+
+
+class _FailingProviderEmbeddingModel(PydanticAIEmbeddingModelBase):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    @property
+    def model_name(self) -> str:
+        return "failing-model"
+
+    @property
+    def system(self) -> str:
+        return "test"
+
+    async def embed(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise self._error
 
 
 def _runtime(**kwargs: Any) -> BuiltinRuntime:
@@ -185,6 +210,72 @@ async def test_topic_search_does_not_fallback_for_invalid_embedding_shape() -> N
     with pytest.raises(InvalidInferenceOutputError):
         await application.search(SearchTopicMemoryRequest(query="supervisor recovery"))
     assert calls == 0
+
+
+@_async_test
+async def test_topic_search_fails_closed_for_invalid_output_from_production_adapter() -> None:
+    calls = 0
+
+    async def search(_scope: str, _query: str, **_kwargs: Any) -> TopicMemorySearchResult:
+        nonlocal calls
+        calls += 1
+        return TopicMemorySearchResult(mode="fts")
+
+    embedding = PydanticAIEmbeddingModel(
+        embedder=Embedder(TestEmbeddingModel(dimensions=1)),
+        profile=EmbeddingProfile(profile_id="topic-v1", model="test", dimension=2),
+    )
+    application = _runtime(
+        topic_memory_search=search,
+        topic_memory_embedding_model=embedding,
+    ).topic_memory.for_scope("scope-a")
+
+    with pytest.raises(InvalidInferenceOutputError):
+        await application.search(SearchTopicMemoryRequest(query="supervisor recovery"))
+    assert calls == 0
+
+
+@_async_test
+async def test_topic_search_fallback_log_redacts_production_provider_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sentinel = "provider-secret-sentinel"
+    observations: list[tuple[str, bool]] = []
+
+    async def search(_scope: str, _query: str, **kwargs: Any) -> TopicMemorySearchResult:
+        assert kwargs["mode"] == "fts"
+        return TopicMemorySearchResult(mode="fts")
+
+    provider_error = ModelHTTPError(503, "failing-model", {"secret": sentinel})
+    embedding = PydanticAIEmbeddingModel(
+        embedder=Embedder(_FailingProviderEmbeddingModel(provider_error)),
+        profile=EmbeddingProfile(profile_id="topic-v1", model="test", dimension=2),
+    )
+    application = _runtime(
+        topic_memory_search=search,
+        topic_memory_embedding_model=embedding,
+        topic_memory_search_observer=lambda mode, fallback: observations.append((mode, fallback)),
+    ).topic_memory.for_scope("scope-a")
+
+    with caplog.at_level(logging.WARNING, logger="powercontext.builtin.runtime.application"):
+        result = await application.search(SearchTopicMemoryRequest(query="supervisor recovery"))
+
+    fallback = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "topic_memory.search.embedding_fallback"
+    )
+    serialized = JsonFormatter().format(fallback)
+    payload = json.loads(serialized)
+    assert result.mode == "fts"
+    assert observations == [("fts", True)]
+    assert fallback.exc_info is None
+    assert payload["event"] == "topic_memory.search.embedding_fallback"
+    assert payload["mode"] == "fts"
+    assert payload["error_code"] == "inference_unavailable"
+    assert "exception" not in payload
+    assert sentinel not in serialized
+    assert "supervisor recovery" not in serialized
 
 
 @pytest.mark.parametrize(
