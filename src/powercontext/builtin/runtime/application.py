@@ -1190,6 +1190,7 @@ class ScopedTopicMemoryApplication:
             if len(embedded.vectors) != 1:
                 raise InvalidInferenceOutputError("embed", "provider returned the wrong vector count")
         except (InferenceUnavailableError, InferenceTimeoutError) as error:
+            used_fallback = True
             log_safely(
                 logger,
                 logging.WARNING,
@@ -1204,23 +1205,24 @@ class ScopedTopicMemoryApplication:
                     "unit": "topic-memory",
                 },
             )
+        else:
             result = await search(
                 self.scope_id,
                 request.query,
                 limit=request.limit,
-                mode="fts",
+                mode="hybrid",
+                query_vector=embedded.vectors[0],
+                embedding_profile=embedding.profile,
             )
-            return result, True
+            return result, False
 
         result = await search(
             self.scope_id,
             request.query,
             limit=request.limit,
-            mode="hybrid",
-            query_vector=embedded.vectors[0],
-            embedding_profile=embedding.profile,
+            mode="fts",
         )
-        return result, False
+        return result, used_fallback
 
     async def get(self, request: GetTopicMemoryRequest, /) -> PublishedTopicMemory:
         if self._runtime._topic_memory_get is None:

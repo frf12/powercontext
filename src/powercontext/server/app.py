@@ -1475,7 +1475,7 @@ def _observe_application_operation(
                 operation=operation.operation_id,
                 outcome="failure",
                 started_at=started_at,
-                error=error,
+                error=_application_log_error(operation, response_status, error),
                 error_code=error_code,
             )
             _finish_span(span, "failure", error=error)
@@ -1529,6 +1529,19 @@ def _application_outcome(result: object) -> str:
     if isinstance(result, (FlushMemoryResponse, FlushTopicMemoryResponse)) and result.status.value == "idle":
         return "noop"
     return "success"
+
+
+def _application_log_error(
+    operation: Operation[Any, Any],
+    response_status: int,
+    error: Exception,
+) -> Exception | None:
+    if (
+        operation.operation_id == SEARCH_TOPIC_MEMORY.operation_id
+        and response_status >= status.HTTP_500_INTERNAL_SERVER_ERROR
+    ):
+        return None
+    return error
 
 
 def _log_operation(

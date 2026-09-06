@@ -14,12 +14,19 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingModel as PydanticAIEmbeddingModelBase
+from pydantic_ai.exceptions import ModelHTTPError
 
 from powercontext.artifacts import ArtifactLineage, ArtifactRef
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.artifacts.topic_memory import (
     PublishedTopicMemory,
     TopicMemory,
@@ -27,15 +34,52 @@ from powercontext.builtin.artifacts.topic_memory import (
     TopicMemorySearchHit,
     TopicMemorySearchResult,
 )
+from powercontext.builtin.inference.pydantic_ai import PydanticAIEmbeddingModel
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
-from powercontext.builtin.runtime import TopicMemoryFlushResult, TopicMemoryProcessingUnavailableError
+from powercontext.builtin.runtime import (
+    BuiltinRuntime,
+    RuntimeCapabilities,
+    TopicMemoryFlushResult,
+    TopicMemoryProcessingUnavailableError,
+)
 from powercontext.errors import ArtifactNotFoundError
 from powercontext.server.app import create_app
 from powercontext.server.factory import create_server_app
+from powercontext.server.logging import JsonFormatter
 from powercontext.server.settings import McpConfig, ServerSettings
 from powercontext.sources import SourceRef
 
 REFERENCE = ArtifactRef(family="topic-memory", artifact_id="supervisor", revision=3)
+
+
+class _UnusedProvider:
+    async def get(self, scope_id: str, /) -> Any:
+        raise AssertionError(scope_id)
+
+
+class _FailingProviderEmbeddingModel(PydanticAIEmbeddingModelBase):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    @property
+    def model_name(self) -> str:
+        return "failing-model"
+
+    @property
+    def system(self) -> str:
+        return "test"
+
+    async def embed(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise self._error
+
+
+class _RecordingMetrics:
+    def __init__(self) -> None:
+        self.applications: list[tuple[str, str]] = []
+
+    def observe_application(self, operation: str, outcome: str, _started_at: float) -> None:
+        self.applications.append((operation, outcome))
 
 
 class _TopicMemoryApplication:
@@ -158,6 +202,78 @@ def test_topic_memory_flush_maps_known_missing_processing_capability_to_503() ->
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "topic_memory_processing_unavailable"
+
+
+def test_topic_memory_fallback_failure_redacts_production_provider_context(
+    caplog,
+) -> None:
+    query = "supervisor recovery"
+    provider_sentinel = "provider-secret-sentinel"
+    fts_sentinel = "fts-error-sentinel"
+    calls: list[str] = []
+    active_exceptions: list[BaseException | None] = []
+    fts_failure = RuntimeError(fts_sentinel)
+
+    async def search(_scope: str, _query: str, **kwargs: Any) -> TopicMemorySearchResult:
+        calls.append(kwargs["mode"])
+        active_exceptions.append(sys.exception())
+        raise fts_failure
+
+    provider_error = ModelHTTPError(
+        503,
+        "failing-model",
+        {"secret": provider_sentinel, "echo": query},
+    )
+    embedding = PydanticAIEmbeddingModel(
+        embedder=Embedder(_FailingProviderEmbeddingModel(provider_error)),
+        profile=EmbeddingProfile(profile_id="topic-v1", model="test", dimension=2),
+    )
+    runtime = BuiltinRuntime(
+        provider=_UnusedProvider(),
+        capabilities=RuntimeCapabilities(memory_extraction=False, memory_search_modes=()),
+        topic_memory_search=search,
+        topic_memory_embedding_model=embedding,
+    )
+    metrics = _RecordingMetrics()
+    app = create_app(
+        application=SimpleNamespace(topic_memory=runtime.topic_memory),
+        metrics=cast(Any, metrics),
+    )
+
+    with caplog.at_level(logging.WARNING), TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/v1/topic-memory/search",
+            json={"scope_id": "scope-a", "query": query},
+        )
+
+    fallback = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "topic_memory.search.embedding_fallback"
+    )
+    server_failure = next(
+        record for record in caplog.records if getattr(record, "event", None) == "application.operation.completed"
+    )
+    rendered = "\n".join(JsonFormatter().format(record) for record in caplog.records)
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "internal_error",
+        "message": "The Server failed.",
+        "details": None,
+    }
+    assert calls == ["fts"]
+    assert active_exceptions == [None]
+    assert fallback.error_code == "inference_unavailable"
+    assert fallback.mode == "fts"
+    assert fallback.exc_info is None
+    assert server_failure.operation == "search_topic_memory"
+    assert server_failure.error_code == "internal_error"
+    assert server_failure.exc_info is None
+    assert metrics.applications == [("search_topic_memory", "failure")]
+    assert provider_sentinel not in rendered
+    assert fts_sentinel not in rendered
+    assert query not in rendered
 
 
 def test_composed_fts_runtime_fails_closed_only_for_missing_topic_processing(tmp_path) -> None:
