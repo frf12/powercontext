@@ -227,6 +227,28 @@ def test_helper_pages_build_urls_from_each_request_host_and_root_path() -> None:
                 assert f'href="http://victim.example/control{navigation_path}"' in victim.text
 
 
+@pytest.mark.parametrize(
+    ("page_path", "entry_script"),
+    (
+        ("/", "/static/dashboard.js?v=product-language-v5"),
+        ("/skills", "/static/skills.js?v=agent-targets-v2"),
+        ("/reviews", "/static/review.js?v=agent-targets-v2"),
+        ("/handoff-reports", "/static/handoff-report.js?v=scope-report-v2"),
+    ),
+)
+def test_helper_page_templates_reference_the_translation_complete_entry_script(
+    page_path: str,
+    entry_script: str,
+) -> None:
+    client, _ = _client(authenticated=False, root_path="/control")
+
+    with client:
+        page = client.get(page_path, headers={"Host": "current.example"})
+
+    assert page.status_code == 200
+    assert f'<script type="module" src="http://current.example/control{entry_script}"></script>' in page.text
+
+
 def test_topics_browser_state_regressions_execute_in_node() -> None:
     node = shutil.which("node")
     if node is None:
