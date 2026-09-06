@@ -279,6 +279,16 @@ test("a superseded selection cannot render after delayed detail parsing", async 
     title: "Topic A"
   };
   const topicB = {...topicA, artifact: artifactB, summary: "Summary B", title: "Topic B"};
+  const detailB = {
+    artifact: artifactB,
+    current_artifact: artifactB,
+    detail: "current-b-detail",
+    is_current: true,
+    published_at: "2026-09-06T01:02:03Z",
+    source_refs: [{source_id: "current-b-source", source_type: "content"}],
+    summary: "Current B summary",
+    title: "Current Topic B"
+  };
   let resolveOldBody;
   const oldBody = new Promise((resolve) => {
     resolveOldBody = resolve;
@@ -287,7 +297,7 @@ test("a superseded selection cannot render after delayed detail parsing", async 
     {body: [{display_name: "Scope A", scope_id: "scope-a"}], path: "/dashboard/scopes"},
     {body: {items: [topicA, topicB], next_cursor: null}, path: "/dashboard/topic-memories/list"},
     {body: oldBody, path: "/dashboard/topic-memories/get"},
-    {body: {}, ok: false, path: "/dashboard/topic-memories/get", status: 500}
+    {body: detailB, path: "/dashboard/topic-memories/get"}
   ];
   globalThis.fetch = async (path) => {
     const expected = responses.shift();
@@ -307,6 +317,8 @@ test("a superseded selection cannot render after delayed detail parsing", async 
   await Promise.resolve();
   const newSelection = buttons[1].emit("click");
   await newSelection;
+  assert.equal(elements.get("topics-detail-title").textContent, "Current Topic B");
+  assert.equal(elements.get("topics-detail-body").textContent, "current-b-detail");
   resolveOldBody({
     artifact: artifactA,
     current_artifact: artifactA,
@@ -319,8 +331,11 @@ test("a superseded selection cannot render after delayed detail parsing", async 
   });
   await oldSelection;
 
-  assert.equal(elements.get("topics-detail-title").textContent, "Topic B");
-  assert.equal(elements.get("topics-detail-body").textContent, "");
-  assert.deepEqual(elements.get("topics-source-refs").children, []);
+  assert.equal(elements.get("topics-detail-title").textContent, "Current Topic B");
+  assert.equal(elements.get("topics-detail-body").textContent, "current-b-detail");
+  assert.deepEqual(
+    elements.get("topics-source-refs").children.map((item) => item.textContent),
+    ["content:current-b-source"]
+  );
   assert.equal(responses.length, 0);
 });
