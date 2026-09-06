@@ -107,6 +107,7 @@ def create_server_app(
             embedding_model=embedding_model,
             instrumentation=resolved_tracing.instrumentation,
             scope_cache_observer=None if metrics is None else metrics.set_runtime_scopes,
+            topic_memory_search_observer=None if metrics is None else metrics.observe_topic_memory_search,
             tracing=resolved_tracing,
         ) as runtime:
             readiness_probe.bind(runtime)
@@ -302,7 +303,7 @@ async def _server_capabilities(runtime: BuiltinRuntime) -> Capabilities:
     capabilities = await runtime.capabilities()
     return Capabilities(
         source_types=[CONTENT_SOURCE_NAME],
-        artifact_families=["memory", "experience", "skill", "handoff"],
+        artifact_families=["memory", "topic-memory", "experience", "skill", "handoff"],
         memory_extraction=capabilities.memory_extraction,
         experience_generation=capabilities.experience_generation,
         managed_skill_generation=capabilities.managed_skill_generation,

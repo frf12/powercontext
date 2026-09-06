@@ -188,6 +188,9 @@ def test_project_context_skill_uses_the_high_level_work_continuity_loop() -> Non
     assert "handoff_current_work" in content
     assert "acknowledge_handoff" in content
     assert "record_task_outcome" in content
+    assert "`search_topic_memory` with a focused query and no more than eight results" in content
+    assert "`get_topic_memory` with an exact returned Artifact reference" in content
+    assert "Do not request Topic Memory flushes from\n  Codex" in content
     assert "Complete a one-turn durable Handoff" in content
     assert "do not ask for a second confirmation" in content
     assert "native\npicker" in content

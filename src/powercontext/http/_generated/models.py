@@ -356,6 +356,21 @@ class FlushMemoryRequest(BaseModel):
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
 
 
+class FlushTopicMemoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+
+
+class GetTopicMemoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    artifact: ArtifactReference
+
+
 class GetArtifactCandidateRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -743,6 +758,15 @@ class ReviseMemoryEntryRequest(BaseModel):
     reason: Annotated[StrictStr | None, Field(max_length=512)] = None
 
 
+class SearchTopicMemoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    query: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern="^\\S(?:[\\s\\S]*\\S)?$")]
+    limit: Annotated[StrictInt, Field(ge=1, le=20)] = 10
+
+
 class ScanExternalSkillsRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -837,6 +861,23 @@ class EntryChangeOperation(StrEnum):
 class FlushStatus(StrEnum):
     IDLE = "idle"
     PROCESSED = "processed"
+
+
+class TopicMemoryFlushStatus(StrEnum):
+    ACCEPTED = "accepted"
+    IDLE = "idle"
+
+
+class TopicMemoryMatchedBy(StrEnum):
+    TOPIC_FTS = "topic_fts"
+    TOPIC_VECTOR = "topic_vector"
+    DETAIL_FTS = "detail_fts"
+    DETAIL_VECTOR = "detail_vector"
+
+
+class TopicMemoryUsedSearchMode(StrEnum):
+    FTS = "fts"
+    HYBRID = "hybrid"
 
 
 class MemoryEntryState(StrEnum):
@@ -1143,6 +1184,13 @@ class FlushMemoryResponse(BaseModel):
     high_watermark: Annotated[StrictInt, Field(ge=0)]
     processed_source_count: Annotated[StrictInt, Field(ge=0)]
     memory: ArtifactReference | None = None
+
+
+class FlushTopicMemoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    status: TopicMemoryFlushStatus
 
 
 class GetMemoryEntryRequest(BaseModel):
@@ -1536,6 +1584,26 @@ class SearchMemoryHit(BaseModel):
     matched_by: list[MemoryMatchedBy]
 
 
+class SearchTopicMemoryHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact: ArtifactReference
+    title: Annotated[StrictStr, Field(max_length=512, min_length=1)]
+    summary: Annotated[StrictStr, Field(max_length=8000, min_length=1)]
+    snippet: Annotated[StrictStr | None, Field(...)]
+    score: Annotated[StrictFloat, Field(ge=0.0)]
+    matched_by: Annotated[list[TopicMemoryMatchedBy], Field(min_length=1)]
+
+
+class SearchTopicMemoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: TopicMemoryUsedSearchMode
+    hits: list[SearchTopicMemoryHit]
+
+
 class SearchMemoryRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1553,6 +1621,17 @@ class SearchMemoryResponse(BaseModel):
     memory: ArtifactReference | None = None
     mode: MemoryUsedSearchMode | None = None
     hits: list[SearchMemoryHit]
+
+
+class TopicMemoryArtifact(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact: ArtifactReference
+    title: Annotated[StrictStr, Field(max_length=512, min_length=1)]
+    summary: Annotated[StrictStr, Field(max_length=8000, min_length=1)]
+    detail: Annotated[StrictStr, Field(max_length=125000, min_length=1)]
+    source_refs: list[SourceReference]
 
 
 class ArtifactCandidate(BaseModel):

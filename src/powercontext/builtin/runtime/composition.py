@@ -211,6 +211,7 @@ async def open_builtin_runtime(
     memory_reranker: MemoryReranker | None = None,
     instrumentation: InstrumentationSettings | None = None,
     scope_cache_observer: ScopeCacheObserver | None = None,
+    topic_memory_search_observer: Callable[[str, bool], None] | None = None,
     tracing: RuntimeTracing | None = None,
     artifact_processing_bindings: Sequence[ArtifactProcessingBinding] = (),
 ) -> AsyncIterator[BuiltinRuntime]:
@@ -300,6 +301,14 @@ async def open_builtin_runtime(
         for name, readiness_probe in inference_readiness:
             if readiness_probe is not None:
                 readiness_probes[name] = ReadinessProbeDefinition(probe=readiness_probe, blocking=False)
+        processing_bindings = _topic_memory_processing_bindings(
+            config,
+            contexts,
+            artifact_processing_bindings,
+            injected_embedding_model=embedding_model,
+            injected_token_estimator=token_estimator,
+        )
+        topic_memory_processing_available = _topic_memory_processing_available(config, processing_bindings)
         runtime = await resources.enter_async_context(
             BuiltinRuntime(
                 provider=contexts,
@@ -320,6 +329,12 @@ async def open_builtin_runtime(
                 generation_service=contexts.generation,
                 experience_recall=contexts.search_experience,
                 experience_incubator=contexts.incubate_experience if contexts.experience_incubation else None,
+                topic_memory_search=contexts.search_topic_memories,
+                topic_memory_get=contexts.get_topic_memory,
+                topic_memory_flush=contexts.request_topic_memory_flush,
+                topic_memory_embedding_model=configured_embedding,
+                topic_memory_processing_available=topic_memory_processing_available,
+                topic_memory_search_observer=topic_memory_search_observer,
                 external_skill_registry=contexts.external_skills if contexts.external_skill_registry else None,
                 external_skill_importer=contexts.import_external_skill if contexts.external_skill_registry else None,
                 statistics_service=contexts.statistics,
@@ -327,13 +342,6 @@ async def open_builtin_runtime(
                 readiness=RuntimeReadinessChecks(readiness_probes),
                 tracing=tracing,
             )
-        )
-        processing_bindings = _topic_memory_processing_bindings(
-            config,
-            contexts,
-            artifact_processing_bindings,
-            injected_embedding_model=embedding_model,
-            injected_token_estimator=token_estimator,
         )
         runtime.artifact_processing_supervisor = await resources.enter_async_context(
             _open_artifact_processing_supervisor(config, contexts, processing_bindings)
@@ -416,6 +424,17 @@ def _topic_memory_processing_bindings(
             automatic_processing_interval=None if automatic is None else timedelta(seconds=automatic),
             window_selector=selector,
         ),
+    )
+
+
+def _topic_memory_processing_available(
+    config: BuiltinConfig,
+    bindings: Sequence[ArtifactProcessingBinding],
+) -> bool:
+    """Report declared cross-role processing ability without probing worker liveness."""
+
+    return any(binding.binding_name == TOPIC_MEMORY_SOURCE_WINDOW_BINDING for binding in bindings) or (
+        config.runtime.artifact_processing_role == "api" and config.inference.generation_model is not None
     )
 
 
