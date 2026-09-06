@@ -18,6 +18,7 @@
 
 import {clearServerToken, fetchWithBearer, readServerToken, storeServerToken} from "./auth.js?v=optional-auth";
 import {createPageUi, createRequestGate} from "./page-ui.js?v=locale-complete";
+import {parseTopicDetailWithFreshness, purgeProtectedTopicDom} from "./topics-state.js?v=r7-state-v1";
 
 const translations = {
   en: {
@@ -397,7 +398,16 @@ async function selectTopic(item) {
       renderDetail();
       return;
     }
-    const detail = await response.json();
+    const parsed = await parseTopicDetailWithFreshness(
+      response,
+      () => request.isCurrent()
+        && scopeId === currentScopeId
+        && sameArtifact(selectedArtifact, item.artifact)
+    );
+    if (!parsed.fresh) {
+      return;
+    }
+    const detail = parsed.detail;
     if (!sameArtifact(detail.artifact, item.artifact)) {
       detailErrorKey = "invalidExactRevision";
       renderDetail();
@@ -425,6 +435,21 @@ function showLogin(messageKey = "") {
   authErrorKey = messageKey;
   pageStatusState = null;
   resetTopicSelection();
+  purgeProtectedTopicDom({
+    scopeSelect,
+    searchInput,
+    list,
+    detailError,
+    detailTitle,
+    detailRef: document.getElementById("topics-detail-ref"),
+    detailCurrent: document.getElementById("topics-detail-current"),
+    detailSummary: document.getElementById("topics-detail-summary"),
+    detailPublished: document.getElementById("topics-detail-published"),
+    detailHead: document.getElementById("topics-detail-head"),
+    detailBody: document.getElementById("topics-detail-body"),
+    sourceList: document.getElementById("topics-source-refs"),
+    noSources: document.getElementById("topics-no-sources")
+  });
   renderAuthError();
   authShell.hidden = false;
   pageStatus.hidden = true;
