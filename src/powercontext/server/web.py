@@ -476,7 +476,7 @@ def _web_page_endpoint(
         return templates.TemplateResponse(
             request=request,
             name=template_name,
-            context=context,
+            context=dict(context),
             headers=_PAGE_HEADERS,
         )
 
