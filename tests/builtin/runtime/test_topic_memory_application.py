@@ -236,6 +236,37 @@ async def test_topic_search_fails_closed_for_invalid_output_from_production_adap
 
 
 @_async_test
+async def test_topic_search_does_not_fallback_for_hybrid_repository_unavailability(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls: list[str] = []
+    observations: list[tuple[str, bool]] = []
+
+    async def search(_scope: str, _query: str, **kwargs: Any) -> TopicMemorySearchResult:
+        calls.append(kwargs["mode"])
+        raise InferenceUnavailableError("repository")
+
+    application = _runtime(
+        topic_memory_search=search,
+        topic_memory_embedding_model=_Embedding(EmbeddingResult(vectors=((0.25, 0.75),))),
+        topic_memory_search_observer=lambda mode, fallback: observations.append((mode, fallback)),
+    ).topic_memory.for_scope("scope-a")
+
+    with (
+        caplog.at_level(logging.WARNING, logger="powercontext.builtin.runtime.application"),
+        pytest.raises(InferenceUnavailableError) as error,
+    ):
+        await application.search(SearchTopicMemoryRequest(query="supervisor recovery"))
+
+    assert error.value.operation == "repository"
+    assert calls == ["hybrid"]
+    assert observations == []
+    assert not any(
+        getattr(record, "event", None) == "topic_memory.search.embedding_fallback" for record in caplog.records
+    )
+
+
+@_async_test
 async def test_topic_search_fallback_log_redacts_production_provider_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

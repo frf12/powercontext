@@ -1135,7 +1135,8 @@ class ScopedTopicMemoryApplication:
         self.scope_id = validate_scope_id(scope_id)
 
     async def search(self, request: SearchTopicMemoryRequest, /) -> TopicMemorySearchResult:
-        if self._runtime._topic_memory_search is None:
+        search = self._runtime._topic_memory_search
+        if search is None:
             raise _RuntimeStateError("topic-memory-search")
         query = request.query
         if query != query.strip() or not query or len(query) > MAX_TOPIC_MEMORY_QUERY_LENGTH:
@@ -1152,49 +1153,14 @@ class ScopedTopicMemoryApplication:
         ):
             embedding = self._runtime._topic_memory_embedding_model
             if embedding is None:
-                result = await self._runtime._topic_memory_search(
+                result = await search(
                     self.scope_id,
                     query,
                     limit=request.limit,
                     mode="fts",
                 )
             else:
-                try:
-                    embedded = await embedding.embed((query,))
-                    if len(embedded.vectors) != 1:
-                        raise InvalidInferenceOutputError("embed", "provider returned the wrong vector count")
-                    result = await self._runtime._topic_memory_search(
-                        self.scope_id,
-                        query,
-                        limit=request.limit,
-                        mode="hybrid",
-                        query_vector=embedded.vectors[0],
-                        embedding_profile=embedding.profile,
-                    )
-                except (InferenceUnavailableError, InferenceTimeoutError) as error:
-                    used_fallback = True
-                    log_safely(
-                        logger,
-                        logging.WARNING,
-                        "Topic Memory search fell back to FTS",
-                        extra={
-                            "event": "topic_memory.search.embedding_fallback",
-                            "outcome": "fallback",
-                            "mode": "fts",
-                            "error_code": (
-                                "inference_timeout"
-                                if isinstance(error, InferenceTimeoutError)
-                                else "inference_unavailable"
-                            ),
-                            "unit": "topic-memory",
-                        },
-                    )
-                    result = await self._runtime._topic_memory_search(
-                        self.scope_id,
-                        query,
-                        limit=request.limit,
-                        mode="fts",
-                    )
+                result, used_fallback = await self._search_with_embedding(request, embedding, search)
         observer = self._runtime._topic_memory_search_observer
         if observer is not None:
             try:
@@ -1212,6 +1178,49 @@ class ScopedTopicMemoryApplication:
                     },
                 )
         return result
+
+    async def _search_with_embedding(
+        self,
+        request: SearchTopicMemoryRequest,
+        embedding: EmbeddingModel,
+        search: TopicMemorySearch,
+    ) -> tuple[TopicMemorySearchResult, bool]:
+        try:
+            embedded = await embedding.embed((request.query,))
+            if len(embedded.vectors) != 1:
+                raise InvalidInferenceOutputError("embed", "provider returned the wrong vector count")
+        except (InferenceUnavailableError, InferenceTimeoutError) as error:
+            log_safely(
+                logger,
+                logging.WARNING,
+                "Topic Memory search fell back to FTS",
+                extra={
+                    "event": "topic_memory.search.embedding_fallback",
+                    "outcome": "fallback",
+                    "mode": "fts",
+                    "error_code": (
+                        "inference_timeout" if isinstance(error, InferenceTimeoutError) else "inference_unavailable"
+                    ),
+                    "unit": "topic-memory",
+                },
+            )
+            result = await search(
+                self.scope_id,
+                request.query,
+                limit=request.limit,
+                mode="fts",
+            )
+            return result, True
+
+        result = await search(
+            self.scope_id,
+            request.query,
+            limit=request.limit,
+            mode="hybrid",
+            query_vector=embedded.vectors[0],
+            embedding_profile=embedding.profile,
+        )
+        return result, False
 
     async def get(self, request: GetTopicMemoryRequest, /) -> PublishedTopicMemory:
         if self._runtime._topic_memory_get is None:
