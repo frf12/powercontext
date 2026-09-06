@@ -331,6 +331,7 @@ async def open_builtin_runtime(
                 experience_incubator=contexts.incubate_experience if contexts.experience_incubation else None,
                 topic_memory_search=contexts.search_topic_memories,
                 topic_memory_get=contexts.get_topic_memory,
+                topic_memory_browse=contexts.browse_topic_memories,
                 topic_memory_flush=contexts.request_topic_memory_flush,
                 topic_memory_embedding_model=configured_embedding,
                 topic_memory_processing_available=topic_memory_processing_available,

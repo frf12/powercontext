@@ -51,6 +51,7 @@ def test_dashboard_is_enabled_by_default_without_authentication_or_scopes(tmp_pa
 
     with TestClient(app) as client:
         home = client.get("/")
+        topics = client.get("/topics")
         skills = client.get("/skills")
         review = client.get("/reviews")
         scopes = client.get("/dashboard/scopes")
@@ -58,6 +59,7 @@ def test_dashboard_is_enabled_by_default_without_authentication_or_scopes(tmp_pa
     assert settings.dashboard.enabled is True
     assert settings.dashboard.scopes == []
     assert home.status_code == 200
+    assert topics.status_code == 200
     assert skills.status_code == 200
     assert review.status_code == 200
     assert scopes.status_code == 200
@@ -75,11 +77,13 @@ def test_dashboard_can_be_disabled_explicitly(tmp_path) -> None:
 
     with TestClient(app) as client:
         home = client.get("/")
+        topics = client.get("/topics")
         skills = client.get("/skills")
         review = client.get("/reviews")
         health = client.get("/health/live")
 
     assert home.status_code == 404
+    assert topics.status_code == 404
     assert skills.status_code == 404
     assert review.status_code == 404
     assert health.status_code == 200
@@ -128,6 +132,7 @@ def test_dashboard_is_the_authenticated_server_ui_entry(tmp_path) -> None:
 
     with TestClient(app) as client:
         home = client.get("/")
+        topics = client.get("/topics")
         skills = client.get("/skills")
         review = client.get("/reviews")
         removed_dashboard_alias = client.get("/dashboard", headers=_AUTH_HEADERS)
@@ -135,6 +140,7 @@ def test_dashboard_is_the_authenticated_server_ui_entry(tmp_path) -> None:
         scopes = client.get("/dashboard/scopes", headers=_AUTH_HEADERS)
 
     assert home.status_code == 200
+    assert topics.status_code == 200
     assert skills.status_code == 200
     assert review.status_code == 200
     assert removed_dashboard_alias.status_code == 404
@@ -556,6 +562,7 @@ def test_handoff_report_page_is_available_without_the_statistics_dashboard(tmp_p
         disabled_page = client.get("/handoff-reports")
     with TestClient(enabled_app) as client:
         enabled_page = client.get("/handoff-reports")
+        disabled_topics = client.get("/topics")
         disabled_skills = client.get("/skills")
         disabled_review = client.get("/reviews")
         disabled_dashboard = client.get("/")
@@ -567,6 +574,7 @@ def test_handoff_report_page_is_available_without_the_statistics_dashboard(tmp_p
 
     assert disabled_page.status_code == 404
     assert enabled_page.status_code == 200
+    assert disabled_topics.status_code == 404
     assert disabled_skills.status_code == 404
     assert disabled_review.status_code == 404
     assert disabled_dashboard.status_code == 404
