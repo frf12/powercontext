@@ -75,6 +75,8 @@ from powercontext.builtin.artifacts.topic_memory import (
     MAX_TOPIC_MEMORY_SEARCH_LIMIT,
     PublishedTopicMemory,
     TopicMemory,
+    TopicMemoryBrowseCursor,
+    TopicMemoryCurrentItem,
     TopicMemorySearchHit,
     TopicMemorySearchResult,
 )
@@ -200,6 +202,7 @@ if TYPE_CHECKING:
 
 TopicMemorySearch = Callable[..., Awaitable[TopicMemorySearchResult]]
 TopicMemoryGet = Callable[[str, ArtifactRef], Awaitable[PublishedTopicMemory]]
+TopicMemoryBrowse = Callable[..., Awaitable[tuple[TopicMemoryCurrentItem, ...]]]
 TopicMemoryFlush = Callable[[str], Awaitable[bool]]
 TopicMemorySearchObserver = Callable[[str, bool], None]
 
@@ -243,6 +246,7 @@ class _RuntimeStateError(RuntimeError):
             "review": "Candidate Review services are not configured",
             "scheduler": "Built-in Runtime scheduler is already started",
             "statistics": "Statistics services are not configured",
+            "topic-memory-browse": "Topic Memory browsing is not configured",
         }
         super().__init__(messages[code])
 
@@ -1232,6 +1236,21 @@ class ScopedTopicMemoryApplication:
         async with self._runtime._scoped_operation(self.scope_id):
             return await self._runtime._topic_memory_get(self.scope_id, request.artifact)
 
+    async def browse(
+        self,
+        *,
+        limit: int,
+        after: TopicMemoryBrowseCursor | None = None,
+    ) -> tuple[TopicMemoryCurrentItem, ...]:
+        """Browse current Topic heads for a private management projection."""
+
+        if self._runtime._topic_memory_browse is None:
+            raise _RuntimeStateError("topic-memory-browse")
+        if not 1 <= limit <= 100:
+            raise InvalidRuntimeRequestError("topic-memory-browse-limit")
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await self._runtime._topic_memory_browse(self.scope_id, limit=limit, after=after)
+
     async def flush(self) -> TopicMemoryFlushResult:
         if not self._runtime._topic_memory_processing_available or self._runtime._topic_memory_flush is None:
             raise TopicMemoryProcessingUnavailableError
@@ -1418,6 +1437,7 @@ class BuiltinRuntime:
         experience_incubator: ExperienceIncubator | None = None,
         topic_memory_search: TopicMemorySearch | None = None,
         topic_memory_get: TopicMemoryGet | None = None,
+        topic_memory_browse: TopicMemoryBrowse | None = None,
         topic_memory_flush: TopicMemoryFlush | None = None,
         topic_memory_embedding_model: EmbeddingModel | None = None,
         topic_memory_processing_available: bool = False,
@@ -1442,6 +1462,7 @@ class BuiltinRuntime:
         self._experience_incubator = experience_incubator
         self._topic_memory_search = topic_memory_search
         self._topic_memory_get = topic_memory_get
+        self._topic_memory_browse = topic_memory_browse
         self._topic_memory_flush = topic_memory_flush
         self._topic_memory_embedding_model = topic_memory_embedding_model
         self._topic_memory_processing_available = topic_memory_processing_available

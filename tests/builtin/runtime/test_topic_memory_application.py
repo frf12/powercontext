@@ -33,7 +33,9 @@ from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.artifacts.topic_memory import (
     PublishedTopicMemory,
     TopicMemory,
+    TopicMemoryBrowseCursor,
     TopicMemoryContent,
+    TopicMemoryCurrentItem,
     TopicMemorySearchResult,
 )
 from powercontext.builtin.inference import (
@@ -123,6 +125,42 @@ async def test_topic_search_uses_fts_without_embedding() -> None:
 
     assert result.mode == "fts"
     assert calls == [{"limit": 10, "mode": "fts"}]
+
+
+@_async_test
+async def test_topic_browse_reuses_the_scoped_application_boundary() -> None:
+    published_at = datetime(2026, 9, 6, 1, 2, 3, tzinfo=UTC)
+    boundary = TopicMemoryBrowseCursor(
+        published_at=published_at,
+        artifact_id="topic-a",
+        revision=2,
+    )
+    expected = (
+        TopicMemoryCurrentItem(
+            artifact_ref=ArtifactRef(family="topic-memory", artifact_id="topic-b", revision=1),
+            title="Topic B",
+            summary="Current topic",
+            published_at=published_at,
+            source_count=2,
+        ),
+    )
+    calls: list[tuple[str, int, TopicMemoryBrowseCursor | None]] = []
+
+    async def browse(
+        scope_id: str,
+        *,
+        limit: int,
+        after: TopicMemoryBrowseCursor | None,
+    ) -> tuple[TopicMemoryCurrentItem, ...]:
+        calls.append((scope_id, limit, after))
+        return expected
+
+    scoped = _runtime(topic_memory_browse=browse).topic_memory.for_scope("scope-a")
+
+    assert await scoped.browse(limit=26, after=boundary) == expected
+    assert calls == [("scope-a", 26, boundary)]
+    with pytest.raises(InvalidRuntimeRequestError, match="topic-memory-browse-limit"):
+        await scoped.browse(limit=101)
 
 
 @_async_test

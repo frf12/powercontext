@@ -112,10 +112,15 @@ The Dashboard is enabled by default and shares the Server listener and port with
 configured, the page shows an empty state. Dashboard initialization failures are logged with their direct cause and do
 not prevent the Server HTTP API, MCP, or health checks from starting.
 
-When bearer authentication is enabled, the HTML shells at `/`, `/skills`, `/reviews`, and `/handoff-reports`, plus
+When bearer authentication is enabled, the HTML shells at `/`, `/topics`, `/skills`, `/reviews`, and `/handoff-reports`, plus
 their static assets, remain public so the browser can render the sign-in form. Data requests stay protected. Enter the
 Server token in that form; the browser keeps it only in the current tab's session storage. Disable both Dashboard and
 Handoff Report if even these sign-in pages must not be exposed.
+
+Dashboard scopes are a UI discovery list, not an authorization boundary. The optional bearer token is Server-wide,
+not per user or per scope. The private Topic Memory support routes accept only configured Dashboard scopes, while the
+public API continues to apply its existing scope contract. A deployment that requires per-user or per-scope access
+control must provide that boundary separately.
 
 Handoff Report is independently enabled by default at `/handoff-reports`. When no scope contains a committed Handoff,
 it shows a data-free template preview. See [Use Handoff Report](../how-to/use-handoff-report.md) for scope discovery,

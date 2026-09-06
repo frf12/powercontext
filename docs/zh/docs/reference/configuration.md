@@ -107,9 +107,13 @@ Python Client 和 CLI 对出站请求应用相同规则：配置的明文 `http:
 Dashboard 默认启用，并与 HTTP API、MCP 共用监听地址和端口。默认未配置 scope，页面会显示空状态；Dashboard
 初始化失败只记录包含直接原因的 warning，不影响 Server 的 HTTP API、MCP 和健康检查启动。
 
-启用 Bearer 鉴权后，`/`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
+启用 Bearer 鉴权后，`/`、`/topics`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
 浏览器渲染登录表单；数据请求仍受鉴权保护。在表单中输入 Server token 后，浏览器只把它保存在当前标签页的 session
 storage 中。如果连这些登录页也不能暴露，应同时关闭 Dashboard 和 Handoff Report。
+
+Dashboard scope 只是 UI discovery list，不是 authorization boundary。可选 Bearer token 是 Server-wide credential，而不是
+按用户或按 scope 的 token。Private Topic Memory support route 只接受配置好的 Dashboard scope；public API 继续使用既有
+scope 合同。需要 per-user 或 per-scope access control 的部署必须另行提供该安全边界。
 
 Handoff Report 独立默认启用，路径为 `/handoff-reports`。没有任何 scope 包含 committed Handoff 时，页面显示无数据
 模板预览。Scope discovery、检查、Revision 写入和导出步骤见[使用 Handoff Report](../how-to/use-handoff-report.md)。

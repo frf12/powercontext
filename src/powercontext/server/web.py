@@ -17,17 +17,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
 from functools import cache
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator, model_validator
 
 from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef
@@ -38,10 +41,22 @@ from powercontext.builtin.artifacts.skill.projection import (
     inspect_skill_projection,
     publish_skill_projection,
 )
+from powercontext.builtin.artifacts.topic_memory import (
+    PublishedTopicMemory,
+    TopicMemory,
+    TopicMemoryBrowseCursor,
+    TopicMemoryCurrentItem,
+)
 from powercontext.builtin.review import CandidateStatus
-from powercontext.builtin.runtime import GetArtifactCandidateRequest, GetSkillRequest, ListExternalSkillsRequest
+from powercontext.builtin.runtime import (
+    GetArtifactCandidateRequest,
+    GetSkillRequest,
+    GetTopicMemoryRequest,
+    ListExternalSkillsRequest,
+)
 from powercontext.http import ErrorDetail, ErrorResponse
 from powercontext.limits import MAX_ARTIFACT_ID_LENGTH
+from powercontext.sources import SourceRef
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +67,9 @@ _PAGE_HEADERS = {
         "connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
     ),
 }
+_DASHBOARD_TOPIC_MEMORY_PAGE_LIMIT = 25
+_DASHBOARD_TOPIC_MEMORY_CURSOR_PREFIX = "tm1."
+_DASHBOARD_TOPIC_MEMORY_CURSOR_MAX_LENGTH = 1024
 
 
 class DashboardScope(BaseModel):
@@ -61,6 +79,122 @@ class DashboardScope(BaseModel):
 
     scope_id: str
     display_name: str
+
+
+class DashboardTopicMemoryListRequest(BaseModel):
+    """Browse one configured Dashboard scope without creating a public API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_id: str = Field(min_length=1, max_length=256)
+    limit: StrictInt = Field(default=_DASHBOARD_TOPIC_MEMORY_PAGE_LIMIT, ge=1, le=_DASHBOARD_TOPIC_MEMORY_PAGE_LIMIT)
+    cursor: str | None = Field(default=None, min_length=1, max_length=_DASHBOARD_TOPIC_MEMORY_CURSOR_MAX_LENGTH)
+
+    @field_validator("cursor")
+    @classmethod
+    def require_trimmed_cursor(cls, value: str | None) -> str | None:
+        if value is not None and value != value.strip():
+            raise ValueError("cursor must be trimmed")  # noqa: TRY003
+        return value
+
+
+class DashboardTopicMemoryGetRequest(BaseModel):
+    """Read one exact Topic Memory revision for the private Dashboard."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_id: str = Field(min_length=1, max_length=256)
+    artifact: ArtifactRef
+
+
+class DashboardTopicMemoryItem(BaseModel):
+    """One compact current Topic head in recent-publication order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact: ArtifactRef
+    title: str
+    summary: str
+    published_at: datetime
+    source_count: StrictInt = Field(ge=0)
+
+
+class DashboardTopicMemoryPage(BaseModel):
+    """One bounded page from the private Topic Memory browser."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: tuple[DashboardTopicMemoryItem, ...]
+    next_cursor: str | None
+
+
+class DashboardTopicMemoryDetail(BaseModel):
+    """Exact Topic content plus management-only publication state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact: ArtifactRef
+    title: str
+    summary: str
+    detail: str
+    published_at: datetime
+    is_current: bool
+    current_artifact: ArtifactRef
+    source_refs: tuple[SourceRef, ...]
+
+
+class _DashboardTopicMemoryCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    published_at: datetime
+    artifact_id: str = Field(min_length=1, max_length=MAX_ARTIFACT_ID_LENGTH)
+    revision: StrictInt = Field(ge=1)
+
+
+class _DashboardTopicMemoryRoutes:
+    def __init__(self, scope_ids: frozenset[str]) -> None:
+        self._scope_ids = scope_ids
+
+    async def list(
+        self,
+        request: DashboardTopicMemoryListRequest,
+        http_request: Request,
+        response: Response,
+    ) -> DashboardTopicMemoryPage | JSONResponse:
+        scoped = _dashboard_topic_memory_application(http_request, request.scope_id, self._scope_ids)
+        if isinstance(scoped, JSONResponse):
+            return scoped
+        after = None
+        if request.cursor is not None:
+            try:
+                after = _decode_dashboard_topic_memory_cursor(request.cursor)
+            except (ValueError, ValidationError, UnicodeError, binascii.Error):
+                return _web_error(422, "invalid_topic_memory_cursor", "The Topic Memory cursor is invalid.")
+        rows = await scoped.browse(limit=request.limit + 1, after=after)
+        visible = rows[: request.limit]
+        next_cursor = (
+            _encode_dashboard_topic_memory_cursor(visible[-1]) if len(rows) > request.limit and visible else None
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return DashboardTopicMemoryPage(
+            items=tuple(_dashboard_topic_memory_item(item) for item in visible),
+            next_cursor=next_cursor,
+        )
+
+    async def get(
+        self,
+        request: DashboardTopicMemoryGetRequest,
+        http_request: Request,
+        response: Response,
+    ) -> DashboardTopicMemoryDetail | JSONResponse:
+        if request.artifact.family != TopicMemory.family:
+            return _web_error(422, "invalid_request", "The request must identify a Topic Memory.")
+        scoped = _dashboard_topic_memory_application(http_request, request.scope_id, self._scope_ids)
+        if isinstance(scoped, JSONResponse):
+            return scoped
+        published = await scoped.get(GetTopicMemoryRequest(artifact=request.artifact))
+        response.headers["Cache-Control"] = "no-store"
+        return _dashboard_topic_memory_detail(published)
 
 
 class DashboardSkillProjectionRequest(BaseModel):
@@ -190,9 +324,11 @@ def mount_web_ui(
     dashboard_scope_ids = frozenset(scopes)
     publish_targets = tuple(target for target in agent_skill_targets if target.allow_managed_publish)
     skill_projection_routes = _DashboardSkillProjectionRoutes(dashboard_scope_ids, publish_targets)
+    topic_memory_routes = _DashboardTopicMemoryRoutes(dashboard_scope_ids)
     templates = _templates()
     if dashboard_enabled:
         templates.env.get_template("pages/dashboard.html")
+        templates.env.get_template("pages/topics.html")
         templates.env.get_template("pages/review.html")
         templates.env.get_template("pages/skills.html")
     if handoff_report_enabled:
@@ -201,69 +337,49 @@ def mount_web_ui(
 
     router = APIRouter(include_in_schema=False)
 
-    async def dashboard_page(request: Request) -> Response:
-        return templates.TemplateResponse(
-            request=request,
-            name="pages/dashboard.html",
-            context={
-                "active_page": "dashboard",
-                "dashboard_enabled": True,
-                "skills_enabled": True,
-                "review_enabled": True,
-                "handoff_report_enabled": handoff_report_enabled,
-                "home_route": "dashboard_home",
-                "authentication_required": authentication_required,
-            },
-            headers=_PAGE_HEADERS,
-        )
-
-    async def skills_page(request: Request) -> Response:
-        return templates.TemplateResponse(
-            request=request,
-            name="pages/skills.html",
-            context={
-                "active_page": "skills",
-                "dashboard_enabled": True,
-                "skills_enabled": True,
-                "review_enabled": True,
-                "handoff_report_enabled": handoff_report_enabled,
-                "home_route": "dashboard_home",
-                "authentication_required": authentication_required,
-            },
-            headers=_PAGE_HEADERS,
-        )
-
-    async def review_page(request: Request) -> Response:
-        return templates.TemplateResponse(
-            request=request,
-            name="pages/review.html",
-            context={
-                "active_page": "review",
-                "dashboard_enabled": True,
-                "skills_enabled": True,
-                "review_enabled": True,
-                "handoff_report_enabled": handoff_report_enabled,
-                "home_route": "dashboard_home",
-                "authentication_required": authentication_required,
-            },
-            headers=_PAGE_HEADERS,
-        )
-
-    async def handoff_report_page(request: Request) -> Response:
-        return templates.TemplateResponse(
-            request=request,
-            name="pages/handoff_report.html",
-            context={
-                "active_page": "handoff_report",
-                "dashboard_enabled": dashboard_enabled,
-                "skills_enabled": dashboard_enabled,
-                "review_enabled": dashboard_enabled,
-                "handoff_report_enabled": True,
-                "home_route": "dashboard_home" if dashboard_enabled else "handoff_report_dashboard",
-                "authentication_required": authentication_required,
-            },
-            headers=_PAGE_HEADERS,
-        )
+    dashboard_context = {
+        "dashboard_enabled": True,
+        "topics_enabled": True,
+        "skills_enabled": True,
+        "review_enabled": True,
+        "handoff_report_enabled": handoff_report_enabled,
+        "home_route": "dashboard_home",
+        "authentication_required": authentication_required,
+    }
+    dashboard_page = _web_page_endpoint(
+        templates=templates,
+        template_name="pages/dashboard.html",
+        context={"active_page": "dashboard", **dashboard_context},
+    )
+    topics_page = _web_page_endpoint(
+        templates=templates,
+        template_name="pages/topics.html",
+        context={"active_page": "topics", **dashboard_context},
+    )
+    skills_page = _web_page_endpoint(
+        templates=templates,
+        template_name="pages/skills.html",
+        context={"active_page": "skills", **dashboard_context},
+    )
+    review_page = _web_page_endpoint(
+        templates=templates,
+        template_name="pages/review.html",
+        context={"active_page": "review", **dashboard_context},
+    )
+    handoff_report_page = _web_page_endpoint(
+        templates=templates,
+        template_name="pages/handoff_report.html",
+        context={
+            "active_page": "handoff_report",
+            "dashboard_enabled": dashboard_enabled,
+            "topics_enabled": dashboard_enabled,
+            "skills_enabled": dashboard_enabled,
+            "review_enabled": dashboard_enabled,
+            "handoff_report_enabled": True,
+            "home_route": "dashboard_home" if dashboard_enabled else "handoff_report_dashboard",
+            "authentication_required": authentication_required,
+        },
+    )
 
     async def list_dashboard_scopes(response: Response) -> tuple[DashboardScope, ...]:
         response.headers["Cache-Control"] = "no-store"
@@ -283,6 +399,27 @@ def mount_web_ui(
             methods=["GET"],
             response_model=list[DashboardScope],
             name="dashboard_scopes",
+        )
+        router.add_api_route(
+            "/topics",
+            topics_page,
+            methods=["GET"],
+            response_class=HTMLResponse,
+            name="topics_library",
+        )
+        router.add_api_route(
+            "/dashboard/topic-memories/list",
+            topic_memory_routes.list,
+            methods=["POST"],
+            response_model=DashboardTopicMemoryPage,
+            name="dashboard_topic_memories_list",
+        )
+        router.add_api_route(
+            "/dashboard/topic-memories/get",
+            topic_memory_routes.get,
+            methods=["POST"],
+            response_model=DashboardTopicMemoryDetail,
+            name="dashboard_topic_memories_get",
         )
         router.add_api_route(
             "/skills",
@@ -329,6 +466,23 @@ def mount_web_ui(
     app.include_router(router)
 
 
+def _web_page_endpoint(
+    *,
+    templates: Jinja2Templates,
+    template_name: str,
+    context: dict[str, object],
+) -> Callable[[Request], Awaitable[Response]]:
+    async def render(request: Request) -> Response:
+        return templates.TemplateResponse(
+            request=request,
+            name=template_name,
+            context=context,
+            headers=_PAGE_HEADERS,
+        )
+
+    return render
+
+
 @cache
 def _templates() -> Jinja2Templates:
     environment = Environment(
@@ -336,6 +490,77 @@ def _templates() -> Jinja2Templates:
         autoescape=select_autoescape(),
     )
     return Jinja2Templates(env=environment)
+
+
+def _dashboard_topic_memory_application(
+    request: Request,
+    scope_id: str,
+    dashboard_scope_ids: frozenset[str],
+) -> Any | JSONResponse:
+    if scope_id not in dashboard_scope_ids:
+        return _web_error(404, "dashboard_scope_not_found", "The Dashboard scope was not found.")
+    application = request.app.state.application
+    if application is None:
+        return _web_error(503, "runtime_not_ready", "The Runtime is not ready.")
+    return application.topic_memory.for_scope(scope_id)
+
+
+def _dashboard_topic_memory_item(value: TopicMemoryCurrentItem) -> DashboardTopicMemoryItem:
+    return DashboardTopicMemoryItem(
+        artifact=value.artifact_ref,
+        title=value.title,
+        summary=value.summary,
+        published_at=value.published_at,
+        source_count=value.source_count,
+    )
+
+
+def _dashboard_topic_memory_detail(value: PublishedTopicMemory) -> DashboardTopicMemoryDetail:
+    return DashboardTopicMemoryDetail(
+        artifact=value.topic.as_ref(),
+        title=value.topic.content.title,
+        summary=value.topic.content.summary,
+        detail=value.topic.content.detail,
+        published_at=value.published_at,
+        is_current=value.is_current,
+        current_artifact=value.current_artifact,
+        source_refs=value.topic.lineage.sources,
+    )
+
+
+def _encode_dashboard_topic_memory_cursor(value: TopicMemoryCurrentItem) -> str:
+    cursor = _DashboardTopicMemoryCursor(
+        published_at=value.published_at,
+        artifact_id=value.artifact_ref.artifact_id,
+        revision=value.artifact_ref.revision,
+    )
+    payload = base64.urlsafe_b64encode(cursor.model_dump_json().encode()).decode().rstrip("=")
+    return f"{_DASHBOARD_TOPIC_MEMORY_CURSOR_PREFIX}{payload}"
+
+
+def _decode_dashboard_topic_memory_cursor(value: str) -> TopicMemoryBrowseCursor:
+    if not value.startswith(_DASHBOARD_TOPIC_MEMORY_CURSOR_PREFIX):
+        raise ValueError("unsupported Topic Memory cursor")  # noqa: TRY003
+    encoded = value.removeprefix(_DASHBOARD_TOPIC_MEMORY_CURSOR_PREFIX)
+    if not encoded or "=" in encoded:
+        raise ValueError("invalid Topic Memory cursor encoding")  # noqa: TRY003
+    raw = encoded.encode("ascii")
+    decoded = base64.b64decode(raw + b"=" * (-len(raw) % 4), altchars=b"-_", validate=True)
+    cursor = _DashboardTopicMemoryCursor.model_validate_json(decoded, strict=True)
+    boundary = TopicMemoryBrowseCursor(
+        published_at=cursor.published_at,
+        artifact_id=cursor.artifact_id,
+        revision=cursor.revision,
+    )
+    canonical = _DashboardTopicMemoryCursor(
+        published_at=boundary.published_at,
+        artifact_id=boundary.artifact_id,
+        revision=boundary.revision,
+    )
+    canonical_payload = base64.urlsafe_b64encode(canonical.model_dump_json().encode()).decode().rstrip("=")
+    if value != f"{_DASHBOARD_TOPIC_MEMORY_CURSOR_PREFIX}{canonical_payload}":
+        raise ValueError("non-canonical Topic Memory cursor")  # noqa: TRY003
+    return boundary
 
 
 async def _dashboard_managed_skill(
@@ -425,7 +650,11 @@ def _web_error(
     details: dict[str, object] | None = None,
 ) -> JSONResponse:
     error = ErrorResponse(error=ErrorDetail(code=code, message=message, details=details))
-    return JSONResponse(status_code=response_status, content=error.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=response_status,
+        content=error.model_dump(mode="json"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 __all__ = [
@@ -434,5 +663,10 @@ __all__ = [
     "DashboardSkillProjectionRequest",
     "DashboardSkillProjectionTarget",
     "DashboardSkillPublishRequest",
+    "DashboardTopicMemoryDetail",
+    "DashboardTopicMemoryGetRequest",
+    "DashboardTopicMemoryItem",
+    "DashboardTopicMemoryListRequest",
+    "DashboardTopicMemoryPage",
     "mount_web_ui",
 ]

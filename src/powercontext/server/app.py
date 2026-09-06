@@ -66,6 +66,8 @@ from powercontext.builtin.artifacts.skill import (
 )
 from powercontext.builtin.artifacts.topic_memory import (
     PublishedTopicMemory,
+    TopicMemoryBrowseCursor,
+    TopicMemoryCurrentItem,
     TopicMemorySearchResult,
 )
 from powercontext.builtin.handoff_report import (
@@ -551,6 +553,13 @@ class _ScopedTopicMemoryApplication(Protocol):
     async def search(self, request: RuntimeSearchTopicMemoryRequest, /) -> TopicMemorySearchResult: ...
 
     async def get(self, request: RuntimeGetTopicMemoryRequest, /) -> PublishedTopicMemory: ...
+
+    async def browse(
+        self,
+        *,
+        limit: int,
+        after: TopicMemoryBrowseCursor | None = None,
+    ) -> tuple[TopicMemoryCurrentItem, ...]: ...
 
     async def flush(self) -> TopicMemoryFlushResult: ...
 
