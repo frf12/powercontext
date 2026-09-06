@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,12 +28,15 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import AnyHttpUrl, SecretStr
+from sqlalchemy.engine import make_url
 from starlette.middleware import Middleware
 
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
+from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WINDOW_BINDING
 from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryEvolveOutput,
     TopicMemoryGlobalOutput,
@@ -40,8 +45,16 @@ from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryReconcileOutput,
     TopicMemoryTemporaryOutput,
 )
+from powercontext.builtin.inference import EmbeddingResult, InferenceUnavailableError
+from powercontext.builtin.persistence.cursors import SourceCursorRepository
+from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
+from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
+from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
-from powercontext.builtin.runtime import InferenceConfig, RuntimeConfig
+from powercontext.builtin.persistence.tables import BUILTIN_TABLES
+from powercontext.builtin.runtime import HandoffReportConfig, InferenceConfig, RuntimeConfig
+from powercontext.client import PowerContextClient
+from powercontext.http import CaptureContentSourceRequest, FlushTopicMemoryRequest, SearchTopicMemoryRequest
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     BearerAuthConfig,
@@ -54,6 +67,7 @@ from tests.e2e.topic_memory_product.common import (
     AccessTimeline,
     AccessTimelineMiddleware,
     ArtifactIdentity,
+    FakeInference,
     PreparedContextAudit,
     PreparedContextAuditMiddleware,
     ProductChainError,
@@ -67,8 +81,65 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_SELECTOR = "powercontext@powercontext"
 E1_SCOPE_ID = "project:r8-real-codex"
 E1_CANARY = "TOPAZ-R8-REAL-CODEX-CANARY"
+E2_CANARY = "BERYL-R8-REAL-EMBEDDING-CANARY"
+E2_SCOPE_ID = "project:r8-real-embedding"
+E3_CANARY = "ONYX-R8-OCEANBASE-RECOVERY-CANARY"
+E3_SCOPE_ID = "project:r8-oceanbase-recovery"
+E4_CANARY = "JADE-R8-SEEKDB-CANARY"
+E4_SCOPE_ID = "project:r8-seekdb"
+_E2_TOKEN = "r8-e2-one-time-token"  # noqa: S105 - synthetic loopback-only credential.
+_E4_TOKEN = "r8-e4-one-time-token"  # noqa: S105 - synthetic loopback-only credential.
 DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
 DEFAULT_GENERATION_MODEL = "gpt-5.6-luna"
+
+
+@dataclass(frozen=True, slots=True)
+class _RealEmbeddingConfig:
+    model: str
+    profile_id: str
+    dimension: int
+    base_url: AnyHttpUrl | None
+    headers: dict[str, SecretStr]
+    normalization: Literal["none", "unit"]
+    timeout_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class _OceanBaseLayerConfig:
+    database: OceanBaseConfig
+    schema_fingerprint: str
+
+
+class _FallbackEmbedding:
+    """Deterministically inject one unavailable query embedding for E2."""
+
+    def __init__(self, config: _RealEmbeddingConfig) -> None:
+        self.profile = EmbeddingProfile(
+            profile_id=config.profile_id,
+            model=config.model,
+            dimension=config.dimension,
+            normalization=config.normalization,
+        )
+
+    async def embed(self, _texts: tuple[str, ...], /) -> EmbeddingResult:
+        raise InferenceUnavailableError("embed")
+
+
+class _EmbeddingFallbackCapture(logging.Handler):
+    """Retain only the stable fallback classification, never query/provider data."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.events: list[dict[str, str]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if getattr(record, "event", None) != "topic_memory.search.embedding_fallback":
+            return
+        self.events.append({
+            "event": "topic_memory.search.embedding_fallback",
+            "mode": str(getattr(record, "mode", "unknown")),
+            "error_code": str(getattr(record, "error_code", "unknown")),
+        })
 
 
 class _WorkerFailureCapture(logging.Handler):
@@ -907,6 +978,678 @@ def run_e1(  # noqa: C901
             os.environ.pop("OPENAI_API_KEY", None)
 
 
+def run_e2(  # noqa: C901
+    directory: Path,
+    *,
+    config: _RealEmbeddingConfig,
+    e1_status: str,
+    generation_timeout: float,
+) -> dict[str, object]:
+    """Run the E1-compatible chain with a real embedding profile and fallback."""
+
+    if e1_status != "PASS":
+        raise ProductChainError(f"E2 requires E1 PASS; observed {e1_status}")
+    directory.mkdir(parents=True, exist_ok=True)
+    runtime_directory = Path(tempfile.mkdtemp(prefix=".runtime-", dir=directory))
+    fake = FakeInference(canary=E2_CANARY, detail_marker="R8-E2-DETAIL-MUST-NOT-BE-PREPARED")
+    inference_server = start_loopback_server(fake.app())
+    timeline = AccessTimeline()
+    server = None
+    fallback_server = None
+    fallback_capture = _EmbeddingFallbackCapture()
+    search_logger = logging.getLogger("powercontext.builtin.runtime.application")
+    search_logger.addHandler(fallback_capture)
+    temporary_openai_key = False
+    result: dict[str, object] | None = None
+    try:
+        if not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = "r8-loopback-only"
+            temporary_openai_key = True
+        provider_header = {"Authorization": SecretStr("Bearer r8-fake-provider")}
+        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{runtime_directory / 'runtime.db'}")
+        settings = ServerSettings(
+            auth=BearerAuthConfig(enabled=True, token=SecretStr(_E2_TOKEN)),
+            database=database,
+            runtime=RuntimeConfig(
+                topic_memory_source_window_limit=1,
+                artifact_processing_worker_timeout_seconds=generation_timeout,
+            ),
+            inference=InferenceConfig(
+                generation_model="openai-chat:r8-fake-generation",
+                generation_base_url=AnyHttpUrl(f"{inference_server.base_url}/v1"),
+                generation_headers=provider_header,
+                generation_timeout_seconds=10,
+                generation_max_requests=1,
+                generation_model_settings={"max_tokens": 1024},
+                embedding_model=config.model,
+                embedding_base_url=config.base_url,
+                embedding_headers=config.headers,
+                embedding_profile_id=config.profile_id,
+                embedding_dimension=config.dimension,
+                embedding_normalization=config.normalization,
+                embedding_timeout_seconds=config.timeout_seconds,
+            ),
+            mcp=McpConfig(enabled=True),
+            dashboard=DashboardConfig(
+                enabled=True,
+                scopes=[DashboardScopeConfig(scope_id=E2_SCOPE_ID, display_name="R8 Real Embedding")],
+            ),
+        )
+        app = create_server_app(
+            settings=settings,
+            scheduler_path=runtime_directory / "scheduler.db",
+            middleware=(Middleware(AccessTimelineMiddleware, timeline=timeline),),
+        )
+        server = start_loopback_server(app, startup_timeout=60)
+        chain = asyncio.run(
+            exercise_http_mcp_prepared_web_chain(
+                base_url=server.base_url,
+                token=_E2_TOKEN,
+                scope_id=E2_SCOPE_ID,
+                query=E2_CANARY,
+                source_id="r8-real-embedding-source",
+                source_content=f"Synthetic durable embedding decision: use {E2_CANARY} for the R8 E2 chain.",
+                expected_detail_marker=fake.detail_marker,
+                timeline=timeline,
+                generation=fake,
+                search_timeout_seconds=generation_timeout,
+            )
+        )
+        if chain.search_mode != "hybrid":
+            raise ProductChainError(f"E2 real embedding search used {chain.search_mode}, not hybrid")
+        server.stop()
+        server_closed = server.port_is_closed()
+        server = None
+        if not server_closed:
+            raise ProductChainError("E2 hybrid server port remained open")
+
+        fallback_settings = ServerSettings(
+            auth=BearerAuthConfig(enabled=True, token=SecretStr(_E2_TOKEN)),
+            database=database,
+            inference=InferenceConfig(),
+            mcp=McpConfig(enabled=False),
+            dashboard=DashboardConfig(enabled=False),
+            handoff_report=HandoffReportConfig(enabled=False),
+        )
+        fallback_server = start_loopback_server(
+            create_server_app(settings=fallback_settings, embedding_model=_FallbackEmbedding(config)),
+            startup_timeout=60,
+        )
+        fallback_search = asyncio.run(
+            _search_topic_once(
+                fallback_server.base_url,
+                token=_E2_TOKEN,
+                scope_id=E2_SCOPE_ID,
+                query=E2_CANARY,
+            )
+        )
+        fallback_ref = ArtifactIdentity.from_mapping(cast(Mapping[str, object], fallback_search["artifact"]))
+        if fallback_search["mode"] != "fts" or fallback_ref != chain.exact_ref:
+            raise ProductChainError("E2 controlled embedding outage did not preserve the exact ref through FTS")
+        expected_fallback = {
+            "event": "topic_memory.search.embedding_fallback",
+            "mode": "fts",
+            "error_code": "inference_unavailable",
+        }
+        if expected_fallback not in fallback_capture.events:
+            raise ProductChainError("E2 controlled embedding outage emitted no stable fallback signal")
+        fallback_server.stop()
+        fallback_closed = fallback_server.port_is_closed()
+        fallback_server = None
+        if not fallback_closed:
+            raise ProductChainError("E2 fallback server port remained open")
+        result = {
+            "schema": "powercontext.topic-memory-r8.e2.v1",
+            "status": "PASS",
+            "inherits": {"E1": "PASS"},
+            "environment": {
+                "database": "isolated temporary file SQLite with production sqlite-vec",
+                "embedding": {
+                    "provider": "real configured provider",
+                    "model": config.model,
+                    "profile": config.profile_id,
+                    "dimension": config.dimension,
+                    "normalization": config.normalization,
+                    "custom_base_url": config.base_url is not None,
+                    "configured_header_names": sorted(config.headers),
+                },
+            },
+            "hybrid_chain": chain.as_dict(),
+            "controlled_fallback": {
+                "injection": "InferenceUnavailableError at query embedding boundary",
+                "search_mode": "fts",
+                "exact_ref": fallback_ref.as_dict(),
+                "signal": expected_fallback,
+                "query_content_retained": False,
+                "provider_body_retained": False,
+            },
+            "redaction": {
+                "embedding_request_body_recorded": False,
+                "embedding_response_body_recorded": False,
+                "credentials_recorded": False,
+            },
+        }
+    finally:
+        search_logger.removeHandler(fallback_capture)
+        if fallback_server is not None:
+            fallback_server.stop()
+        if server is not None:
+            server.stop()
+        inference_server.stop()
+        shutil.rmtree(runtime_directory)
+        if temporary_openai_key:
+            os.environ.pop("OPENAI_API_KEY", None)
+    if result is None:
+        raise ProductChainError("E2 did not produce a result")
+    result["cleanup"] = {
+        "hybrid_server_port_closed": True,
+        "fallback_server_port_closed": True,
+        "fake_generation_port_closed": inference_server.port_is_closed(),
+        "temporary_runtime_removed": not runtime_directory.exists(),
+    }
+    cleanup = cast(dict[str, object], result["cleanup"])
+    if not all(value is True for value in cleanup.values()):
+        raise ProductChainError("E2 cleanup left a listener or temporary runtime behind")
+    _write_json(directory / "e2-report.json", result)
+    return result
+
+
+async def _search_topic_once(
+    base_url: str,
+    *,
+    token: str | None,
+    scope_id: str,
+    query: str,
+) -> dict[str, object]:
+    async with PowerContextClient(base_url, token=token, timeout=10) as client:
+        search = await client.search_topic_memory(SearchTopicMemoryRequest(scope_id=scope_id, query=query, limit=8))
+    if not search.hits:
+        raise ProductChainError("Topic Memory search returned no hit")
+    return {
+        "mode": str(search.mode),
+        "artifact": search.hits[0].artifact.model_dump(mode="json"),
+    }
+
+
+async def _capture_and_flush(
+    base_url: str,
+    *,
+    scope_id: str,
+    source_id: str,
+    content: str,
+) -> dict[str, object]:
+    async with PowerContextClient(base_url, timeout=10) as client:
+        await client.capture_content_source(
+            CaptureContentSourceRequest(
+                scope_id=scope_id,
+                source_id=source_id,
+                content=content,
+                metadata={"origin": "r8-oceanbase", "synthetic": True},
+            )
+        )
+        started = time.monotonic()
+        response = await client.flush_topic_memory(FlushTopicMemoryRequest(scope_id=scope_id))
+        duration = round(time.monotonic() - started, 3)
+    if response.status != "accepted":
+        raise ProductChainError(f"E3 Topic Memory flush was not accepted: {response.status}")
+    return {"status": str(response.status), "duration_seconds": duration}
+
+
+async def _oceanbase_processing_state(
+    config: _OceanBaseLayerConfig,
+    *,
+    scope_id: str,
+) -> dict[str, object]:
+    async with (
+        OceanBaseProfile.open(config.database, tables=BUILTIN_TABLES) as profile,
+        profile.database.transaction() as connection,
+    ):
+        pending = await ArtifactProcessingPendingRepository().load(
+            connection,
+            scope_id,
+            TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
+        )
+        cursor = await SourceCursorRepository().load(
+            connection,
+            scope_id,
+            TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
+        )
+    return {
+        "pending": None
+        if pending is None
+        else {
+            "source_through": pending.source_through,
+            "flush_generation": pending.flush_generation,
+            "handled_flush_generation": pending.handled_flush_generation,
+        },
+        "cursor_sequence": None if cursor is None else cursor.cursor.sequence,
+        "cursor_generation": None if cursor is None else cursor.generation,
+    }
+
+
+async def _require_empty_oceanbase_schema(config: _OceanBaseLayerConfig) -> None:
+    async with (
+        OceanBaseProfile.open(config.database, tables=()) as profile,
+        profile.database.transaction() as connection,
+    ):
+        result = await connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()"
+        )
+        count = result.scalar_one()
+    if int(count or 0) != 0:
+        raise ProductChainError("E3 dedicated OceanBase schema must be empty before acceptance")
+
+
+async def _drop_oceanbase_runtime_tables(config: _OceanBaseLayerConfig) -> bool:
+    async with (
+        OceanBaseProfile.open(config.database, tables=()) as profile,
+        profile.database.transaction() as connection,
+    ):
+        await connection.exec_driver_sql("SET FOREIGN_KEY_CHECKS = 0")
+        try:
+            for table in reversed(BUILTIN_TABLES):
+                await connection.exec_driver_sql(f"DROP TABLE IF EXISTS `{table.name}`")
+        finally:
+            await connection.exec_driver_sql("SET FOREIGN_KEY_CHECKS = 1")
+        result = await connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'pc\\_%'"
+        )
+        count = result.scalar_one()
+    return int(count) == 0
+
+
+def _background_environment(config: _OceanBaseLayerConfig, *, inference_base_url: str) -> dict[str, str]:
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("POWERCONTEXT_SERVER_")}
+    environment.update({
+        "OPENAI_API_KEY": "r8-loopback-only",
+        "POWERCONTEXT_SERVER_DATABASE_KIND": "oceanbase",
+        "POWERCONTEXT_SERVER_DATABASE_URL": config.database.url.get_secret_value(),
+        "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_ROLE": "background",
+        "POWERCONTEXT_SERVER_RUNTIME_TOPIC_MEMORY_SOURCE_WINDOW_LIMIT": "1",
+        "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_WORKER_TIMEOUT_SECONDS": "60",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL": "openai-chat:r8-fake-generation",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_BASE_URL": f"{inference_base_url}/v1",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_HEADERS": json.dumps({"Authorization": "Bearer r8-fake-provider"}),
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_TIMEOUT_SECONDS": "30",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS": "1",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL_SETTINGS": json.dumps({"max_tokens": 1024}),
+        "POWERCONTEXT_SERVER_HANDOFF_REPORT_ENABLED": "false",
+        "POWERCONTEXT_SERVER_DASHBOARD_ENABLED": "false",
+        "POWERCONTEXT_SERVER_MCP_ENABLED": "false",
+        "POWERCONTEXT_SERVER_LOGGING_ACCESS": "false",
+        "POWERCONTEXT_SERVER_LOGGING_FORMAT": "json",
+    })
+    return environment
+
+
+def _start_background_process(config: _OceanBaseLayerConfig, *, inference_base_url: str) -> subprocess.Popen[bytes]:
+    process = subprocess.Popen(
+        (
+            sys.executable,
+            "-c",
+            "from powercontext.server.cli import app; app()",
+            "run",
+            "--role",
+            "background",
+        ),
+        cwd=PROJECT_ROOT,
+        env=_background_environment(config, inference_base_url=inference_base_url),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return process
+
+
+def _stop_background_process(process: subprocess.Popen[bytes]) -> int:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+    return int(process.returncode or 0)
+
+
+async def _wait_for_topic_after_restart(
+    base_url: str,
+    *,
+    process: subprocess.Popen[bytes],
+    timeout_seconds: float,
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_seconds
+    async with PowerContextClient(base_url, timeout=10) as client:
+        while time.monotonic() < deadline:
+            returncode = process.poll()
+            if returncode is not None:
+                raise ProductChainError(f"E3 background process exited before recovery: {returncode}")
+            search = await client.search_topic_memory(
+                SearchTopicMemoryRequest(scope_id=E3_SCOPE_ID, query=E3_CANARY, limit=8)
+            )
+            if search.hits:
+                return {
+                    "mode": str(search.mode),
+                    "artifact": search.hits[0].artifact.model_dump(mode="json"),
+                }
+            await asyncio.sleep(0.25)
+    raise ProductChainError("E3 restarted background process did not recover durable pending work")
+
+
+def run_e3(  # noqa: C901
+    directory: Path,
+    *,
+    config: _OceanBaseLayerConfig,
+    generation_timeout: float,
+) -> dict[str, object]:
+    """Exercise OceanBase API/background process separation and restart recovery."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    asyncio.run(_require_empty_oceanbase_schema(config))
+    fake = FakeInference(
+        canary=E3_CANARY,
+        detail_marker="R8-E3-DETAIL-MUST-NOT-BE-PREPARED",
+        generation_delay_seconds=3.0,
+    )
+    inference_server = start_loopback_server(fake.app())
+    timeline = AccessTimeline()
+    api_server = None
+    first_background = None
+    restarted_background = None
+    schema_cleaned = False
+    temporary_openai_key = False
+    result: dict[str, object] | None = None
+    try:
+        if not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = "r8-loopback-only"
+            temporary_openai_key = True
+        provider_header = {"Authorization": SecretStr("Bearer r8-fake-provider")}
+        settings = ServerSettings(
+            auth=BearerAuthConfig(enabled=False),
+            database=config.database,
+            runtime=RuntimeConfig(
+                artifact_processing_role="api",
+                topic_memory_source_window_limit=1,
+                artifact_processing_worker_timeout_seconds=60,
+            ),
+            inference=InferenceConfig(
+                generation_model="openai-chat:r8-fake-generation",
+                generation_base_url=AnyHttpUrl(f"{inference_server.base_url}/v1"),
+                generation_headers=provider_header,
+                generation_timeout_seconds=30,
+                generation_max_requests=1,
+                generation_model_settings={"max_tokens": 1024},
+            ),
+            mcp=McpConfig(enabled=False),
+            dashboard=DashboardConfig(enabled=False),
+            handoff_report=HandoffReportConfig(enabled=False),
+        )
+        api_server = start_loopback_server(
+            create_server_app(
+                settings=settings,
+                middleware=(Middleware(AccessTimelineMiddleware, timeline=timeline),),
+            ),
+            startup_timeout=90,
+        )
+        flush = asyncio.run(
+            _capture_and_flush(
+                api_server.base_url,
+                scope_id=E3_SCOPE_ID,
+                source_id="r8-oceanbase-source",
+                content=f"Synthetic OceanBase recovery decision: use {E3_CANARY} for the R8 E3 chain.",
+            )
+        )
+        before_worker = asyncio.run(_oceanbase_processing_state(config, scope_id=E3_SCOPE_ID))
+        pending_before = before_worker.get("pending")
+        if not isinstance(pending_before, dict):
+            raise ProductChainError("E3 API flush did not persist Pending state")
+        if pending_before.get("flush_generation") == pending_before.get("handled_flush_generation"):
+            raise ProductChainError("E3 API flush did not persist an unhandled generation")
+
+        first_background = _start_background_process(config, inference_base_url=inference_server.base_url)
+        if not fake.wait_for_topic_generation_started(min(generation_timeout, 60)):
+            returncode = first_background.poll()
+            raise ProductChainError(f"E3 first background process did not start Topic generation: {returncode}")
+        first_exit = _stop_background_process(first_background)
+        first_background = None
+        after_interruption = asyncio.run(_oceanbase_processing_state(config, scope_id=E3_SCOPE_ID))
+        interrupted_pending = after_interruption.get("pending")
+        if not isinstance(interrupted_pending, dict):
+            raise ProductChainError("E3 interrupted worker lost durable Pending state")
+
+        restarted_background = _start_background_process(config, inference_base_url=inference_server.base_url)
+        recovered = asyncio.run(
+            _wait_for_topic_after_restart(
+                api_server.base_url,
+                process=restarted_background,
+                timeout_seconds=generation_timeout,
+            )
+        )
+        recovered_ref = ArtifactIdentity.from_mapping(cast(Mapping[str, object], recovered["artifact"]))
+        after_recovery = asyncio.run(_oceanbase_processing_state(config, scope_id=E3_SCOPE_ID))
+        cursor_sequence = after_recovery.get("cursor_sequence")
+        source_through = pending_before.get("source_through")
+        if (
+            not isinstance(cursor_sequence, int)
+            or not isinstance(source_through, int)
+            or cursor_sequence < source_through
+        ):
+            raise ProductChainError("E3 recovered cursor did not cover the durable Pending watermark")
+        final_pending = after_recovery.get("pending")
+        if isinstance(final_pending, dict) and final_pending.get("flush_generation") != final_pending.get(
+            "handled_flush_generation"
+        ):
+            raise ProductChainError("E3 recovered worker left the explicit flush generation unhandled")
+        restarted_exit = _stop_background_process(restarted_background)
+        restarted_background = None
+        result = {
+            "schema": "powercontext.topic-memory-r8.e3.v1",
+            "status": "PASS",
+            "environment": {
+                "database": "caller-provided empty disposable OceanBase schema",
+                "schema_fingerprint": config.schema_fingerprint,
+                "api_role": "harness process",
+                "background_role": "separate production CLI process",
+                "generation": "deterministic loopback provider",
+            },
+            "flush": flush,
+            "durability": {
+                "before_background": before_worker,
+                "after_forced_background_stop": after_interruption,
+                "after_restart_recovery": after_recovery,
+                "pending_survived_process_stop": True,
+                "cursor_covered_pending_watermark": True,
+            },
+            "recovery": {
+                "first_background_exit_code": first_exit,
+                "restarted_background_exit_code": restarted_exit,
+                "search_mode": recovered["mode"],
+                "exact_ref": recovered_ref.as_dict(),
+            },
+            "process_boundary": {
+                "api_and_background_are_distinct_processes": True,
+                "background_restart_count": 1,
+            },
+            "redaction": {
+                "database_url_recorded": False,
+                "source_content_recorded": False,
+                "provider_body_recorded": False,
+            },
+        }
+    finally:
+        if restarted_background is not None:
+            _stop_background_process(restarted_background)
+        if first_background is not None:
+            _stop_background_process(first_background)
+        if api_server is not None:
+            api_server.stop()
+        inference_server.stop()
+        schema_cleaned = asyncio.run(_drop_oceanbase_runtime_tables(config))
+        if temporary_openai_key:
+            os.environ.pop("OPENAI_API_KEY", None)
+    if result is None:
+        raise ProductChainError("E3 did not produce a result")
+    result["cleanup"] = {
+        "api_port_closed": api_server is not None and api_server.port_is_closed(),
+        "fake_provider_port_closed": inference_server.port_is_closed(),
+        "background_processes_stopped": True,
+        "dedicated_schema_powercontext_tables_removed": schema_cleaned,
+    }
+    cleanup = cast(dict[str, object], result["cleanup"])
+    if not all(value is True for value in cleanup.values()):
+        raise ProductChainError("E3 cleanup left a process, listener, or PowerContext table behind")
+    _write_json(directory / "e3-report.json", result)
+    return result
+
+
+def run_e4(directory: Path, *, generation_timeout: float) -> dict[str, object]:  # noqa: C901
+    """Run the full product chain on one real embedded seekDB all-role runtime."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    runtime_directory = Path(tempfile.mkdtemp(prefix=".runtime-", dir=directory))
+    fake = FakeInference(canary=E4_CANARY, detail_marker="R8-E4-DETAIL-MUST-NOT-BE-PREPARED")
+    inference_server = start_loopback_server(fake.app())
+    timeline = AccessTimeline()
+    server = None
+    fts_server = None
+    temporary_openai_key = False
+    result: dict[str, object] | None = None
+    try:
+        if not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = "r8-loopback-only"
+            temporary_openai_key = True
+        database = SeekDBConfig(path=runtime_directory / "seekdb")
+        provider_header = {"Authorization": SecretStr("Bearer r8-fake-provider")}
+        settings = ServerSettings(
+            auth=BearerAuthConfig(enabled=True, token=SecretStr(_E4_TOKEN)),
+            database=database,
+            runtime=RuntimeConfig(
+                artifact_processing_role="all",
+                topic_memory_source_window_limit=1,
+                artifact_processing_worker_timeout_seconds=generation_timeout,
+            ),
+            inference=InferenceConfig(
+                generation_model="openai-chat:r8-fake-generation",
+                generation_base_url=AnyHttpUrl(f"{inference_server.base_url}/v1"),
+                generation_headers=provider_header,
+                generation_timeout_seconds=10,
+                generation_max_requests=1,
+                generation_model_settings={"max_tokens": 1024},
+                embedding_model="openai:r8-fake-embedding",
+                embedding_base_url=AnyHttpUrl(f"{inference_server.base_url}/v1"),
+                embedding_headers=provider_header,
+                embedding_profile_id="r8-seekdb-embedding-4-unit",
+                embedding_dimension=4,
+                embedding_timeout_seconds=5,
+            ),
+            mcp=McpConfig(enabled=True),
+            dashboard=DashboardConfig(
+                enabled=True,
+                scopes=[DashboardScopeConfig(scope_id=E4_SCOPE_ID, display_name="R8 seekDB")],
+            ),
+            handoff_report=HandoffReportConfig(enabled=False),
+        )
+        server = start_loopback_server(
+            create_server_app(
+                settings=settings,
+                scheduler_path=runtime_directory / "scheduler.db",
+                middleware=(Middleware(AccessTimelineMiddleware, timeline=timeline),),
+            ),
+            startup_timeout=90,
+        )
+        chain = asyncio.run(
+            exercise_http_mcp_prepared_web_chain(
+                base_url=server.base_url,
+                token=_E4_TOKEN,
+                scope_id=E4_SCOPE_ID,
+                query=E4_CANARY,
+                source_id="r8-seekdb-source",
+                source_content=f"Synthetic seekDB release decision: use {E4_CANARY} for the R8 E4 chain.",
+                expected_detail_marker=fake.detail_marker,
+                timeline=timeline,
+                generation=fake,
+                search_timeout_seconds=generation_timeout,
+            )
+        )
+        if chain.search_mode != "hybrid":
+            raise ProductChainError(f"E4 seekDB vector path used {chain.search_mode}, not hybrid")
+        server.stop()
+        hybrid_closed = server.port_is_closed()
+        server = None
+        if not hybrid_closed:
+            raise ProductChainError("E4 hybrid server port remained open")
+
+        fts_settings = ServerSettings(
+            auth=BearerAuthConfig(enabled=True, token=SecretStr(_E4_TOKEN)),
+            database=database,
+            runtime=RuntimeConfig(artifact_processing_role="all"),
+            inference=InferenceConfig(),
+            mcp=McpConfig(enabled=False),
+            dashboard=DashboardConfig(enabled=False),
+            handoff_report=HandoffReportConfig(enabled=False),
+        )
+        fts_server = start_loopback_server(create_server_app(settings=fts_settings), startup_timeout=90)
+        fts_search = asyncio.run(
+            _search_topic_once(
+                fts_server.base_url,
+                token=_E4_TOKEN,
+                scope_id=E4_SCOPE_ID,
+                query=E4_CANARY,
+            )
+        )
+        fts_ref = ArtifactIdentity.from_mapping(cast(Mapping[str, object], fts_search["artifact"]))
+        if fts_search["mode"] != "fts" or fts_ref != chain.exact_ref:
+            raise ProductChainError("E4 seekDB FTS restart did not preserve the exact ref")
+        fts_server.stop()
+        fts_closed = fts_server.port_is_closed()
+        fts_server = None
+        if not fts_closed:
+            raise ProductChainError("E4 FTS server port remained open")
+        result = {
+            "schema": "powercontext.topic-memory-r8.e4.v1",
+            "status": "PASS",
+            "environment": {
+                "database": "real embedded seekDB in an isolated temporary path",
+                "runtime_role": "all",
+                "generation_and_embedding": "deterministic loopback provider",
+            },
+            "hybrid_chain": chain.as_dict(),
+            "dialect_checks": {
+                "hybrid_mode": "hybrid",
+                "fts_mode_after_restart": "fts",
+                "same_exact_ref": fts_ref.as_dict(),
+            },
+            "redaction": {
+                "prompt_content_recorded": False,
+                "provider_body_recorded": False,
+                "credentials_recorded": False,
+            },
+        }
+    finally:
+        if fts_server is not None:
+            fts_server.stop()
+        if server is not None:
+            server.stop()
+        inference_server.stop()
+        shutil.rmtree(runtime_directory)
+        if temporary_openai_key:
+            os.environ.pop("OPENAI_API_KEY", None)
+    if result is None:
+        raise ProductChainError("E4 did not produce a result")
+    result["cleanup"] = {
+        "hybrid_server_port_closed": True,
+        "fts_server_port_closed": True,
+        "fake_provider_port_closed": inference_server.port_is_closed(),
+        "temporary_seekdb_removed": not runtime_directory.exists(),
+    }
+    cleanup = cast(dict[str, object], result["cleanup"])
+    if not all(value is True for value in cleanup.values()):
+        raise ProductChainError("E4 cleanup left a listener or temporary seekDB behind")
+    _write_json(directory / "e4-report.json", result)
+    return result
+
+
 def _version(command: Sequence[str], *, environment: Mapping[str, str]) -> str:
     completed = _run(command, cwd=PROJECT_ROOT, env=environment, timeout=20)
     return completed.stdout.strip()
@@ -922,50 +1665,151 @@ def _unavailable(layer: str, gap: str, *, checks: Sequence[str] = ()) -> dict[st
     }
 
 
-def _environment_layer_statuses() -> dict[str, dict[str, object]]:
-    embedding_inputs = (
+def _real_embedding_config(
+    environment: Mapping[str, str],
+) -> tuple[_RealEmbeddingConfig | None, dict[str, object] | None]:
+    required = (
         "POWERCONTEXT_R8_EMBEDDING_MODEL",
         "POWERCONTEXT_R8_EMBEDDING_PROFILE_ID",
         "POWERCONTEXT_R8_EMBEDDING_DIMENSION",
     )
-    missing_embedding = [name for name in embedding_inputs if not os.environ.get(name)]
-    e2_gap = (
-        "missing explicit real embedding model/profile/dimension: " + ", ".join(missing_embedding)
-        if missing_embedding
-        else "real embedding execution is not selected by this E1-only harness invocation"
-    )
-    oceanbase_url = os.environ.get("POWERCONTEXT_R8_OCEANBASE_URL")
-    seekdb_enabled = os.environ.get("POWERCONTEXT_R8_SEEKDB_ENABLED") == "1"
-    return {
-        "E2": _unavailable(
+    missing = [name for name in required if not environment.get(name, "").strip()]
+    if missing:
+        return None, _unavailable(
             "E2",
-            e2_gap,
+            "missing explicit real embedding configuration: " + ", ".join(missing),
             checks=(
                 "SQLite vector support is covered hermetically in E0",
                 "no fake embedding result was promoted to real-provider PASS",
             ),
+        )
+    try:
+        dimension = int(environment["POWERCONTEXT_R8_EMBEDDING_DIMENSION"])
+        timeout_seconds = float(environment.get("POWERCONTEXT_R8_EMBEDDING_TIMEOUT", "30"))
+    except ValueError as exc:
+        raise ProductChainError("E2 embedding dimension and timeout must be numeric") from exc
+    if dimension < 1 or timeout_seconds <= 0:
+        raise ProductChainError("E2 embedding dimension and timeout must be positive")
+    normalization_value = environment.get("POWERCONTEXT_R8_EMBEDDING_NORMALIZATION", "unit").strip()
+    if normalization_value not in {"none", "unit"}:
+        raise ProductChainError("E2 embedding normalization must be 'none' or 'unit'")
+    base_url_value = environment.get("POWERCONTEXT_R8_EMBEDDING_BASE_URL", "").strip()
+    headers_value = environment.get("POWERCONTEXT_R8_EMBEDDING_HEADERS_JSON", "").strip()
+    headers: dict[str, SecretStr] = {}
+    if headers_value:
+        try:
+            decoded_headers = json.loads(headers_value)
+        except json.JSONDecodeError as exc:
+            raise ProductChainError("E2 embedding headers JSON is invalid") from exc
+        if not isinstance(decoded_headers, dict) or not all(
+            isinstance(name, str) and isinstance(value, str) and name and value
+            for name, value in decoded_headers.items()
+        ):
+            raise ProductChainError("E2 embedding headers must be a non-empty string mapping")
+        headers = {str(name): SecretStr(str(value)) for name, value in decoded_headers.items()}
+    return (
+        _RealEmbeddingConfig(
+            model=environment["POWERCONTEXT_R8_EMBEDDING_MODEL"].strip(),
+            profile_id=environment["POWERCONTEXT_R8_EMBEDDING_PROFILE_ID"].strip(),
+            dimension=dimension,
+            base_url=None if not base_url_value else AnyHttpUrl(base_url_value),
+            headers=headers,
+            normalization=cast(Literal["none", "unit"], normalization_value),
+            timeout_seconds=timeout_seconds,
         ),
-        "E3": _unavailable(
+        None,
+    )
+
+
+def _oceanbase_layer_config(
+    environment: Mapping[str, str],
+) -> tuple[_OceanBaseLayerConfig | None, dict[str, object] | None]:
+    url = environment.get("POWERCONTEXT_R8_OCEANBASE_URL", "").strip()
+    if not url:
+        return None, _unavailable(
             "E3",
-            "dedicated OceanBase URL/schema was not provided"
-            if not oceanbase_url
-            else "dedicated OceanBase environment was detected but E3 was not requested in this invocation",
+            "missing dedicated disposable OceanBase URL/schema: POWERCONTEXT_R8_OCEANBASE_URL",
             checks=("no shared/default OceanBase schema was touched",),
+        )
+    database_name = make_url(url).database
+    if not database_name:
+        raise ProductChainError("E3 OceanBase URL must select a dedicated database schema")
+    return (
+        _OceanBaseLayerConfig(
+            database=OceanBaseConfig(url=SecretStr(url)),
+            schema_fingerprint=digest_text(database_name),
         ),
-        "E4": _unavailable(
+        None,
+    )
+
+
+def _execute_environment_layers(
+    *,
+    requested: set[str],
+    directory: Path,
+    e1_status: str,
+    generation_timeout: float,
+    environment: Mapping[str, str],
+) -> dict[str, dict[str, object]]:
+    layers: dict[str, dict[str, object]] = {}
+    if "e2" not in requested:
+        layers["E2"] = _unavailable("E2", "not requested in this invocation")
+    else:
+        embedding, unavailable = _real_embedding_config(environment)
+        layers["E2"] = (
+            cast(dict[str, object], unavailable)
+            if embedding is None
+            else run_e2(
+                directory / "e2",
+                config=embedding,
+                e1_status=e1_status,
+                generation_timeout=generation_timeout,
+            )
+        )
+
+    if "e3" not in requested:
+        layers["E3"] = _unavailable("E3", "not requested in this invocation")
+    else:
+        oceanbase, unavailable = _oceanbase_layer_config(environment)
+        layers["E3"] = (
+            cast(dict[str, object], unavailable)
+            if oceanbase is None
+            else run_e3(directory / "e3", config=oceanbase, generation_timeout=generation_timeout)
+        )
+
+    if "e4" not in requested:
+        layers["E4"] = _unavailable("E4", "not requested in this invocation")
+    elif environment.get("POWERCONTEXT_R8_SEEKDB_ENABLED") != "1":
+        layers["E4"] = _unavailable(
             "E4",
-            "SeekDB runtime/dependency was not explicitly enabled"
-            if not seekdb_enabled
-            else "SeekDB environment was detected but E4 was not requested in this invocation",
+            "missing explicit opt-in: POWERCONTEXT_R8_SEEKDB_ENABLED=1",
             checks=("no implicit local SeekDB state was touched",),
-        ),
-    }
+        )
+    elif importlib.util.find_spec("pylibseekdb") is None:
+        layers["E4"] = _unavailable(
+            "E4",
+            "POWERCONTEXT_R8_SEEKDB_ENABLED=1 but the pylibseekdb runtime is unavailable",
+            checks=("no fake SeekDB result was promoted to PASS",),
+        )
+    else:
+        layers["E4"] = run_e4(directory / "e4", generation_timeout=generation_timeout)
+    return layers
+
+
+def _requested_layers(raw: str) -> set[str]:
+    requested = {value.strip().casefold() for value in raw.split(",") if value.strip()}
+    unknown = requested - {"e0", "e1", "e2", "e3", "e4"}
+    if unknown:
+        raise ProductChainError("unknown R8 acceptance layers: " + ", ".join(sorted(unknown)))
+    requested.add("e0")
+    if "e2" in requested:
+        requested.add("e1")
+    return requested
 
 
 def main() -> int:
     args = _parse_args()
-    requested = {value.strip().casefold() for value in args.layers.split(",") if value.strip()}
-    requested.add("e0")
+    requested = _requested_layers(args.layers)
     args.output.mkdir(parents=True, exist_ok=True)
     report: dict[str, object] = {
         "schema": "powercontext.topic-memory-r8.acceptance.v1",
@@ -994,10 +1838,17 @@ def main() -> int:
             )
         else:
             layers["E1"] = _unavailable("E1", "not requested in this invocation")
-        environment_layers = _environment_layer_statuses()
-        for name in ("E2", "E3", "E4"):
-            layers[name] = environment_layers[name]
-        layer_statuses = [value.get("status") for value in layers.values() if isinstance(value, dict)]
+        e1_status = str(layers["E1"].get("status", "FAIL"))
+        layers.update(
+            _execute_environment_layers(
+                requested=requested,
+                directory=args.output,
+                e1_status=e1_status,
+                generation_timeout=args.generation_timeout,
+                environment=os.environ,
+            )
+        )
+        layer_statuses = [cast(dict[str, object], layers[name.upper()]).get("status") for name in sorted(requested)]
         if "FAIL" in layer_statuses:
             report["status"] = "FAIL"
         elif "UNAVAILABLE" in layer_statuses:

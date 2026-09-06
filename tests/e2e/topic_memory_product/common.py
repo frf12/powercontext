@@ -319,8 +319,10 @@ class FakeInference:
 
     canary: str = E0_CANARY
     detail_marker: str = E0_DETAIL_MARKER
+    generation_delay_seconds: float = 0.2
     calls: list[dict[str, object]] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _topic_generation_started: threading.Event = field(default_factory=threading.Event)
     _topic_generation_finished: threading.Event = field(default_factory=threading.Event)
 
     def app(self) -> FastAPI:
@@ -366,8 +368,10 @@ class FakeInference:
                 })
             else:
                 content = "READY"
+            if stage == "topic_global":
+                self._topic_generation_started.set()
             if stage != "readiness":
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(self.generation_delay_seconds)
             finished = time.monotonic()
             with self._lock:
                 self.calls.append({"stage": stage, "started": started, "finished": finished})
@@ -423,6 +427,9 @@ class FakeInference:
 
     def wait_for_topic_generation(self, timeout: float) -> bool:
         return self._topic_generation_finished.wait(timeout)
+
+    def wait_for_topic_generation_started(self, timeout: float) -> bool:
+        return self._topic_generation_started.wait(timeout)
 
     def redacted_calls(self) -> tuple[dict[str, object], ...]:
         with self._lock:
