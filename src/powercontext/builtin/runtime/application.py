@@ -462,6 +462,7 @@ class ScopedContextApplication:
 
     async def _topic_memory_hits(self, query: str, limit: int) -> tuple[TopicMemorySearchHit, ...]:
         configured = self._runtime._topic_memory_search is not None
+        bounded_query = _bounded_topic_memory_recall_query(query)
         with self._runtime._stage(
             "topic_memory.search",
             attributes={
@@ -474,7 +475,7 @@ class ScopedContextApplication:
                 if not configured
                 else (
                     await self._runtime.topic_memory.for_scope(self.scope_id).search(
-                        SearchTopicMemoryRequest(query=query, limit=limit)
+                        SearchTopicMemoryRequest(query=bounded_query, limit=limit)
                     )
                 ).hits
             )
@@ -1176,11 +1177,15 @@ class ScopedTopicMemoryApplication:
                         logger,
                         logging.WARNING,
                         "Topic Memory search fell back to FTS",
-                        exc_info=error,
                         extra={
                             "event": "topic_memory.search.embedding_fallback",
                             "outcome": "fallback",
                             "mode": "fts",
+                            "error_code": (
+                                "inference_timeout"
+                                if isinstance(error, InferenceTimeoutError)
+                                else "inference_unavailable"
+                            ),
                             "unit": "topic-memory",
                         },
                     )
@@ -1761,6 +1766,26 @@ def _unavailable_evidence(resolution: HandoffResolution) -> tuple[HandoffCitatio
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _bounded_topic_memory_recall_query(query: str) -> str:
+    """Focus internal Prepared Context recall without weakening the public search contract."""
+
+    trimmed = query.strip()
+    terms = tuple(dict.fromkeys(analyze_text(trimmed).split()))
+    if len(terms) <= MAX_TOPIC_MEMORY_QUERY_TERMS:
+        return trimmed
+
+    selected: list[str] = []
+    characters = 0
+    for term in terms[:MAX_TOPIC_MEMORY_QUERY_TERMS]:
+        separator = int(bool(selected))
+        available = MAX_TOPIC_MEMORY_QUERY_LENGTH - characters - separator
+        if available < 1:
+            break
+        selected.append(term[:available])
+        characters += separator + min(len(term), available)
+    return " ".join(selected)
 
 
 async def _head_or_none(service: MemoryService, artifact_id: str) -> Memory | None:

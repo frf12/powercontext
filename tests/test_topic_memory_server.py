@@ -193,3 +193,34 @@ def test_composed_fts_runtime_fails_closed_only_for_missing_topic_processing(tmp
     assert missing.status_code == 404
     assert wrong_family.status_code == 422
     assert flush.status_code == 503
+
+
+def test_prepared_context_focuses_65_term_topic_recall_without_losing_memory(tmp_path) -> None:
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}"),
+            mcp=McpConfig(enabled=False),
+        )
+    )
+    query = " ".join(f"term{index:02d}" for index in range(65))
+
+    with TestClient(app) as client:
+        remembered = client.post(
+            "/v1/memory/remember",
+            json={"scope_id": "scope-a", "kind": "fact", "text": query},
+        )
+        prepared = client.post(
+            "/v1/context/prepare",
+            json={"scope_id": "scope-a", "query": query},
+        )
+        public_topic_search = client.post(
+            "/v1/topic-memory/search",
+            json={"scope_id": "scope-a", "query": query},
+        )
+
+    assert remembered.status_code == 200
+    assert prepared.status_code == 200
+    assert prepared.json()["status"] == "ready"
+    assert query in prepared.json()["content"]
+    assert public_topic_search.status_code == 422
+    assert public_topic_search.json()["error"]["code"] == "invalid_request"

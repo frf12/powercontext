@@ -220,6 +220,8 @@ class PydanticAIEmbeddingModel:
             result = await asyncio.wait_for(self._embed_batches(texts), timeout=self._limits.timeout_seconds)
         except asyncio.CancelledError:
             raise
+        except InvalidInferenceOutputError:
+            raise
         except ValueError as error:
             raise InferenceUnavailableError("embed") from error
         except Exception as error:
