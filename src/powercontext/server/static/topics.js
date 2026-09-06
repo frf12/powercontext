@@ -16,8 +16,8 @@
 
 "use strict";
 
-import {clearServerToken, fetchWithBearer, readServerToken, storeServerToken} from "./auth.js";
-import {createPageUi, createRequestGate} from "./page-ui.js";
+import {clearServerToken, fetchWithBearer, readServerToken, storeServerToken} from "./auth.js?v=optional-auth";
+import {createPageUi, createRequestGate} from "./page-ui.js?v=locale-complete";
 
 const translations = {
   en: {
@@ -31,6 +31,12 @@ const translations = {
     primaryNavigation: "Primary navigation",
     maintainedBy: "Maintained by OceanBase.",
     signOut: "Sign out",
+    switchDark: "Switch to dark mode",
+    switchLight: "Switch to light mode",
+    switchChinese: "Switch to Chinese",
+    switchEnglish: "Switch to English",
+    languageChinese: "中文",
+    languageEnglish: "EN",
     authTitle: "Connect to PowerContext",
     authIntro: "Enter the bearer token configured for this PowerContext Server. The token stays in this browser tab.",
     tokenLabel: "Server token",
@@ -85,6 +91,12 @@ const translations = {
     primaryNavigation: "主导航",
     maintainedBy: "由 OceanBase 维护。",
     signOut: "退出",
+    switchDark: "切换至深色模式",
+    switchLight: "切换至浅色模式",
+    switchChinese: "切换至中文",
+    switchEnglish: "切换至英文",
+    languageChinese: "中文",
+    languageEnglish: "EN",
     authTitle: "连接 PowerContext",
     authIntro: "请输入 PowerContext 服务器配置的访问令牌。令牌仅保留在当前浏览器标签页。",
     tokenLabel: "服务器访问令牌",

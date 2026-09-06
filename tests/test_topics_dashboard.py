@@ -166,6 +166,7 @@ def test_topics_navigation_uses_the_frozen_read_only_order() -> None:
 
     with client:
         page = client.get("/topics")
+        script = client.get("/static/topics.js")
 
     navigation = page.text[page.text.index('<nav class="primary-nav"') : page.text.index("</nav>")]
     positions = [navigation.index(label) for label in ("Overview", "Topics", "Skills", "Review", "Handoff Report")]
@@ -173,6 +174,16 @@ def test_topics_navigation_uses_the_frozen_read_only_order() -> None:
     assert 'aria-current="page" data-i18n="topicsTitle"' in navigation
     for write_label in ("Create", "Edit", "Delete", "Retire", "Publish", "Flush"):
         assert f">{write_label}<" not in page.text
+    assert "powercontext-brand-topics-v1" in page.text
+    for shared_control_key in (
+        "switchDark",
+        "switchLight",
+        "switchChinese",
+        "switchEnglish",
+        "languageChinese",
+        "languageEnglish",
+    ):
+        assert script.text.count(f"{shared_control_key}:") == 2
 
 
 def test_private_topic_browse_has_strict_opaque_keyset_pagination() -> None:
@@ -248,6 +259,13 @@ def test_private_topic_routes_reject_unconfigured_scopes_and_stay_hidden() -> No
             "/dashboard/topic-memories/list",
             json={"scope_id": "scope-private"},
         )
+        missing_scope_wrong_family = client.post(
+            "/dashboard/topic-memories/get",
+            json={
+                "scope_id": "scope-private",
+                "artifact": {"family": "memory", "artifact_id": "memory", "revision": 1},
+            },
+        )
         wrong_family = client.post(
             "/dashboard/topic-memories/get",
             json={
@@ -259,6 +277,8 @@ def test_private_topic_routes_reject_unconfigured_scopes_and_stay_hidden() -> No
 
     assert missing_scope.status_code == 404
     assert missing_scope.json()["error"]["code"] == "dashboard_scope_not_found"
+    assert missing_scope_wrong_family.status_code == 404
+    assert missing_scope_wrong_family.json()["error"]["code"] == "dashboard_scope_not_found"
     assert scoped.browse_calls == []
     assert wrong_family.status_code == 422
     assert "/dashboard/topic-memories/list" not in openapi.json()["paths"]

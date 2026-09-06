@@ -187,11 +187,11 @@ class _DashboardTopicMemoryRoutes:
         http_request: Request,
         response: Response,
     ) -> DashboardTopicMemoryDetail | JSONResponse:
-        if request.artifact.family != TopicMemory.family:
-            return _web_error(422, "invalid_request", "The request must identify a Topic Memory.")
         scoped = _dashboard_topic_memory_application(http_request, request.scope_id, self._scope_ids)
         if isinstance(scoped, JSONResponse):
             return scoped
+        if request.artifact.family != TopicMemory.family:
+            return _web_error(422, "invalid_request", "The request must identify a Topic Memory.")
         published = await scoped.get(GetTopicMemoryRequest(artifact=request.artifact))
         response.headers["Cache-Control"] = "no-store"
         return _dashboard_topic_memory_detail(published)
