@@ -7,6 +7,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -111,7 +113,20 @@ def test_codex_search_get_binding_requires_adjacent_calls_with_same_full_ref_and
 
 def test_codex_search_get_binding_rejects_correct_search_with_wrong_get_ref() -> None:
     exact_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8", revision=7)
-    wrong_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8-other", revision=8)
+    wrong_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8-other", revision=7)
+
+    with pytest.raises(ProductChainError, match="complete expected ArtifactRef"):
+        harness._validate_codex_search_get_binding(
+            _codex_search_get_events(search_ref=exact_ref, get_ref=wrong_ref),
+            scope_id=harness.E1_SCOPE_ID,
+            query=harness.E1_CANARY,
+            exact_ref=exact_ref,
+        )
+
+
+def test_codex_search_get_binding_rejects_correct_id_with_wrong_get_revision() -> None:
+    exact_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8", revision=7)
+    wrong_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8", revision=8)
 
     with pytest.raises(ProductChainError, match="complete expected ArtifactRef"):
         harness._validate_codex_search_get_binding(
@@ -143,6 +158,84 @@ def test_worker_failure_capture_cannot_be_reported_as_pass() -> None:
 
     with pytest.raises(ProductChainError, match="E1 captured background-worker failures"):
         require_no_worker_failures("E1", failures)
+
+
+def test_e1_codex_generation_and_plugin_subprocesses_exclude_layer_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    embedding_secret = "r8-embedding-authorization-secret"  # noqa: S105 - synthetic canary.
+    oceanbase_secret = "r8-oceanbase-password-secret"  # noqa: S105 - synthetic canary.
+    source_environment = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path / "home"),
+        "POWERCONTEXT_R8_EMBEDDING_HEADERS_JSON": json.dumps({"Authorization": embedding_secret}),
+        "POWERCONTEXT_R8_OCEANBASE_URL": f"mysql+aoceanbase://r8:{oceanbase_secret}@db.invalid/r8",
+        "UNRELATED_PROCESS_SECRET": "r8-unrelated-secret",
+    }
+    environment = harness._e1_subprocess_environment(source_environment)
+    observed_environments: list[dict[str, str]] = []
+    installed = tmp_path / "installed-plugin"
+    manifest = installed / ".codex-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"name":"powercontext","version":"test"}\n', encoding="utf-8")
+
+    def fake_run(
+        command: tuple[str, ...],
+        *,
+        cwd: Path,
+        env: dict[str, str] | Mapping[str, str],
+        timeout: float,
+        input_data: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout, input_data
+        observed_environments.append(dict(env))
+        if "--output-last-message" in command:
+            output_index = command.index("--output-last-message") + 1
+            Path(command[output_index]).write_text("{}\n", encoding="utf-8")
+        if command[1:4] == ("plugin", "marketplace", "add"):
+            stdout = '{"name":"powercontext"}\n'
+        elif command[1:3] == ("plugin", "add"):
+            stdout = json.dumps({"installedPath": str(installed)})
+        else:
+            stdout = '{"type":"turn.completed"}\n'
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(harness, "_run", fake_run)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    harness._run_codex(
+        codex_home=codex_home,
+        fixture=fixture,
+        environment=environment,
+        prompt="synthetic",
+        model="test-codex",
+        timeout=1,
+    )
+    bridge = harness._RealCodexChatBridge(
+        codex_home=codex_home,
+        fixture=fixture,
+        environment=environment,
+        model="test-generation",
+        timeout=1,
+    )
+    bridge._generate(
+        {"response_format": {"json_schema": {"schema": {"type": "object"}}}},
+        1,
+    )
+    harness._install_current_plugin(codex_home=codex_home, environment=environment, timeout=1)
+
+    assert observed_environments
+    for observed in observed_environments:
+        encoded = json.dumps(observed, sort_keys=True)
+        assert "POWERCONTEXT_R8_EMBEDDING_HEADERS_JSON" not in observed
+        assert "POWERCONTEXT_R8_OCEANBASE_URL" not in observed
+        assert "UNRELATED_PROCESS_SECRET" not in observed
+        assert embedding_secret not in encoded
+        assert oceanbase_secret not in encoded
+        assert observed["OPENAI_API_KEY"] == "r8-loopback-only"
 
 
 def test_environment_layers_dispatch_every_fully_configured_real_layer(
@@ -249,6 +342,73 @@ def test_missing_or_unrequested_layers_never_dispatch(
 
 def test_e2_automatically_requests_its_e1_prerequisite() -> None:
     assert harness._requested_layers("e2") == {"e0", "e1", "e2"}
+
+
+def test_e1_unavailable_makes_configured_e2_unavailable_without_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = argparse.Namespace(
+        layers="e2",
+        output=tmp_path / "e1-unavailable",
+        codex_timeout=10,
+        generation_timeout=10,
+        codex_model="test-codex",
+        generation_model="test-generation",
+    )
+    monkeypatch.setattr(harness, "_parse_args", lambda: args)
+    monkeypatch.setattr(harness, "_version", lambda *_args, **_kwargs: "test-head")
+    monkeypatch.setattr(harness, "run_e0", lambda _directory: {"status": "PASS"})
+    monkeypatch.setattr(harness, "run_e1", lambda _directory, **_kwargs: {"status": "UNAVAILABLE"})
+    monkeypatch.setattr(harness, "run_e2", lambda *_args, **_kwargs: pytest.fail("E2 runner was called"))
+    configured = {
+        "POWERCONTEXT_R8_EMBEDDING_MODEL": "openai:test-embedding",
+        "POWERCONTEXT_R8_EMBEDDING_PROFILE_ID": "r8-real-embedding-8-unit",
+        "POWERCONTEXT_R8_EMBEDDING_DIMENSION": "8",
+    }
+
+    with patch.dict(os.environ, configured, clear=False):
+        assert harness.main() == 0
+
+    report = json.loads((args.output / "r8-report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "PARTIAL"
+    assert report["layers"]["E1"]["status"] == "UNAVAILABLE"
+    assert report["layers"]["E2"] == {
+        "schema": "powercontext.topic-memory-r8.e2.v1",
+        "status": "UNAVAILABLE",
+        "gap": "E1 prerequisite is UNAVAILABLE; E2 runner was not executed",
+        "safe_checks_completed": [
+            "E1 is automatically requested with E2",
+            "the embedding provider was not contacted without an E1 PASS",
+        ],
+        "passed": False,
+    }
+
+
+def test_e1_failure_keeps_configured_e2_run_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = argparse.Namespace(
+        layers="e2",
+        output=tmp_path / "e1-fail",
+        codex_timeout=10,
+        generation_timeout=10,
+        codex_model="test-codex",
+        generation_model="test-generation",
+    )
+    monkeypatch.setattr(harness, "_parse_args", lambda: args)
+    monkeypatch.setattr(harness, "_version", lambda *_args, **_kwargs: "test-head")
+    monkeypatch.setattr(harness, "run_e0", lambda _directory: {"status": "PASS"})
+    monkeypatch.setattr(harness, "run_e1", lambda _directory, **_kwargs: {"status": "FAIL"})
+    monkeypatch.setattr(harness, "run_e2", lambda *_args, **_kwargs: pytest.fail("E2 runner was called"))
+
+    with pytest.raises(ProductChainError, match="E2 requires E1 PASS; observed FAIL"):
+        harness.main()
+
+    report = json.loads((args.output / "r8-report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "FAIL"
+    assert report["failure"]["type"] == "ProductChainError"
 
 
 def test_e2_configured_provider_runs_hybrid_and_controlled_fallback(

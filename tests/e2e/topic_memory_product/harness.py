@@ -93,6 +93,43 @@ _E2_TOKEN = "r8-e2-one-time-token"  # noqa: S105 - synthetic loopback-only crede
 _E4_TOKEN = "r8-e4-one-time-token"  # noqa: S105 - synthetic loopback-only credential.
 DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
 DEFAULT_GENERATION_MODEL = "gpt-5.6-luna"
+_E1_SUBPROCESS_ENV_ALLOWLIST = frozenset({
+    "ALL_PROXY",
+    "CURL_CA_BUNDLE",
+    "HOME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LD_LIBRARY_PATH",
+    "LOGNAME",
+    "NO_COLOR",
+    "NO_PROXY",
+    "PATH",
+    "REQUESTS_CA_BUNDLE",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "TZ",
+    "USER",
+    "UV_CACHE_DIR",
+    "UV_NATIVE_TLS",
+    "UV_NO_PROGRESS",
+    "UV_PYTHON",
+    "UV_PYTHON_INSTALL_DIR",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "all_proxy",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -726,8 +763,31 @@ def _capture_browser_evidence(
     }
 
 
-def _prepare_codex_home(temp_root: Path) -> tuple[Path, dict[str, object]]:
-    source_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+def _e1_subprocess_environment(source: Mapping[str, str]) -> dict[str, str]:
+    """Allowlist the generic process environment and exclude all R8 layer inputs."""
+
+    environment = {name: source[name] for name in _E1_SUBPROCESS_ENV_ALLOWLIST if name in source}
+    # This value only satisfies the loopback Pydantic AI provider. Real Codex
+    # authentication comes from its isolated home or the selected provider key.
+    environment["OPENAI_API_KEY"] = "r8-loopback-only"
+    return environment
+
+
+def _codex_provider_environment(source: Mapping[str, str], env_key: str | None) -> dict[str, str]:
+    if env_key is None:
+        return {}
+    value = source.get(env_key)
+    if not value:
+        raise ProductChainError("selected Codex provider environment credential is unavailable")
+    return {env_key: value}
+
+
+def _prepare_codex_home(
+    temp_root: Path,
+    *,
+    source_environment: Mapping[str, str],
+) -> tuple[Path, dict[str, object], str | None]:
+    source_home = Path(source_environment.get("CODEX_HOME", str(Path.home() / ".codex")))
     source_auth = source_home / "auth.json"
     if not source_auth.is_file():
         raise ProductChainError("Codex auth.json is unavailable for isolated E1 execution")
@@ -739,18 +799,25 @@ def _prepare_codex_home(temp_root: Path) -> tuple[Path, dict[str, object]]:
     destination.chmod(stat.S_IRUSR | stat.S_IWUSR)
     if stat.S_IMODE(destination.stat().st_mode) != 0o600:
         raise ProductChainError("isolated Codex auth copy is not mode 0600")
-    provider_keys = _copy_codex_provider_config(source_home / "config.toml", codex_home / "config.toml")
-    return codex_home, {
-        "source_auth_sha256_before": source_digest,
-        "source_auth_path_recorded": False,
-        "temporary_auth_mode": "0600",
-        "temporary_home_mode": oct(stat.S_IMODE(codex_home.stat().st_mode)),
-        "provider_config_keys_copied": provider_keys,
-        "unrelated_user_config_copied": False,
-    }
+    provider_keys, provider_env_key = _copy_codex_provider_config(
+        source_home / "config.toml",
+        codex_home / "config.toml",
+    )
+    return (
+        codex_home,
+        {
+            "source_auth_sha256_before": source_digest,
+            "source_auth_path_recorded": False,
+            "temporary_auth_mode": "0600",
+            "temporary_home_mode": oct(stat.S_IMODE(codex_home.stat().st_mode)),
+            "provider_config_keys_copied": provider_keys,
+            "unrelated_user_config_copied": False,
+        },
+        provider_env_key,
+    )
 
 
-def _copy_codex_provider_config(source: Path, destination: Path) -> list[str]:
+def _copy_codex_provider_config(source: Path, destination: Path) -> tuple[list[str], str | None]:
     if not source.is_file():
         raise ProductChainError("Codex provider config is unavailable for isolated E1 execution")
     configuration = tomllib.loads(source.read_text(encoding="utf-8"))
@@ -762,7 +829,7 @@ def _copy_codex_provider_config(source: Path, destination: Path) -> list[str]:
         # should cross the acceptance boundary.
         destination.write_text("", encoding="utf-8")
         destination.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        return []
+        return [], None
     if not isinstance(selected, str) or not isinstance(providers, dict):
         raise ProductChainError("Codex selected provider config is invalid")
     provider = providers.get(selected)
@@ -784,7 +851,7 @@ def _copy_codex_provider_config(source: Path, destination: Path) -> list[str]:
     lines.extend(f"{key} = {encode(value)}" for key, value in values.items())
     destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
     destination.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    return sorted(values)
+    return sorted(values), cast(str, values["env_key"])
 
 
 def run_e1(  # noqa: C901
@@ -800,18 +867,10 @@ def run_e1(  # noqa: C901
     directory.mkdir(parents=True, exist_ok=True)
     if shutil.which("codex") is None:
         return _unavailable("E1", "Codex CLI is not installed")
-    environment = dict(os.environ)
-    # The installed hook pins ``uv run --frozen`` itself. UV rejects combining
-    # that flag with UV_LOCKED, which callers commonly set for repository gates.
-    environment.pop("UV_LOCKED", None)
-    temporary_openai_key = False
-    if not environment.get("OPENAI_API_KEY"):
-        # Pydantic AI requires this variable while talking to our authenticated
-        # loopback bridge. The bridge invokes the real provider through the
-        # isolated Codex home/auth copy, so no provider credential belongs here.
-        environment["OPENAI_API_KEY"] = "r8-loopback-only"
-        os.environ["OPENAI_API_KEY"] = "r8-loopback-only"
-        temporary_openai_key = True
+    source_environment = dict(os.environ)
+    environment = _e1_subprocess_environment(source_environment)
+    original_openai_key = source_environment.get("OPENAI_API_KEY")
+    os.environ["OPENAI_API_KEY"] = "r8-loopback-only"
 
     token = secrets.token_urlsafe(32)
     timeline = AccessTimeline()
@@ -829,8 +888,12 @@ def run_e1(  # noqa: C901
         with tempfile.TemporaryDirectory(prefix="powercontext-r8-e1-") as temp_value:
             temp_root = Path(temp_value)
             temp_root_value = temp_value
-            codex_home, auth_audit = _prepare_codex_home(temp_root)
-            source_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+            codex_home, auth_audit, provider_env_key = _prepare_codex_home(
+                temp_root,
+                source_environment=source_environment,
+            )
+            provider_environment = _codex_provider_environment(source_environment, provider_env_key)
+            source_home = Path(source_environment.get("CODEX_HOME", str(Path.home() / ".codex")))
             source_auth = source_home / "auth.json"
             source_auth_digest = str(auth_audit["source_auth_sha256_before"])
             fixture = temp_root / "fixture"
@@ -856,14 +919,19 @@ def run_e1(  # noqa: C901
 
             generation_root = temp_root / "generation"
             generation_root.mkdir()
-            generation_home, generation_auth_audit = _prepare_codex_home(generation_root)
+            generation_home, generation_auth_audit, generation_provider_env_key = _prepare_codex_home(
+                generation_root,
+                source_environment=source_environment,
+            )
+            if generation_provider_env_key != provider_env_key:
+                raise ProductChainError("isolated Codex homes selected different provider credentials")
             generation_fixture = generation_root / "fixture"
             generation_fixture.mkdir()
             _run(("git", "init", "--quiet"), cwd=generation_fixture, env=environment, timeout=20)
             generation_bridge = _RealCodexChatBridge(
                 codex_home=generation_home,
                 fixture=generation_fixture,
-                environment=environment,
+                environment={**environment, **provider_environment},
                 model=generation_model,
                 timeout=codex_timeout,
             )
@@ -910,6 +978,7 @@ def run_e1(  # noqa: C901
             _configure_installed_mcp(installed_path, base_url=server.base_url)
             codex_environment = {
                 **environment,
+                **provider_environment,
                 "POWERCONTEXT_CODEX_AUTHORIZATION": f"Bearer {token}",
                 "POWERCONTEXT_CODEX_SCOPE_ID": E1_SCOPE_ID,
                 "POWERCONTEXT_CODEX_CAPTURE_PROMPTS": "true",
@@ -1032,6 +1101,11 @@ def run_e1(  # noqa: C901
                     "server": "loopback random port",
                     "authentication": "one-time bearer; value not retained",
                     "fixture": "isolated temporary Git repository",
+                    "subprocess_environment": {
+                        "policy": "explicit allowlist plus selected Codex provider credential",
+                        "r8_layer_configuration_keys_forwarded": [],
+                        "selected_provider_credential_forwarded": provider_env_key is not None,
+                    },
                 },
                 "first_codex": {
                     "prompt_sha256": digest_text(first_prompt),
@@ -1084,8 +1158,10 @@ def run_e1(  # noqa: C901
             server.stop()
         if generation_server is not None:
             generation_server.stop()
-        if temporary_openai_key:
+        if original_openai_key is None:
             os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = original_openai_key
 
 
 def run_e2(  # noqa: C901
@@ -1864,6 +1940,17 @@ def _execute_environment_layers(
     layers: dict[str, dict[str, object]] = {}
     if "e2" not in requested:
         layers["E2"] = _unavailable("E2", "not requested in this invocation")
+    elif e1_status == "UNAVAILABLE":
+        layers["E2"] = _unavailable(
+            "E2",
+            "E1 prerequisite is UNAVAILABLE; E2 runner was not executed",
+            checks=(
+                "E1 is automatically requested with E2",
+                "the embedding provider was not contacted without an E1 PASS",
+            ),
+        )
+    elif e1_status != "PASS":
+        raise ProductChainError(f"E2 requires E1 PASS; observed {e1_status}")
     else:
         embedding, unavailable = _real_embedding_config(environment)
         layers["E2"] = (
