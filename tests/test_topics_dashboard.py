@@ -15,9 +15,13 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from starlette.middleware import Middleware
 
@@ -47,6 +51,7 @@ _AUTH_HEADERS = {"Authorization": "Bearer dashboard-secret"}
 _PUBLISHED_AT = datetime(2026, 9, 6, 1, 2, 3, tzinfo=UTC)
 _XSS_TITLE = '<img src=x onerror="globalThis.topicXss=true">'
 _XSS_DETAIL = "<script>globalThis.topicDetailXss=true</script>"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _ref(artifact_id: str, revision: int = 1) -> ArtifactRef:
@@ -180,6 +185,7 @@ def test_topics_navigation_uses_the_frozen_read_only_order() -> None:
     for write_label in ("Create", "Edit", "Delete", "Retire", "Publish", "Flush"):
         assert f">{write_label}<" not in page.text
     assert "powercontext-brand-topics-v1" in page.text
+    assert "topic-memory-r7-v2" in page.text
     for shared_control_key in (
         "switchDark",
         "switchLight",
@@ -219,6 +225,27 @@ def test_helper_pages_build_urls_from_each_request_host_and_root_path() -> None:
                 assert f"http://victim.example/control{asset_path}" in victim.text
             for navigation_path in navigation_paths:
                 assert f'href="http://victim.example/control{navigation_path}"' in victim.text
+
+
+def test_topics_browser_state_regressions_execute_in_node() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the Topics browser-state regressions")
+    completed = subprocess.run(
+        [
+            node,
+            "--experimental-default-type=module",
+            "--test",
+            str(_REPO_ROOT / "tests" / "topics_state_test.mjs"),
+        ],
+        cwd=_REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_private_topic_browse_has_strict_opaque_keyset_pagination() -> None:
