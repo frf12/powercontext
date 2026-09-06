@@ -16,6 +16,7 @@ from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import BuiltinConfig, InferenceConfig, RuntimeConfig
+from powercontext.builtin.runtime.composition import _topic_memory_processing_available
 from powercontext.cli.app import create_cli
 from powercontext.server.cli import app as server_app
 from powercontext.server.factory import BackgroundRoleRequiresBackgroundRunnerError, create_server_app
@@ -124,6 +125,18 @@ def test_oceanbase_accepts_every_artifact_processing_role(role) -> None:
     )
 
     assert config.runtime.artifact_processing_role == role
+
+
+def test_api_role_accepts_topic_flush_when_generation_declares_cross_role_processing() -> None:
+    configured = BuiltinConfig(
+        database=OceanBaseConfig(url=SecretStr(OCEANBASE_URL)),
+        runtime=RuntimeConfig(artifact_processing_role="api"),
+        inference=InferenceConfig(generation_model="test"),
+    )
+    unavailable = configured.model_copy(update={"inference": InferenceConfig()})
+
+    assert _topic_memory_processing_available(configured, ()) is True
+    assert _topic_memory_processing_available(unavailable, ()) is False
 
 
 def test_background_role_cannot_be_mounted_as_an_http_application() -> None:

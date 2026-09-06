@@ -440,7 +440,22 @@ class RelationalContexts:
 
         scope = validate_scope_id(scope_id)
         async with self.database.transaction() as connection:
-            return await self.repositories.topic_memories.get_exact(connection, scope, artifact_ref)
+            try:
+                return await self.repositories.topic_memories.get_exact(connection, scope, artifact_ref)
+            except RepositoryNotFoundError as error:
+                raise ArtifactNotFoundError(artifact_ref) from error
+
+    async def request_topic_memory_flush(self, scope_id: str, /) -> bool:
+        """Persist one flush generation and return only after its transaction commits."""
+
+        scope = validate_scope_id(scope_id)
+        async with self.database.transaction() as connection:
+            pending = await self.repositories.processing_pending.request_flush(
+                connection,
+                scope,
+                TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
+            )
+        return pending is not None
 
     async def browse_topic_memories(
         self,

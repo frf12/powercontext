@@ -47,6 +47,8 @@ from powercontext.http import (
     FinalizeHandoffRequest,
     FlushMemoryRequest,
     FlushMemoryResponse,
+    FlushTopicMemoryRequest,
+    FlushTopicMemoryResponse,
     GeneratedCandidateResponse,
     GenerateExperienceRequest,
     GenerateSkillRequest,
@@ -58,6 +60,7 @@ from powercontext.http import (
     GetMemoryEntryRequest,
     GetSkillRequest,
     GetStatsRequest,
+    GetTopicMemoryRequest,
     HandoffAcknowledgement,
     HandoffActivation,
     HandoffCurrentWorkRequest,
@@ -108,8 +111,11 @@ from powercontext.http import (
     ScopedStats,
     SearchMemoryRequest,
     SearchMemoryResponse,
+    SearchTopicMemoryRequest,
+    SearchTopicMemoryResponse,
     SkillArtifact,
     StoredHandoffReportActivity,
+    TopicMemoryArtifact,
     UpdateHandoffReportProjectRequest,
     UpdateHandoffReportWorkstreamRequest,
     WorkSourceReceipt,
@@ -129,6 +135,7 @@ from powercontext.http._generated.operations import (
     DETACH_HANDOFF_REPORT_WORKSPACE,
     FINALIZE_HANDOFF,
     FLUSH_MEMORY,
+    FLUSH_TOPIC_MEMORY,
     GENERATE_EXPERIENCE,
     GENERATE_SKILL,
     GET_ARTIFACT_CANDIDATE,
@@ -142,6 +149,7 @@ from powercontext.http._generated.operations import (
     GET_READINESS,
     GET_SKILL,
     GET_STATS,
+    GET_TOPIC_MEMORY,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
     LIST_ARTIFACT_CANDIDATES,
@@ -168,6 +176,7 @@ from powercontext.http._generated.operations import (
     REVISE_MEMORY_ENTRY,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
+    SEARCH_TOPIC_MEMORY,
     UPDATE_HANDOFF_REPORT_PROJECT,
     UPDATE_HANDOFF_REPORT_WORKSTREAM,
     Operation,
@@ -448,6 +457,11 @@ class PowerContextClient:
 
         return await self._request(FLUSH_MEMORY, request)
 
+    async def flush_topic_memory(self, request: FlushTopicMemoryRequest) -> FlushTopicMemoryResponse:
+        """Durably request Topic Memory processing without waiting for completion."""
+
+        return await self._request(FLUSH_TOPIC_MEMORY, request)
+
     async def remember_memory(self, request: RememberMemoryRequest) -> MemoryMutationResponse:
         """Save one explicit Memory entry without creating a Source."""
 
@@ -457,6 +471,16 @@ class PowerContextClient:
         """Search active Memory entries in one scope."""
 
         return await self._request(SEARCH_MEMORY, request)
+
+    async def search_topic_memory(self, request: SearchTopicMemoryRequest) -> SearchTopicMemoryResponse:
+        """Search current Topic Memory heads with Server-owned retrieval mode."""
+
+        return await self._request(SEARCH_TOPIC_MEMORY, request)
+
+    async def get_topic_memory(self, request: GetTopicMemoryRequest) -> TopicMemoryArtifact:
+        """Read one exact immutable Topic Memory revision."""
+
+        return await self._request(GET_TOPIC_MEMORY, request)
 
     async def prepare_context(self, request: PrepareContextRequest) -> PreparedContext:
         """Prepare final bounded context for one Agent turn."""

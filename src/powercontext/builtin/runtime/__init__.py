@@ -56,10 +56,12 @@ from powercontext.builtin.runtime.application import (
     ScopedSkillApplication,
     ScopedSourceApplication,
     ScopedStatisticsApplication,
+    ScopedTopicMemoryApplication,
     ScopedWorkApplication,
     SkillApplication,
     SourceApplication,
     StatisticsApplication,
+    TopicMemoryApplication,
     WorkApplication,
 )
 from powercontext.builtin.runtime.artifact_processing import (
@@ -87,7 +89,7 @@ from powercontext.builtin.runtime.config import (
     InferenceConfig,
     RuntimeConfig,
 )
-from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError
+from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
@@ -102,6 +104,7 @@ from powercontext.builtin.runtime.models import (
     GetExperienceRequest,
     GetMemoryEntryRequest,
     GetSkillRequest,
+    GetTopicMemoryRequest,
     ImportExternalSkillRequest,
     ListArtifactCandidatesRequest,
     ListExternalSkillsRequest,
@@ -130,8 +133,10 @@ from powercontext.builtin.runtime.models import (
     ReviseMemoryEntryRequest,
     RuntimeCapabilities,
     SearchMemoryRequest,
+    SearchTopicMemoryRequest,
     SkillCandidate,
     SourceReceipt,
+    TopicMemoryFlushResult,
 )
 from powercontext.builtin.runtime.protocols import PowerContextProvider
 from powercontext.builtin.runtime.readiness import (
@@ -207,6 +212,7 @@ __all__ = [
     "GetExperienceRequest",
     "GetMemoryEntryRequest",
     "GetSkillRequest",
+    "GetTopicMemoryRequest",
     "Handoff",
     "HandoffActivation",
     "HandoffApplication",
@@ -289,8 +295,10 @@ __all__ = [
     "ScopedSkillApplication",
     "ScopedSourceApplication",
     "ScopedStatisticsApplication",
+    "ScopedTopicMemoryApplication",
     "ScopedWorkApplication",
     "SearchMemoryRequest",
+    "SearchTopicMemoryRequest",
     "SkillApplication",
     "SkillCandidate",
     "SkillGenerationOrigin",
@@ -301,6 +309,9 @@ __all__ = [
     "Statistics",
     "StatisticsApplication",
     "StatisticsPeriod",
+    "TopicMemoryApplication",
+    "TopicMemoryFlushResult",
+    "TopicMemoryProcessingUnavailableError",
     "UsageStatistics",
     "WorkApplication",
     "dependency_readiness_probe",

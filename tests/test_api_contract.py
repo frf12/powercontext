@@ -32,11 +32,14 @@ from powercontext.http import (
     CreateWorkContractRequest,
     ExternalSkillResolution,
     FinalizeHandoffRequest,
+    FlushTopicMemoryRequest,
+    FlushTopicMemoryResponse,
     GeneratedCandidateResponse,
     GenerateExperienceRequest,
     GenerateSkillRequest,
     GetMemoryEntryRequest,
     GetStatsRequest,
+    GetTopicMemoryRequest,
     HandoffAcknowledgement,
     HandoffActivation,
     HandoffCurrentWorkRequest,
@@ -60,6 +63,8 @@ from powercontext.http import (
     ScanExternalSkillsResponse,
     ScopedStats,
     SearchMemoryRequest,
+    SearchTopicMemoryRequest,
+    SearchTopicMemoryResponse,
     SkillProposal,
     SkillValidationItem,
     StatsPeriod,
@@ -75,6 +80,7 @@ from powercontext.http._generated.operations import (
     CREATE_WORK_CONTRACT,
     FINALIZE_HANDOFF,
     FLUSH_MEMORY,
+    FLUSH_TOPIC_MEMORY,
     GENERATE_EXPERIENCE,
     GENERATE_SKILL,
     GET_ARTIFACT_CANDIDATE,
@@ -83,6 +89,7 @@ from powercontext.http._generated.operations import (
     GET_READINESS,
     GET_SKILL,
     GET_STATS,
+    GET_TOPIC_MEMORY,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
     LIST_ARTIFACT_CANDIDATES,
@@ -102,6 +109,7 @@ from powercontext.http._generated.operations import (
     REVISE_MEMORY_ENTRY,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
+    SEARCH_TOPIC_MEMORY,
 )
 from powercontext.server.app import create_app
 from powercontext.server.factory import create_server_app
@@ -161,6 +169,24 @@ def test_capture_operation_declares_its_typed_accepted_exchange() -> None:
     assert CAPTURE_CONTENT_SOURCE.request_type is CaptureContentSourceRequest
     assert CAPTURE_CONTENT_SOURCE.response_type is CaptureContentSourceResponse
     assert CAPTURE_CONTENT_SOURCE.success_status == 202
+
+
+def test_topic_memory_operations_use_strict_public_shapes_without_retrieval_controls() -> None:
+    assert FLUSH_TOPIC_MEMORY.request_type is FlushTopicMemoryRequest
+    assert FLUSH_TOPIC_MEMORY.response_type is FlushTopicMemoryResponse
+    assert SEARCH_TOPIC_MEMORY.request_type is SearchTopicMemoryRequest
+    assert SEARCH_TOPIC_MEMORY.response_type is SearchTopicMemoryResponse
+    assert GET_TOPIC_MEMORY.request_type is GetTopicMemoryRequest
+    assert (
+        FLUSH_TOPIC_MEMORY.success_status
+        == SEARCH_TOPIC_MEMORY.success_status
+        == GET_TOPIC_MEMORY.success_status
+        == 200
+    )
+    assert set(SearchTopicMemoryRequest.model_fields) == {"scope_id", "query", "limit"}
+
+    with pytest.raises(ValidationError):
+        SearchTopicMemoryRequest.model_validate({"scope_id": "scope-a", "query": "query", "mode": "fts"})
 
 
 def test_stats_operation_exposes_dashboard_ready_scoped_values() -> None:
