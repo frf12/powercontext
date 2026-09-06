@@ -60,6 +60,13 @@ class ProductChainError(RuntimeError):
     """An observable R8 acceptance invariant failed."""
 
 
+def require_no_worker_failures(layer: str, failures: list[dict[str, object]]) -> None:
+    """Prevent a recovered background-worker error from being reported as PASS."""
+
+    if failures:
+        raise ProductChainError(f"{layer} captured background-worker failures: {failures}")
+
+
 class _WorkerFailureCapture(logging.Handler):
     """Capture only content-free worker failure classifications."""
 
@@ -698,6 +705,7 @@ def run_e0(directory: Path) -> dict[str, object]:
                 f"{exc}; redacted_worker_failures={failure_capture.failures[-3:]}; "
                 f"redacted_fake_calls={fake.redacted_calls()[-20:]}"
             ) from exc
+        require_no_worker_failures("E0", failure_capture.failures)
         result = {
             "schema": "powercontext.topic-memory-r8.e0.v1",
             "status": "PASS",
@@ -779,6 +787,7 @@ __all__ = [
     "RunningServer",
     "digest_text",
     "exercise_http_mcp_prepared_web_chain",
+    "require_no_worker_failures",
     "run_e0",
     "start_loopback_server",
 ]

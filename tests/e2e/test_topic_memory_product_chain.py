@@ -14,13 +14,21 @@ from unittest.mock import patch
 import pytest
 
 from tests.e2e.topic_memory_product import harness
-from tests.e2e.topic_memory_product.common import FakeInference, run_e0, start_loopback_server
+from tests.e2e.topic_memory_product.common import (
+    ArtifactIdentity,
+    FakeInference,
+    ProductChainError,
+    require_no_worker_failures,
+    run_e0,
+    start_loopback_server,
+)
 
 
 def test_r8_e0_runs_the_complete_hermetic_topic_product_chain(tmp_path: Path) -> None:
     report = run_e0(tmp_path / "r8-e0")
 
     assert report["status"] == "PASS"
+    assert report["worker_failures"] == []
     chain = cast(dict[str, Any], report["chain"])
     assert isinstance(chain, dict)
     assert chain["flush"]["returned_before_generation_completed"] is True
@@ -39,6 +47,102 @@ def test_r8_e0_runs_the_complete_hermetic_topic_product_chain(tmp_path: Path) ->
         "temporary_runtime_removed": True,
     }
     assert not any(path.name.startswith(".runtime-") for path in (tmp_path / "r8-e0").iterdir())
+
+
+def _completed_mcp_event(
+    sequence: int,
+    *,
+    tool: str,
+    arguments: dict[str, object],
+    result: object,
+) -> dict[str, object]:
+    return {
+        "type": "item.completed",
+        "item": {
+            "id": f"item_{sequence}",
+            "type": "mcp_tool_call",
+            "server": "powercontext",
+            "tool": tool,
+            "arguments": arguments,
+            "result": result,
+            "status": "completed",
+        },
+    }
+
+
+def _codex_search_get_events(
+    *,
+    search_ref: ArtifactIdentity,
+    get_ref: ArtifactIdentity,
+    get_scope_id: str = harness.E1_SCOPE_ID,
+) -> list[dict[str, object]]:
+    search_result = {"content": [{"type": "text", "text": json.dumps({"hits": [{"artifact": search_ref.as_dict()}]})}]}
+    return [
+        _completed_mcp_event(
+            1,
+            tool="search_topic_memory",
+            arguments={"scope_id": harness.E1_SCOPE_ID, "query": harness.E1_CANARY, "limit": 8},
+            result=search_result,
+        ),
+        _completed_mcp_event(
+            2,
+            tool="get_topic_memory",
+            arguments={"scope_id": get_scope_id, "artifact": get_ref.as_dict()},
+            result={"content": []},
+        ),
+    ]
+
+
+def test_codex_search_get_binding_requires_adjacent_calls_with_same_full_ref_and_scope() -> None:
+    exact_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8", revision=7)
+    evidence = harness._validate_codex_search_get_binding(
+        _codex_search_get_events(search_ref=exact_ref, get_ref=exact_ref),
+        scope_id=harness.E1_SCOPE_ID,
+        query=harness.E1_CANARY,
+        exact_ref=exact_ref,
+    )
+
+    assert evidence["tools"] == ["search_topic_memory", "get_topic_memory"]
+    assert evidence["adjacent_completed_mcp_calls"] is True
+    assert evidence["same_scope"] is True
+    assert evidence["search_result_exact_ref"] == exact_ref.as_dict()
+    assert evidence["get_argument_exact_ref"] == exact_ref.as_dict()
+
+
+def test_codex_search_get_binding_rejects_correct_search_with_wrong_get_ref() -> None:
+    exact_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8", revision=7)
+    wrong_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8-other", revision=8)
+
+    with pytest.raises(ProductChainError, match="complete expected ArtifactRef"):
+        harness._validate_codex_search_get_binding(
+            _codex_search_get_events(search_ref=exact_ref, get_ref=wrong_ref),
+            scope_id=harness.E1_SCOPE_ID,
+            query=harness.E1_CANARY,
+            exact_ref=exact_ref,
+        )
+
+
+def test_codex_search_get_binding_rejects_different_get_scope() -> None:
+    exact_ref = ArtifactIdentity(family="topic", artifact_id="topic-r8", revision=7)
+
+    with pytest.raises(ProductChainError, match="different scope_id"):
+        harness._validate_codex_search_get_binding(
+            _codex_search_get_events(
+                search_ref=exact_ref,
+                get_ref=exact_ref,
+                get_scope_id="project:wrong-scope",
+            ),
+            scope_id=harness.E1_SCOPE_ID,
+            query=harness.E1_CANARY,
+            exact_ref=exact_ref,
+        )
+
+
+def test_worker_failure_capture_cannot_be_reported_as_pass() -> None:
+    failures: list[dict[str, object]] = [{"stage": "topic-memory", "error_code": "generation_failed"}]
+
+    with pytest.raises(ProductChainError, match="E1 captured background-worker failures"):
+        require_no_worker_failures("E1", failures)
 
 
 def test_environment_layers_dispatch_every_fully_configured_real_layer(

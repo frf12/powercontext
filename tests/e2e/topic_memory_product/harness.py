@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -73,6 +74,7 @@ from tests.e2e.topic_memory_product.common import (
     ProductChainError,
     digest_text,
     exercise_http_mcp_prepared_web_chain,
+    require_no_worker_failures,
     run_e0,
     start_loopback_server,
 )
@@ -108,6 +110,16 @@ class _RealEmbeddingConfig:
 class _OceanBaseLayerConfig:
     database: OceanBaseConfig
     schema_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CodexMcpCall:
+    sequence: int
+    server: str
+    tool: str
+    arguments: Mapping[str, object]
+    result: object
+    status: str
 
 
 class _FallbackEmbedding:
@@ -403,15 +415,112 @@ def _walk_mappings(value: object) -> list[Mapping[str, object]]:
     return found
 
 
+def _completed_codex_mcp_calls(events: Sequence[Mapping[str, object]]) -> list[_CodexMcpCall]:
+    calls: list[_CodexMcpCall] = []
+    for sequence, event in enumerate(events, start=1):
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+            continue
+        server = item.get("server")
+        tool = item.get("tool")
+        arguments = item.get("arguments")
+        status = item.get("status")
+        if not isinstance(server, str) or not isinstance(tool, str):
+            raise ProductChainError("Codex completed MCP event omitted its server or tool")
+        if not isinstance(arguments, dict):
+            raise ProductChainError(f"Codex completed MCP event for {server}.{tool} omitted structured arguments")
+        if not isinstance(status, str):
+            raise ProductChainError(f"Codex completed MCP event for {server}.{tool} omitted its status")
+        calls.append(
+            _CodexMcpCall(
+                sequence=sequence,
+                server=server,
+                tool=tool,
+                arguments=cast(Mapping[str, object], arguments),
+                result=item.get("result"),
+                status=status,
+            )
+        )
+    return calls
+
+
+def _artifact_identities(value: object) -> set[ArtifactIdentity]:
+    identities: set[ArtifactIdentity] = set()
+    if isinstance(value, dict):
+        if {"family", "artifact_id", "revision"}.issubset(value):
+            with contextlib.suppress(ProductChainError):
+                identities.add(ArtifactIdentity.from_mapping(cast(Mapping[str, object], value)))
+        for child in value.values():
+            identities.update(_artifact_identities(child))
+    elif isinstance(value, list):
+        for child in value:
+            identities.update(_artifact_identities(child))
+    elif isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return identities
+        identities.update(_artifact_identities(decoded))
+    return identities
+
+
+def _validate_codex_search_get_binding(
+    events: Sequence[Mapping[str, object]],
+    *,
+    scope_id: str,
+    query: str,
+    exact_ref: ArtifactIdentity,
+) -> dict[str, object]:
+    """Prove one adjacent successful search/get pair reused the full scoped ref."""
+
+    calls = _completed_codex_mcp_calls(events)
+    observed = [(call.server, call.tool) for call in calls]
+    expected = [
+        ("powercontext", "search_topic_memory"),
+        ("powercontext", "get_topic_memory"),
+    ]
+    if observed != expected:
+        raise ProductChainError(
+            "real Codex did not make exactly one adjacent powercontext search_topic_memory/get_topic_memory pair; "
+            f"observed={observed}"
+        )
+    search, get = calls
+    if search.status != "completed" or get.status != "completed":
+        raise ProductChainError(
+            f"real Codex MCP search/get did not both complete successfully; statuses={[search.status, get.status]}"
+        )
+    if search.arguments.get("scope_id") != scope_id:
+        raise ProductChainError("real Codex search_topic_memory used the wrong scope_id")
+    if search.arguments.get("query") != query or search.arguments.get("limit") != 8:
+        raise ProductChainError("real Codex search_topic_memory used the wrong query or limit")
+    if exact_ref not in _artifact_identities(search.result):
+        raise ProductChainError("real Codex search_topic_memory result omitted the complete expected ArtifactRef")
+    if get.arguments.get("scope_id") != scope_id:
+        raise ProductChainError("real Codex get_topic_memory used a different scope_id from search_topic_memory")
+    artifact = get.arguments.get("artifact")
+    if (
+        not isinstance(artifact, dict)
+        or ArtifactIdentity.from_mapping(cast(Mapping[str, object], artifact)) != exact_ref
+    ):
+        raise ProductChainError("real Codex get_topic_memory did not reuse the complete expected ArtifactRef")
+    return {
+        "completed_mcp_call_sequences": [search.sequence, get.sequence],
+        "adjacent_completed_mcp_calls": True,
+        "tools": [search.tool, get.tool],
+        "same_scope": True,
+        "scope_id_sha256": digest_text(scope_id),
+        "search_query_sha256": digest_text(query),
+        "search_limit": 8,
+        "search_result_exact_ref": exact_ref.as_dict(),
+        "get_argument_exact_ref": exact_ref.as_dict(),
+    }
+
+
 def _codex_summary(events: Sequence[Mapping[str, object]]) -> dict[str, object]:
     event_types = [value for event in events if isinstance((value := event.get("type")), str)]
-    tools: list[str] = []
-    for event in events:
-        for item in _walk_mappings(event):
-            for key in ("tool", "tool_name", "name"):
-                value = item.get(key)
-                if value in {"search_topic_memory", "get_topic_memory"} and value not in tools:
-                    tools.append(str(value))
+    tools = [call.tool for call in _completed_codex_mcp_calls(events)]
     return {
         "event_count": len(events),
         "event_types": sorted(set(event_types)),
@@ -861,14 +970,12 @@ def run_e1(  # noqa: C901
                 timeout=codex_timeout,
             )
             second_summary = _codex_summary(second_events)
-            if second_summary["mcp_tools_in_observed_order"] != [
-                "search_topic_memory",
-                "get_topic_memory",
-            ]:
-                raise ProductChainError("real Codex did not perform MCP search followed by exact get")
-            encoded_second_events = json.dumps(second_events, sort_keys=True)
-            if chain.exact_ref.artifact_id not in encoded_second_events:
-                raise ProductChainError("real Codex MCP events did not reuse the exact Topic artifact ID")
+            mcp_binding = _validate_codex_search_get_binding(
+                second_events,
+                scope_id=E1_SCOPE_ID,
+                query=E1_CANARY,
+                exact_ref=chain.exact_ref,
+            )
             prepared_observations = prepared_audit.for_query(second_prompt)[prior_prepared_observations:]
             expected_ref = chain.exact_ref.as_dict()
             if not any(
@@ -907,6 +1014,7 @@ def run_e1(  # noqa: C901
                 raise ProductChainError("E1 generation bridge port remained open after shutdown")
             if source_auth is None or _sha256_file(source_auth) != source_auth_digest:
                 raise ProductChainError("E1 changed the operator's original Codex auth file")
+            require_no_worker_failures("E1", failure_capture.failures)
 
             result = {
                 "schema": "powercontext.topic-memory-r8.e1.v1",
@@ -940,6 +1048,7 @@ def run_e1(  # noqa: C901
                     "duration_seconds": second_duration,
                     **second_summary,
                     "exact_ref": chain.exact_ref.as_dict(),
+                    "mcp_binding": mcp_binding,
                     "redacted_jsonl": second_jsonl,
                     "prepared_context": {
                         "observations": list(prepared_observations),
@@ -962,6 +1071,7 @@ def run_e1(  # noqa: C901
                     "generation_bridge_port_closed": True,
                     "original_auth_unchanged": True,
                 },
+                "worker_failures": list(failure_capture.failures),
             }
         result["cleanup"]["temporary_tree_removed"] = not Path(temp_root_value).exists()  # type: ignore[index]
         if result["cleanup"]["temporary_tree_removed"] is not True:  # type: ignore[index]
