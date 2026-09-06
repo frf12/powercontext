@@ -118,7 +118,12 @@ class _Topics:
         return self.scoped
 
 
-def _client(*, authenticated: bool = True, handoff_enabled: bool = True) -> tuple[TestClient, _ScopedTopics]:
+def _client(
+    *,
+    authenticated: bool = True,
+    handoff_enabled: bool = True,
+    root_path: str = "",
+) -> tuple[TestClient, _ScopedTopics]:
     scoped = _ScopedTopics()
     token = _AUTH_HEADERS["Authorization"].removeprefix("Bearer ")
     middleware = (Middleware(StaticBearerMiddleware, token=token),) if authenticated else ()
@@ -133,7 +138,7 @@ def _client(*, authenticated: bool = True, handoff_enabled: bool = True) -> tupl
         handoff_report_enabled=handoff_enabled,
         authentication_required=authenticated,
     )
-    return TestClient(app), scoped
+    return TestClient(app, root_path=root_path), scoped
 
 
 def test_topics_shell_is_public_but_contains_no_configured_or_generated_data() -> None:
@@ -184,6 +189,36 @@ def test_topics_navigation_uses_the_frozen_read_only_order() -> None:
         "languageEnglish",
     ):
         assert script.text.count(f"{shared_control_key}:") == 2
+
+
+def test_helper_pages_build_urls_from_each_request_host_and_root_path() -> None:
+    client, _ = _client(authenticated=False, root_path="/control")
+    pages = {
+        "/": "/static/dashboard.js",
+        "/topics": "/static/topics.js",
+        "/skills": "/static/skills.js",
+        "/reviews": "/static/review.js",
+        "/handoff-reports": "/static/handoff-report.js",
+    }
+    shared_assets = (
+        "/static/powercontext-color.png",
+        "/static/powercontext-reverse.png",
+        "/static/site.css",
+    )
+    navigation_paths = ("/", "/topics", "/skills", "/reviews", "/handoff-reports")
+
+    with client:
+        for page_path, script_path in pages.items():
+            poisoned = client.get(page_path, headers={"Host": "poison.example"})
+            victim = client.get(page_path, headers={"Host": "victim.example"})
+
+            assert poisoned.status_code == 200
+            assert victim.status_code == 200
+            assert "poison.example" not in victim.text
+            for asset_path in (*shared_assets, script_path):
+                assert f"http://victim.example/control{asset_path}" in victim.text
+            for navigation_path in navigation_paths:
+                assert f'href="http://victim.example/control{navigation_path}"' in victim.text
 
 
 def test_private_topic_browse_has_strict_opaque_keyset_pagination() -> None:
