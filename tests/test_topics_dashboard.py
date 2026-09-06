@@ -248,6 +248,26 @@ def test_topics_browser_state_regressions_execute_in_node() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+def test_helper_pages_translate_topics_navigation_in_node() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the helper-page navigation regression")
+    completed = subprocess.run(
+        [
+            node,
+            "--test",
+            str(_REPO_ROOT / "tests" / "helper_page_navigation_test.mjs"),
+        ],
+        cwd=_REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_private_topic_browse_has_strict_opaque_keyset_pagination() -> None:
     client, scoped = _client()
 

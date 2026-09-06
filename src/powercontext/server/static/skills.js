@@ -28,6 +28,7 @@ const translations = {
   en: {
     pageTitle: "PowerContext Skills Library",
     dashboardTitle: "Overview",
+    topicsTitle: "Topics",
     skillsTitle: "Skills",
     reviewTitle: "Review",
     handoffReportTitle: "Handoff Report",
@@ -146,6 +147,7 @@ const translations = {
   zh: {
     pageTitle: "PowerContext 技能库",
     dashboardTitle: "概览",
+    topicsTitle: "主题",
     skillsTitle: "技能",
     reviewTitle: "审核",
     handoffReportTitle: "交接报告",
