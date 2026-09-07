@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing
+import sys
 import time
 import traceback as traceback_module
 from collections import deque
@@ -29,7 +30,6 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from multiprocessing.connection import Connection
 from multiprocessing.context import SpawnProcess
-from multiprocessing.popen_spawn_posix import Popen as SpawnPopen
 from multiprocessing.process import BaseProcess
 from random import SystemRandom
 from typing import Protocol
@@ -37,6 +37,11 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 from typing_extensions import override
+
+if sys.platform == "win32":
+    from multiprocessing.popen_spawn_win32 import Popen as SpawnPopen
+else:
+    from multiprocessing.popen_spawn_posix import Popen as SpawnPopen
 
 from powercontext._logging import log_safely
 from powercontext.builtin.persistence.cursors import SourceCursorRepository

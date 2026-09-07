@@ -24,7 +24,9 @@ def main() -> int:
         if problem is None:
             continue
         identity = ".".join(filter(None, (case.get("classname"), case.get("name"))))
-        detail = (problem.get("message") or problem.text or "pytest failed").strip()
+        summary = (problem.get("message") or "pytest failed").strip()
+        traceback = (problem.text or "").strip()
+        detail = f"{summary}\n{traceback}" if traceback else summary
         print(f"::error title={_escape(identity)}::{_escape(detail[:8000])}")
     return 0
 
