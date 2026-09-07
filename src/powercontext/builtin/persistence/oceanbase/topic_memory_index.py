@@ -80,42 +80,45 @@ _VECTOR_TYPE_SQL = text(
     WHERE table_schema = DATABASE() AND table_name = :table_name AND column_name = 'embedding'
     """
 )
+# Keep ANN selection join-free: CE 4.3.5.6 can lose neighbors when its
+# distance-ordered vector scan participates directly in a merge join.
+# The LIMIT boundary precedes active-head hydration and Topic collapse.
 _TOPIC_VECTOR_SEARCH = """
 WITH candidates AS (
-    SELECT a.artifact_id, a.revision, a.title, a.summary,
+    SELECT v.scope_id, v.artifact_id, v.revision,
            l2_distance(v.embedding, :query_vector) AS distance
     FROM pc_topic_memory_vector_topics AS v
-    JOIN pc_topic_memory_active_topics AS a
-      ON a.scope_id = v.scope_id AND a.artifact_id = v.artifact_id AND a.revision = v.revision
     WHERE v.scope_id = :scope_id
     ORDER BY l2_distance(v.embedding, :query_vector) APPROXIMATE
     LIMIT :candidate_limit
 )
-SELECT artifact_id, revision, title, summary, distance
-FROM candidates
+SELECT a.artifact_id, a.revision, a.title, a.summary, n.distance
+FROM candidates AS n
+JOIN pc_topic_memory_active_topics AS a
+  ON a.scope_id = n.scope_id AND a.artifact_id = n.artifact_id AND a.revision = n.revision
 ORDER BY distance, artifact_id, revision DESC
 """
 _CHUNK_VECTOR_SEARCH = """
-WITH scored AS (
-    SELECT a.artifact_id, a.revision, a.title, a.summary,
-           c.chunk_ordinal, c.start_offset, c.chunk_text,
+WITH neighbors AS (
+    SELECT v.scope_id, v.artifact_id, v.revision, v.chunk_ordinal,
            l2_distance(v.embedding, :query_vector) AS distance
     FROM pc_topic_memory_vector_chunks AS v
-    JOIN pc_topic_memory_active_topics AS a
-      ON a.scope_id = v.scope_id AND a.artifact_id = v.artifact_id AND a.revision = v.revision
-    JOIN pc_topic_memory_active_chunks AS c
-      ON c.scope_id = v.scope_id AND c.artifact_id = v.artifact_id
-     AND c.revision = v.revision AND c.chunk_ordinal = v.chunk_ordinal
     WHERE v.scope_id = :scope_id
     ORDER BY l2_distance(v.embedding, :query_vector) APPROXIMATE
     LIMIT :neighbor_limit
 ), ranked AS (
-    SELECT scored.*,
+    SELECT a.artifact_id, a.revision, a.title, a.summary,
+           c.chunk_ordinal, c.start_offset, c.chunk_text, n.distance,
            row_number() OVER (
-               PARTITION BY artifact_id, revision
-               ORDER BY distance, chunk_ordinal
+               PARTITION BY n.artifact_id, n.revision
+               ORDER BY n.distance, n.chunk_ordinal
            ) AS topic_rank
-    FROM scored
+    FROM neighbors AS n
+    JOIN pc_topic_memory_active_topics AS a
+      ON a.scope_id = n.scope_id AND a.artifact_id = n.artifact_id AND a.revision = n.revision
+    JOIN pc_topic_memory_active_chunks AS c
+      ON c.scope_id = n.scope_id AND c.artifact_id = n.artifact_id
+     AND c.revision = n.revision AND c.chunk_ordinal = n.chunk_ordinal
 )
 SELECT artifact_id, revision, title, summary,
        chunk_ordinal, start_offset, chunk_text, distance

@@ -249,6 +249,12 @@ def test_oceanbase_detail_vector_collapses_topics_before_the_channel_limit(mode)
                 r"ORDER BY\s+l2_distance\([^()]+\)\s+APPROXIMATE\s+LIMIT\s+:(?:candidate|neighbor)_limit",
                 statement,
             )
+            # CE 4.3.5.6 loses same-scope neighbors if ANN itself joins the
+            # active tables. Hydrate only AFTER bounded, join-free selection.
+            ann_selection = statement[: statement.index("APPROXIMATE")]
+            assert "JOIN" not in ann_selection
+            assert "WHERE v.scope_id = :scope_id" in ann_selection
+            assert statement.index("JOIN pc_topic_memory_active_topics") > statement.index("APPROXIMATE")
             assert statement.rfind("ORDER BY distance, artifact_id, revision DESC") > statement.index("APPROXIMATE")
         assert statements[0].index("LIMIT :candidate_limit") < statements[0].rfind("ORDER BY distance")
         assert "row_number() OVER" in statements[1]
