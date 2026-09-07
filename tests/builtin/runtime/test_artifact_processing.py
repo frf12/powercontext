@@ -27,6 +27,7 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from powercontext.builtin.artifacts.topic_memory.generation import TopicMemoryGenerationError
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import ArtifactProcessingLeadershipLostError
@@ -664,6 +665,124 @@ def test_worker_timeout_terminates_child_and_keeps_durable_work(tmp_path) -> Non
             async with profile.database.transaction() as connection:
                 assert await pending.load(connection, "scope-a", BINDING) is not None
                 assert await SourceCursorRepository().load(connection, "scope-a", BINDING) is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+@pytest.mark.parametrize("invalid_boundary", [False, True])
+def test_selector_failure_defers_only_its_scope_and_preserves_leadership(
+    tmp_path, monkeypatch, automatic, invalid_boundary
+):
+    class FailingSelector:
+        def __init__(self) -> None:
+            self.failed_attempts = 0
+
+        async def select(self, scope_id: str, source_after: int, source_ceiling: int) -> int:
+            if scope_id == "scope-a":
+                self.failed_attempts += 1
+                if invalid_boundary:
+                    return source_after
+                raise TopicMemoryGenerationError("unsupported_evidence")
+            return source_ceiling
+
+    async def scenario() -> None:
+        monkeypatch.setattr(artifact_processing_module, "_DISCOVERY_PAGE_SIZE", 1)
+        pending = ArtifactProcessingPendingRepository()
+        selector = FailingSelector()
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'selection-isolation.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            async with profile.database.transaction() as connection:
+                for scope in ("scope-a", "scope-b"):
+                    await SourceRepository(SOURCE_ADAPTERS).add(
+                        connection,
+                        scope,
+                        NoteSource(name="note", materialization=SourceMaterialization.CAPTURED, body="evidence"),
+                    )
+                    await pending.raise_source(connection, scope, BINDING, 1)
+                    if not automatic:
+                        assert await pending.request_flush(connection, scope, BINDING) is not None
+            launcher = _PublishingLauncher(profile.database)
+            binding = ArtifactProcessingBinding(
+                BINDING,
+                1,
+                launcher,
+                automatic_processing_interval=timedelta(hours=1) if automatic else None,
+                window_selector=selector,
+            )
+            async with ArtifactProcessingSupervisor(
+                database=profile.database,
+                bindings=(binding,),
+                lease_mode="single-process",
+                max_workers=1,
+                worker_timeout_seconds=1,
+                retry_base_seconds=60,
+                retry_jitter=lambda: 1,
+            ) as supervisor:
+                fence = supervisor.fence
+                assert fence is not None
+
+                async def healthy_scope_completed() -> bool:
+                    async with profile.database.transaction() as connection:
+                        cursor = await SourceCursorRepository().load(connection, "scope-b", BINDING)
+                        return cursor is not None and cursor.cursor.sequence == 1
+
+                await _wait_until(healthy_scope_completed)
+                assert supervisor.status is ArtifactProcessingSupervisorStatus.LEADER
+                assert supervisor.fence == fence
+                assert selector.failed_attempts == 1
+                assert [item.scope_id for item in launcher.assignments] == ["scope-b"]
+                async with profile.database.transaction() as connection:
+                    assert await SourceCursorRepository().load(connection, "scope-a", BINDING) is None
+                    assert await pending.load(connection, "scope-a", BINDING) is not None
+                    await ArtifactProcessingLeaseRepository().require_fence(connection, fence)
+                    state = await ArtifactProcessingBindingStateRepository().load(connection, BINDING)
+                    assert state is None or state.last_auto_wave_completed_at is None
+
+    asyncio.run(scenario())
+
+
+def test_flush_wake_rescans_a_scope_behind_the_pending_frontier(tmp_path, monkeypatch) -> None:
+    async def scenario() -> None:
+        # Freeze the next page's timer so the flush wake is the only trigger
+        # after the first 100 rows. No sleeps or a second wake drive dispatch.
+        monkeypatch.setattr(artifact_processing_module, "_DISCOVERY_PAGE_DELAY_SECONDS", 60)
+        pending = _TrackingPendingRepository()
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'flush-frontier.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            async with profile.database.transaction() as connection:
+                for index in range(101):
+                    await SourceRepository(SOURCE_ADAPTERS).add(
+                        connection,
+                        f"scope-{index:03d}",
+                        NoteSource(name="note", materialization=SourceMaterialization.CAPTURED, body="evidence"),
+                    )
+                    await pending.raise_source(connection, f"scope-{index:03d}", BINDING, 1)
+            launcher = _PublishingLauncher(profile.database)
+            async with ArtifactProcessingSupervisor(
+                database=profile.database,
+                bindings=(ArtifactProcessingBinding(BINDING, 1, launcher),),
+                lease_mode="single-process",
+                max_workers=1,
+                worker_timeout_seconds=1,
+                pending=pending,
+            ) as supervisor:
+                assert pending.scan_calls == 1
+                assert not launcher.assignments
+                async with profile.database.transaction() as connection:
+                    assert await pending.request_flush(connection, "scope-000", BINDING) is not None
+                # Subsequent pages can run on their bounded timer, but the
+                # already-armed first-page delay cannot rescue a lost wake.
+                monkeypatch.setattr(artifact_processing_module, "_DISCOVERY_PAGE_DELAY_SECONDS", 0.01)
+                supervisor.wake()
+
+                async def flush_completed() -> bool:
+                    async with profile.database.transaction() as connection:
+                        return await pending.load(connection, "scope-000", BINDING) is None
+
+                await _wait_until(flush_completed)
+                assert [item.scope_id for item in launcher.assignments] == ["scope-000"]
+                assert all(limit is not None and limit <= 100 for limit in pending.scan_limits)
 
     asyncio.run(scenario())
 

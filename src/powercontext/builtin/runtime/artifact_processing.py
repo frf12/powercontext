@@ -395,6 +395,10 @@ class _WorkerTerminationError(RuntimeError):
     """The Supervisor could not confirm termination inside its fixed bound."""
 
 
+class _WindowSelectionError(_WorkerExecutionError):
+    """A binding/Scope's evidence failed before a Worker could be assigned."""
+
+
 class _RetryCapacityError(RuntimeError):
     """An automatic target cannot be safely evicted from the retry frontier."""
 
@@ -506,6 +510,7 @@ class ArtifactProcessingSupervisor:
         self._discover_automatic_next = False
         self._next_automatic_wake_at: float | None = None
         self._discovery_after: ProcessingKey | None = None
+        self._pending_rescan_requested = False
         self._next_discovery_wake_at: float | None = None
         self._retries: dict[ProcessingKey, _RetryState] = {}
         self._launching: dict[ProcessingKey, _LaunchingWorker] = {}
@@ -545,6 +550,9 @@ class ArtifactProcessingSupervisor:
     def wake(self) -> None:
         """Reduce local flush latency; durable database state remains authoritative."""
 
+        # A flush may target a key already passed by the current page cursor.
+        # Finish that bounded traversal, then repeat it before becoming idle.
+        self._pending_rescan_requested = True
         self._wake.set()
 
     async def close(self) -> None:
@@ -677,6 +685,10 @@ class ArtifactProcessingSupervisor:
             self._enqueue(key)
 
     async def _discover_pending_page(self, available: int) -> None:
+        if self._discovery_after is None:
+            # Consume only BEFORE reading the first page. A wake during the
+            # database await must survive through the end of this traversal.
+            self._pending_rescan_requested = False
         async with self._database.transaction() as connection:
             await self._leases.require_fence(connection, self._require_current_fence())
             pending_rows = await self._pending.scan(
@@ -718,7 +730,11 @@ class ArtifactProcessingSupervisor:
             self._discovery_after = (last.binding_name, last.scope_id)
         if len(pending_rows) < available:
             self._discovery_after = None
-            self._next_discovery_wake_at = None
+            self._next_discovery_wake_at = (
+                asyncio.get_running_loop().time() + _DISCOVERY_PAGE_DELAY_SECONDS
+                if self._pending_rescan_requested
+                else None
+            )
         else:
             self._next_discovery_wake_at = asyncio.get_running_loop().time() + _DISCOVERY_PAGE_DELAY_SECONDS
         registered = tuple(row for row in pending_rows if row.binding_name in self._bindings)
@@ -920,7 +936,11 @@ class ArtifactProcessingSupervisor:
             if retry is not None and retry.next_retry_at > loop.time():
                 self._enqueue(key)
                 continue
-            assignment = await self._prepare_assignment(work)
+            try:
+                assignment = await self._prepare_assignment(work)
+            except _WindowSelectionError as error:
+                self._record_failure(work, None, error.failure)
+                continue
             if assignment is None:
                 await self._finish_covered_work(work)
                 continue
@@ -1005,15 +1025,31 @@ class ArtifactProcessingSupervisor:
             work.wave_target,
         )
         selector = self._bindings[binding_name].window_selector
-        source_through = (
-            source_ceiling if selector is None else await selector.select(scope_id, source_after, source_ceiling)
-        )
-        if (
-            not isinstance(source_through, int)
-            or isinstance(source_through, bool)
-            or not source_after < source_through <= source_ceiling
-        ):
-            raise ValueError("artifact processing selector returned an invalid Source boundary")  # noqa: TRY003
+        try:
+            source_through = (
+                source_ceiling if selector is None else await selector.select(scope_id, source_after, source_ceiling)
+            )
+            if (
+                not isinstance(source_through, int)
+                or isinstance(source_through, bool)
+                or not source_after < source_through <= source_ceiling
+            ):
+                # Classify invalid return values exactly like selector errors.
+                raise ValueError("artifact processing selector returned an invalid Source boundary")  # noqa: TRY003, TRY301
+        except ArtifactProcessingLeadershipLostError:
+            raise
+        except Exception as error:
+            # A bad Source/adapter is local to this key. Retain its Pending and
+            # Cursor and use the same bounded retry frontier as Worker failures.
+            # Cancellation and fence loss still propagate to the control loop.
+            raise _WindowSelectionError(
+                ArtifactProcessingWorkerFailure(
+                    stage="source_window_selection",
+                    error_code="source_window_selection_failed",
+                    exception_type=type(error).__name__,
+                    traceback=_safe_traceback(error),
+                )
+            ) from None
         return ArtifactProcessingWorkAssignment(
             binding_name=binding_name,
             scope_id=scope_id,
@@ -1195,7 +1231,7 @@ class ArtifactProcessingSupervisor:
     def _record_failure(
         self,
         work: _WaveWork,
-        assignment: ArtifactProcessingWorkAssignment,
+        assignment: ArtifactProcessingWorkAssignment | None,
         failure: ArtifactProcessingWorkerFailure,
     ) -> None:
         loop = asyncio.get_running_loop()
@@ -1214,17 +1250,17 @@ class ArtifactProcessingSupervisor:
             "Artifact processing Worker failed",
             extra={
                 "event": "artifact_processing.worker.failed",
-                "binding_name": assignment.binding_name,
-                "scope_id": assignment.scope_id,
-                "source_after": assignment.source_after,
-                "source_through": assignment.source_through,
+                "binding_name": work.key[0],
+                "scope_id": work.key[1],
+                "source_after": None if assignment is None else assignment.source_after,
+                "source_through": None if assignment is None else assignment.source_through,
                 "stage": failure.stage,
                 "error_code": failure.error_code,
                 "exception_type": failure.exception_type,
                 "failure_count": failures,
                 "retry_delay_seconds": retry_delay,
-                "supervisor_generation": assignment.fence.supervisor_generation,
-                "worker_id": assignment.worker_id,
+                "supervisor_generation": self._require_current_fence().supervisor_generation,
+                "worker_id": None if assignment is None else assignment.worker_id,
                 "traceback": failure.traceback,
                 "outcome": "failure",
                 "unit": "artifact_processing",

@@ -535,6 +535,37 @@ def test_detail_fts_applies_analyzer_coverage_before_collapsing_each_topic() -> 
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("term", ["x" * 500, "ß" * 500], ids=["ascii", "casefold-expansion"])
+@pytest.mark.parametrize("surrounding", [False, True])
+def test_detail_fts_snippet_handles_a_term_longer_than_the_excerpt(term: str, surrounding: bool) -> None:
+    async def scenario() -> None:
+        index = _fts_index()
+        repository = TopicMemoryRepository(index=index)
+        detail = f"ordinary {term} ordinary" if surrounding else term
+        content = TopicMemoryContent(title="Long token", summary="Bounded excerpt", detail=detail)
+        async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES + index.tables) as profile:
+            async with profile.database.transaction() as connection:
+                await repository.initialize(connection)
+                await repository.publish_create(
+                    connection, "scope-a", "long-token", _draft(content), prepare_topic_memory_projection(content)
+                )
+            async with profile.database.transaction() as connection:
+                result = await repository.search(connection, "scope-a", term, limit=1)
+                if surrounding:
+                    ordinary = await repository.search(connection, "scope-a", "ordinary", limit=1)
+                    assert len(ordinary.hits) == 1
+            assert len(result.hits) == 1
+            hit = result.hits[0]
+            assert hit.artifact_ref.artifact_id == "long-token"
+            assert hit.matched_by == ("detail_fts",)
+            assert hit.snippet is not None
+            assert 0 < len(hit.snippet) <= 480
+            assert term[:100] in hit.snippet
+            assert hit.snippet.strip("…") in detail
+
+    asyncio.run(scenario())
+
+
 def test_publish_rejects_noncanonical_chunks_and_lexical_text_before_writes() -> None:
     async def scenario() -> None:
         index = _fts_index()

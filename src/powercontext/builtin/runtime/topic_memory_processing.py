@@ -99,8 +99,12 @@ from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.sources import (
     CONTENT_SOURCE_NAME,
     EXTERNAL_SKILL_SNAPSHOT_SOURCE_NAME,
+    SKILL_PACKAGE_UPLOAD_SOURCE_NAME,
+    SKILL_USAGE_SOURCE_NAME,
     ContentCapture,
     ExternalSkillSnapshotCapture,
+    SkillPackageUploadCapture,
+    SkillUsageCapture,
     SourceCursor,
 )
 from powercontext.builtin.statistics import ModelUsageOperation, ModelUsagePurpose
@@ -959,6 +963,17 @@ def _canonical_source_content(source_type: str, materialized: object) -> str:
             "manifest": materialized.snapshot.manifest,
             "mode": materialized.mode.value,
         }
+    elif source_type == SKILL_USAGE_SOURCE_NAME and isinstance(materialized, SkillUsageCapture):
+        # Stable identities, package digests and host/target locators remain
+        # server-owned lineage, not model input. Preserve unknown observations.
+        payload = {
+            "selected": materialized.selected,
+            "invoked": materialized.invoked.value,
+            "validation": materialized.validation.value,
+            "outcome": materialized.outcome.value,
+        }
+    elif source_type == SKILL_PACKAGE_UPLOAD_SOURCE_NAME and isinstance(materialized, SkillPackageUploadCapture):
+        payload = {"name": materialized.name, "description": materialized.description}
     else:
         raise TopicMemoryGenerationError("unsupported_evidence")
     content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

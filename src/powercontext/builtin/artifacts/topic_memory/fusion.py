@@ -150,6 +150,10 @@ def _lexical_focus(query: str, value: str) -> int:
     best_focus = occurrences[0][0]
     window = _SNIPPET_MAX_CHARACTERS - 2
     for position, length, needle in occurrences:
+        # One lexical term can itself exceed the excerpt budget. Consider its
+        # visible prefix so the sliding window always retains this occurrence;
+        # otherwise advancing `left` can run beyond the last occurrence.
+        length = min(length, window)
         counts[needle] += 1
         while position + length - occurrences[left][0] > window:
             counts[occurrences[left][2]] -= 1

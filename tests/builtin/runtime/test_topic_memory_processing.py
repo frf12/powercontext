@@ -27,6 +27,7 @@ from typing import Any, Generic, TypeVar, cast
 import pytest
 from pydantic import BaseModel, SecretStr
 
+from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.search import analyze_text
 from powercontext.builtin.artifacts.skill import ExternalSkillRegistration, ExternalSkillSnapshot, SkillPackageRef
 from powercontext.builtin.artifacts.topic_memory import (
@@ -106,9 +107,13 @@ from powercontext.builtin.runtime.topic_memory_processing import (
 from powercontext.builtin.sources import (
     CONTENT_SOURCE_ADAPTER,
     EXTERNAL_SKILL_SNAPSHOT_SOURCE_ADAPTER,
+    SKILL_PACKAGE_UPLOAD_SOURCE_ADAPTER,
+    SKILL_USAGE_SOURCE_ADAPTER,
     ContentCapture,
     ExternalSkillImportMode,
     ExternalSkillSnapshotCapture,
+    SkillPackageUploadCapture,
+    SkillUsageCapture,
     SourceCursor,
 )
 from powercontext.builtin.statistics import ModelUsagePurpose
@@ -1631,10 +1636,16 @@ def test_selector_keeps_one_oversized_source_without_skipping_or_truncating() ->
     asyncio.run(scenario())
 
 
-def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -> None:
+@pytest.mark.parametrize("source_kind", ["external-skill", "skill-usage", "skill-package-upload"])
+def test_selector_and_worker_share_adapter_canonical_skill_evidence(source_kind: str) -> None:
     async def scenario() -> None:
         manager, profile, _, topics = await _repositories()
-        sources = SourceRepository((*SOURCE_ADAPTERS, EXTERNAL_SKILL_SNAPSHOT_SOURCE_ADAPTER))
+        sources = SourceRepository((
+            *SOURCE_ADAPTERS,
+            EXTERNAL_SKILL_SNAPSHOT_SOURCE_ADAPTER,
+            SKILL_USAGE_SOURCE_ADAPTER,
+            SKILL_PACKAGE_UPLOAD_SOURCE_ADAPTER,
+        ))
         selector_requests: list[str] = []
         try:
             registration = ExternalSkillRegistration(
@@ -1660,7 +1671,29 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
                 ),
                 mode=ExternalSkillImportMode.FORK,
             )
-            source = await EXTERNAL_SKILL_SNAPSHOT_SOURCE_ADAPTER.resolve(captured)
+            expected: dict[str, object] = {"manifest": captured.snapshot.manifest, "mode": "fork"}
+            if source_kind == "external-skill":
+                source = await EXTERNAL_SKILL_SNAPSHOT_SOURCE_ADAPTER.resolve(captured)
+            elif source_kind == "skill-usage":
+                source = await SKILL_USAGE_SOURCE_ADAPTER.resolve(
+                    SkillUsageCapture(
+                        observation_id="stable-id-sentinel",
+                        skill_ref=ArtifactRef(family="skill", artifact_id="stable-id-sentinel", revision=1),
+                        package_digest="sha256:" + "abcdef0123456789" * 4,
+                        target_id="host-id-sentinel",
+                        selected=True,
+                    )
+                )
+                expected = {"selected": True, "invoked": "unknown", "validation": "unknown", "outcome": "unknown"}
+            else:
+                source = await SKILL_PACKAGE_UPLOAD_SOURCE_ADAPTER.resolve(
+                    SkillPackageUploadCapture(
+                        package=captured.snapshot.package,
+                        name="review",
+                        description="Review a bounded change.",
+                    )
+                )
+                expected = {"name": "review", "description": "Review a bounded change."}
             leases = ArtifactProcessingLeaseRepository()
             async with profile.database.transaction() as connection:
                 await sources.add(connection, "scope-a", source)
@@ -1710,14 +1743,17 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
             projected = probe_input.evidence[0].content
             selector_input = TopicMemoryProbeInput.model_validate_json(selector_requests[-1].rsplit("\n", 1)[1])
             assert selector_input.evidence[0].content == projected
-            assert "exact review protocol marker" in projected
-            assert '"mode":"fork"' in projected
-            assert set(json.loads(projected)) == {"manifest", "mode"}
+            assert json.loads(projected) == expected
+            async with profile.database.transaction() as connection:
+                cursor = await SourceCursorRepository().load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                assert cursor is not None and cursor.cursor.sequence == 1
             for sentinel in (
                 "stable-id-sentinel",
                 "host-id-sentinel",
                 "host-path-sentinel",
                 "abcdef0123456789",
+                "1" * 64,
+                "2" * 64,
             ):
                 assert sentinel not in projected
                 assert sentinel not in selector_requests[-1]

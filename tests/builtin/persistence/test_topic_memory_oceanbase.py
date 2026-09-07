@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.schema import CreateTable
@@ -113,7 +115,8 @@ def test_oceanbase_fts_initializes_and_queries_both_current_projection_channels(
     asyncio.run(scenario())
 
 
-def test_oceanbase_detail_vector_collapses_topics_before_the_channel_limit() -> None:
+@pytest.mark.parametrize("mode", ["vector", "hybrid"])
+def test_oceanbase_detail_vector_collapses_topics_before_the_channel_limit(mode) -> None:
     async def scenario() -> None:
         connection = AsyncMock(spec=AsyncConnection)
         connection.execute.return_value.mappings = MagicMock(return_value=())
@@ -126,13 +129,18 @@ def test_oceanbase_detail_vector_collapses_topics_before_the_channel_limit() -> 
                 query="semantic evidence",
                 analyzed_query="semantic evidence",
                 candidate_limit=2,
-                mode="vector",
+                mode=mode,
                 query_vector=(1.0, 0.0, 0.0),
                 embedding_profile=_embedding_profile(),
             ),
         )
 
         statements = [str(call.args[0]) for call in connection.execute.await_args_list]
+        # OceanBase's grammar is `order_by opt_approx limit_clause`: the
+        # modifier follows the ENTIRE sort list, never an individual key.
+        for statement in statements:
+            assert re.search(r"\bAPPROXIMATE\s+LIMIT\s+:(?:candidate|neighbor)_limit\b", statement)
+            assert not re.search(r"\bAPPROXIMATE\s*,", statement)
         assert "row_number() OVER" in statements[1]
         assert "WHERE topic_rank = 1" in statements[1]
         assert statements[1].find("LIMIT :neighbor_limit") < statements[1].find("row_number() OVER")
