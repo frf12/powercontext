@@ -81,14 +81,19 @@ _VECTOR_TYPE_SQL = text(
     """
 )
 _TOPIC_VECTOR_SEARCH = """
-SELECT a.artifact_id, a.revision, a.title, a.summary,
-       l2_distance(v.embedding, :query_vector) AS distance
-FROM pc_topic_memory_vector_topics AS v
-JOIN pc_topic_memory_active_topics AS a
-  ON a.scope_id = v.scope_id AND a.artifact_id = v.artifact_id AND a.revision = v.revision
-WHERE v.scope_id = :scope_id
-ORDER BY l2_distance(v.embedding, :query_vector), a.artifact_id, a.revision DESC APPROXIMATE
-LIMIT :candidate_limit
+WITH candidates AS (
+    SELECT a.artifact_id, a.revision, a.title, a.summary,
+           l2_distance(v.embedding, :query_vector) AS distance
+    FROM pc_topic_memory_vector_topics AS v
+    JOIN pc_topic_memory_active_topics AS a
+      ON a.scope_id = v.scope_id AND a.artifact_id = v.artifact_id AND a.revision = v.revision
+    WHERE v.scope_id = :scope_id
+    ORDER BY l2_distance(v.embedding, :query_vector) APPROXIMATE
+    LIMIT :candidate_limit
+)
+SELECT artifact_id, revision, title, summary, distance
+FROM candidates
+ORDER BY distance, artifact_id, revision DESC
 """
 _CHUNK_VECTOR_SEARCH = """
 WITH scored AS (
@@ -102,8 +107,7 @@ WITH scored AS (
       ON c.scope_id = v.scope_id AND c.artifact_id = v.artifact_id
      AND c.revision = v.revision AND c.chunk_ordinal = v.chunk_ordinal
     WHERE v.scope_id = :scope_id
-    ORDER BY l2_distance(v.embedding, :query_vector),
-             v.artifact_id, v.revision DESC, v.chunk_ordinal APPROXIMATE
+    ORDER BY l2_distance(v.embedding, :query_vector) APPROXIMATE
     LIMIT :neighbor_limit
 ), ranked AS (
     SELECT scored.*,
