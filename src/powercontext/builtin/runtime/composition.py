@@ -40,6 +40,9 @@ from powercontext.builtin.artifacts.memory import (
     MemoryRerankDecision,
     MemoryReranker,
 )
+from powercontext.builtin.artifacts.prompt import PromptRegistry
+from powercontext.builtin.artifacts.prompt.builtin import builtin_prompt_definitions
+from powercontext.builtin.artifacts.prompt.service import DemonstrationGenerator
 from powercontext.builtin.artifacts.skill import AgentSkillProvider, ExternalSkillProvider, SkillGenerator
 from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WINDOW_BINDING
 from powercontext.builtin.artifacts.topic_memory.generation import (
@@ -47,9 +50,8 @@ from powercontext.builtin.artifacts.topic_memory.generation import (
     topic_memory_stage_budget,
     validate_topic_memory_stage_capacity,
 )
-from powercontext.builtin.handoff_report.adapters import RuntimeHandoffReadAdapter, RuntimeWorkContinuityReadAdapter
+from powercontext.builtin.handoff_report.adapters import RuntimeHandoffReadAdapter
 from powercontext.builtin.handoff_report.application import HandoffReportApplication
-from powercontext.builtin.handoff_report.sqlite import HANDOFF_REPORT_TABLES
 from powercontext.builtin.inference import EmbeddingModel, TokenEstimator, character_token_estimator
 from powercontext.builtin.inference.usage import (
     UsageReportingEmbeddingModel,
@@ -67,6 +69,7 @@ from powercontext.builtin.persistence.oceanbase.topic_memory_index import (
     OceanBaseTopicMemoryVectorIndex,
 )
 from powercontext.builtin.persistence.seekdb.profile import SeekDBConfig, SeekDBProfile
+from powercontext.builtin.persistence.skill_distribution_schema import ensure_skill_distribution_schema
 from powercontext.builtin.persistence.sqlite.experience_index import SQLiteExperienceFTSIndex
 from powercontext.builtin.persistence.sqlite.memory_index import SQLiteMemoryFTSIndex, SQLiteMemoryVectorIndex
 from powercontext.builtin.persistence.sqlite.profile import SQLiteConfig, SQLiteProfile
@@ -81,7 +84,7 @@ from powercontext.builtin.persistence.topic_memory_index import (
     TopicMemoryIndex,
 )
 from powercontext.builtin.runtime._scope_cache import ScopeCacheObserver
-from powercontext.builtin.runtime.application import BuiltinRuntime
+from powercontext.builtin.runtime.application import BuiltinRuntime, ScheduledExperienceRunner, ScheduledSourceRunner
 from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingBinding,
     ArtifactProcessingSupervisor,
@@ -91,7 +94,6 @@ from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsCon
 from powercontext.builtin.runtime.models import MemorySearchMode, RuntimeCapabilities
 from powercontext.builtin.runtime.protocols import RuntimeTracing
 from powercontext.builtin.runtime.readiness import (
-    READINESS_PROBE_TIMEOUT_SECONDS,
     CachedReadinessProbe,
     ReadinessProbe,
     ReadinessProbeDefinition,
@@ -104,13 +106,20 @@ from powercontext.builtin.runtime.topic_memory_processing import (
     TopicMemoryWorkerSpec,
     run_topic_memory_worker,
 )
-from powercontext.builtin.sources import CONTENT_SOURCE_NAME, ContentSource
-from powercontext.sources import Source
+from powercontext.builtin.sources import (
+    BUILTIN_SOURCE_REGISTRY,
+    TEXT_EVIDENCE_PROJECTION_KEY,
+)
+from powercontext.errors import InvalidSourceProjectionError, SourceProjectionNotFoundError
+from powercontext.sources import Source, SourceDefinitionRegistry, SourceProjectionKey
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.providers import Provider
+    from pydantic_ai.settings import ModelSettings
+
+    from powercontext.builtin.inference.pydantic_ai import InferenceLimits
 
 ValueT = TypeVar("ValueT")
 
@@ -138,30 +147,30 @@ class BuiltinConfigurationError(RuntimeError):
         super().__init__(messages[issue])
 
 
-class _ContentEvidenceProjector(DefaultMemoryEvidenceProjector):
+class _DefinitionEvidenceProjector(DefaultMemoryEvidenceProjector):
+    def __init__(self, definitions: SourceDefinitionRegistry, projection: SourceProjectionKey) -> None:
+        self._definitions = definitions
+        self._projection = projection
+
     @override
     def project_source(self, source: Source, /) -> JsonValue:
-        if isinstance(source, ContentSource):
-            return {
-                "source_type": CONTENT_SOURCE_NAME,
-                "source_id": source.name,
-                "content": source.content,
-                "metadata": source.model_dump(mode="json")["metadata"],
-            }
-        return super().project_source(source)
+        try:
+            return self._definitions.project(source, self._projection)
+        except (InvalidSourceProjectionError, SourceProjectionNotFoundError):
+            return super().project_source(source)
 
 
-class _ContentHandoffEvidenceProjector(DefaultHandoffEvidenceProjector):
+class _DefinitionHandoffEvidenceProjector(DefaultHandoffEvidenceProjector):
+    def __init__(self, definitions: SourceDefinitionRegistry, projection: SourceProjectionKey) -> None:
+        self._definitions = definitions
+        self._projection = projection
+
     @override
     def project_source(self, source: Source, /) -> JsonValue:
-        if isinstance(source, ContentSource):
-            return {
-                "source_type": CONTENT_SOURCE_NAME,
-                "source_id": source.name,
-                "content": source.content,
-                "metadata": source.model_dump(mode="json")["metadata"],
-            }
-        return super().project_source(source)
+        try:
+            return self._definitions.project(source, self._projection)
+        except (InvalidSourceProjectionError, SourceProjectionNotFoundError):
+            return super().project_source(source)
 
 
 class _TracingMemoryReranker:
@@ -214,10 +223,17 @@ async def open_builtin_runtime(
     topic_memory_search_observer: Callable[[str, bool], None] | None = None,
     tracing: RuntimeTracing | None = None,
     artifact_processing_bindings: Sequence[ArtifactProcessingBinding] = (),
+    scheduled_source_runner: ScheduledSourceRunner | None = None,
+    scheduled_experience_runner: ScheduledExperienceRunner | None = None,
+    source_registry: SourceDefinitionRegistry | None = None,
+    cursor_secret: bytes | None = None,
+    handoff_verification_keys: tuple[bytes, ...] = (),
 ) -> AsyncIterator[BuiltinRuntime]:
     """Open the selected database, inference adapters, and built-in runtime."""
 
     async with AsyncExitStack() as resources:
+        configured_source_registry = source_registry or BUILTIN_SOURCE_REGISTRY
+        prompt_demonstrators: dict[str, DemonstrationGenerator] = {}
         (
             generated_memory,
             generated_incubation,
@@ -228,7 +244,14 @@ async def open_builtin_runtime(
             generation_readiness,
             rerank_readiness,
         ) = (
-            await _generation_pipelines(config.inference, config.runtime, resources, instrumentation)
+            await _generation_pipelines(
+                config.inference,
+                config.runtime,
+                resources,
+                instrumentation,
+                configured_source_registry,
+                prompt_demonstrators=prompt_demonstrators,
+            )
             if (
                 candidate_pipeline is None
                 or experience_pipeline is None
@@ -245,6 +268,24 @@ async def open_builtin_runtime(
         configured_skill = generated_skill if skill_generator is None else skill_generator
         configured_handoff = generated_handoff if handoff_pipeline is None else handoff_pipeline
         configured_reranker = generated_reranker if memory_reranker is None else memory_reranker
+        components = (
+            ("memory.extract", candidate_pipeline, generated_memory),
+            ("memory.rerank", memory_reranker, generated_reranker),
+            ("experience.incubate", experience_pipeline, generated_incubation),
+            ("experience.generate", experience_generator, generated_experience),
+            ("skill.generate", skill_generator, generated_skill),
+            ("handoff.generate", handoff_pipeline, generated_handoff),
+        )
+        prompt_registry = PromptRegistry(
+            builtin_prompt_definitions(config.runtime.memory_extraction_profile),
+            supported=frozenset(
+                key for key, injected, generated in components if injected is None and generated is not None
+            ),
+            injected=frozenset(key for key, injected, _ in components if injected is not None),
+            disabled=frozenset({"memory.rerank"})
+            if not config.runtime.memory_rerank_enabled and memory_reranker is None
+            else frozenset(),
+        )
         if configured_reranker is not None and tracing is not None:
             configured_reranker = _TracingMemoryReranker(configured_reranker, tracing)
         if embedding_model is None:
@@ -282,6 +323,11 @@ async def open_builtin_runtime(
                 embedding_model=configured_embedding,
                 token_estimator=token_estimator,
                 memory_reranker=configured_reranker,
+                source_registry=configured_source_registry,
+                cursor_secret=cursor_secret,
+                prompt_registry=prompt_registry,
+                prompt_demonstrators=prompt_demonstrators,
+                handoff_verification_keys=handoff_verification_keys,
             )
         )
         readiness_probes: dict[str, ReadinessProbeDefinition] = {
@@ -319,6 +365,7 @@ async def open_builtin_runtime(
                     external_skill_registry=contexts.external_skill_registry,
                     memory_search_modes=_search_modes(contexts.index.capabilities),
                     handoff_generation=contexts.handoff_generation,
+                    prompts=dict(contexts.prompt_registry.capabilities),
                 ),
                 source_window_limit=config.runtime.source_window_limit,
                 scope_cache_size=config.runtime.scope_cache_size,
@@ -328,6 +375,15 @@ async def open_builtin_runtime(
                 review_service=contexts.review,
                 generation_service=contexts.generation,
                 experience_recall=contexts.search_experience,
+                skill_recall=contexts.search_skills,
+                skill_lister=contexts.list_skills,
+                skill_origin_reader=contexts.get_skill_origins,
+                skill_governance_reader=contexts.get_skill_governance,
+                skill_governance_updater=contexts.update_skill_lifecycle,
+                skill_package_resolver=contexts.skill_package,
+                package_snapshot_resolver=contexts.package_snapshot,
+                skill_package_uploader=contexts.upload_skill_package,
+                skill_usage_recorder=contexts.record_skill_usage,
                 experience_incubator=contexts.incubate_experience if contexts.experience_incubation else None,
                 topic_memory_search=contexts.search_topic_memories,
                 topic_memory_get=contexts.get_topic_memory,
@@ -338,10 +394,19 @@ async def open_builtin_runtime(
                 topic_memory_search_observer=topic_memory_search_observer,
                 external_skill_registry=contexts.external_skills if contexts.external_skill_registry else None,
                 external_skill_importer=contexts.import_external_skill if contexts.external_skill_registry else None,
+                skill_publication_service=contexts.skill_publications,
+                remote_skill_distribution=contexts.remote_skill_distribution(),
                 statistics_service=contexts.statistics,
+                record_service=contexts.records,
+                prompt_service=contexts.prompts,
                 recall_token_estimator=contexts.estimate_recall_tokens,
+                publication_application=contexts.publications,
+                scope_application=contexts.scopes,
                 readiness=RuntimeReadinessChecks(readiness_probes),
                 tracing=tracing,
+                scheduled_source_runner=scheduled_source_runner,
+                scheduled_experience_runner=scheduled_experience_runner,
+                remote_ingestion=contexts,
             )
         )
         runtime.artifact_processing_supervisor = await resources.enter_async_context(
@@ -349,10 +414,8 @@ async def open_builtin_runtime(
         )
         if config.handoff_report.enabled:
             runtime.handoff_report = HandoffReportApplication(
-                contexts.database,
+                contexts.scopes,
                 RuntimeHandoffReadAdapter(runtime.handoff),
-                continuity=RuntimeWorkContinuityReadAdapter(runtime.work),
-                scope_ids=contexts.handoff_scope_ids,
             )
         if (
             config.runtime.artifact_processing_role == "all"
@@ -475,11 +538,15 @@ async def open_builtin_contexts(
     embedding_model: EmbeddingModel | None = None,
     token_estimator: TokenEstimator | None = None,
     memory_reranker: MemoryReranker | None = None,
+    source_registry: SourceDefinitionRegistry | None = None,
+    cursor_secret: bytes | None = None,
+    prompt_registry: PromptRegistry | None = None,
+    prompt_demonstrators: dict[str, DemonstrationGenerator] | None = None,
+    handoff_verification_keys: tuple[bytes, ...] = (),
 ) -> AsyncIterator[RelationalContexts]:
     """Open the selected database and expose scope-bound PowerContext providers."""
 
     database = config.database
-    report_tables = HANDOFF_REPORT_TABLES if config.handoff_report.enabled else ()
     configured_token_estimator = character_token_estimator() if token_estimator is None else token_estimator
     if isinstance(database, SQLiteConfig):
         experience_index = SQLiteExperienceFTSIndex()
@@ -493,14 +560,15 @@ async def open_builtin_contexts(
         topic_index = CompositeTopicMemoryIndex(*topic_indexes)
         async with SQLiteProfile.open(
             database,
-            tables=BUILTIN_TABLES + report_tables + index.tables + topic_index.tables,
+            tables=BUILTIN_TABLES + index.tables + topic_index.tables,
             load_vector_extension=embedding_model is not None,
         ) as profile:
             async with profile.database.transaction() as connection:
+                await ensure_skill_distribution_schema(connection)
                 await index.initialize(connection)
                 await experience_index.initialize(connection)
                 await TopicMemoryRepository(index=topic_index).initialize(connection)
-            yield RelationalContexts(
+            contexts = RelationalContexts(
                 database=profile.database,
                 index=index,
                 topic_memory_index=topic_index,
@@ -515,7 +583,14 @@ async def open_builtin_contexts(
                 token_estimator=configured_token_estimator,
                 memory_reranker=memory_reranker,
                 memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
+                prompt_registry=prompt_registry,
+                prompt_demonstrators=prompt_demonstrators,
+                handoff_verification_keys=handoff_verification_keys,
+                source_registry=source_registry,
+                cursor_secret=cursor_secret,
             )
+            await contexts.scopes.bootstrap_default()
+            yield contexts
         return
     experience_index = OceanBaseExperienceFTSIndex()
     indexes = [OceanBaseMemoryFTSIndex()]
@@ -526,7 +601,7 @@ async def open_builtin_contexts(
     if embedding_model is not None:
         topic_indexes.append(OceanBaseTopicMemoryVectorIndex(embedding_model.profile))
     topic_index = CompositeTopicMemoryIndex(*topic_indexes)
-    tables = BUILTIN_TABLES + report_tables + index.tables + topic_index.tables
+    tables = BUILTIN_TABLES + index.tables + topic_index.tables
     if isinstance(database, OceanBaseConfig):
         profile_context = OceanBaseProfile.open(database, tables=tables)
     elif isinstance(database, SeekDBConfig):
@@ -535,10 +610,11 @@ async def open_builtin_contexts(
         raise BuiltinConfigurationError("database")
     async with profile_context as profile:
         async with profile.database.transaction() as connection:
+            await ensure_skill_distribution_schema(connection)
             await index.initialize(connection)
             await experience_index.initialize(connection)
             await TopicMemoryRepository(index=topic_index).initialize(connection)
-        yield RelationalContexts(
+        contexts = RelationalContexts(
             database=profile.database,
             index=index,
             topic_memory_index=topic_index,
@@ -553,7 +629,29 @@ async def open_builtin_contexts(
             token_estimator=configured_token_estimator,
             memory_reranker=memory_reranker,
             memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
+            prompt_registry=prompt_registry,
+            prompt_demonstrators=prompt_demonstrators,
+            handoff_verification_keys=handoff_verification_keys,
+            source_registry=source_registry,
+            cursor_secret=cursor_secret,
         )
+        await contexts.scopes.bootstrap_default()
+        yield contexts
+
+
+def _register_prompt_demonstrators(
+    target: dict[str, DemonstrationGenerator] | None,
+    keys: tuple[str, ...],
+    model: Model,
+    limits: InferenceLimits,
+    settings: ModelSettings | None,
+) -> None:
+    if target is None:
+        return
+    from powercontext.builtin.inference.prompt_demonstrations import PromptDemonstrationGenerator
+
+    generator = PromptDemonstrationGenerator(model, limits=limits, model_settings=settings)
+    target.update(dict.fromkeys(keys, generator))
 
 
 async def _generation_pipelines(
@@ -561,6 +659,9 @@ async def _generation_pipelines(
     runtime: RuntimeConfig,
     resources: AsyncExitStack,
     instrumentation: InstrumentationSettings | None,
+    source_registry: SourceDefinitionRegistry,
+    *,
+    prompt_demonstrators: dict[str, DemonstrationGenerator] | None = None,
 ) -> tuple[
     CandidatePipeline | None,
     ExperienceCandidatePipeline | None,
@@ -633,10 +734,17 @@ async def _generation_pipelines(
             resources=resources,
             instrumentation=instrumentation,
         )
-        generation_request_settings = cast(ModelSettings, dict(settings.generation_model_settings))
+        generation_request_settings = cast(ModelSettings, dict(settings.generation_model_settings)) or None
         generation_limits = InferenceLimits(
             timeout_seconds=settings.generation_timeout_seconds,
             max_requests=settings.generation_max_requests,
+        )
+        _register_prompt_demonstrators(
+            prompt_demonstrators,
+            ("memory.extract", "experience.incubate", "experience.generate", "skill.generate", "handoff.generate"),
+            generation_model,
+            generation_limits,
+            generation_request_settings,
         )
         memory_generator = PydanticAIStructuredGenerator(
             model=generation_model,
@@ -646,6 +754,7 @@ async def _generation_pipelines(
             limits=generation_limits,
             model_settings=generation_request_settings,
             name="memory_extraction",
+            prompt_key="memory.extract",
         )
         experience_generator = PydanticAIStructuredGenerator(
             model=generation_model,
@@ -655,6 +764,7 @@ async def _generation_pipelines(
             limits=generation_limits,
             model_settings=generation_request_settings,
             name="experience_incubation",
+            prompt_key="experience.incubate",
         )
         explicit_experience_generator = PydanticAIStructuredGenerator(
             model=generation_model,
@@ -664,6 +774,7 @@ async def _generation_pipelines(
             limits=generation_limits,
             model_settings=generation_request_settings,
             name="experience_generation",
+            prompt_key="experience.generate",
         )
         skill_generator = PydanticAIStructuredGenerator(
             model=generation_model,
@@ -673,6 +784,7 @@ async def _generation_pipelines(
             limits=generation_limits,
             model_settings=generation_request_settings,
             name="skill_generation",
+            prompt_key="skill.generate",
         )
         handoff_generator = PydanticAIStructuredGenerator(
             model=generation_model,
@@ -682,28 +794,31 @@ async def _generation_pipelines(
             limits=generation_limits,
             model_settings=generation_request_settings,
             name="handoff_generation",
+            prompt_key="handoff.generate",
         )
         generated_memory = LLMMemoryCandidatePipeline(
             UsageReportingStructuredGenerator(memory_generator),
-            evidence_projector=_ContentEvidenceProjector(),
+            evidence_projector=_DefinitionEvidenceProjector(source_registry, TEXT_EVIDENCE_PROJECTION_KEY),
         )
         generated_incubation = LLMExperienceCandidatePipeline(UsageReportingStructuredGenerator(experience_generator))
         generated_experience = LLMExperienceGenerator(UsageReportingStructuredGenerator(explicit_experience_generator))
         generated_skill = LLMSkillGenerator(UsageReportingStructuredGenerator(skill_generator))
         generated_handoff = LLMHandoffGenerationPipeline(
             UsageReportingStructuredGenerator(handoff_generator),
-            evidence_projector=_ContentHandoffEvidenceProjector(),
+            evidence_projector=_DefinitionHandoffEvidenceProjector(source_registry, TEXT_EVIDENCE_PROJECTION_KEY),
         )
 
         async def probe_generation() -> None:
             # Readiness probing runs outside any operation span; keep it out of traces.
             await probe_pydantic_ai_model(
                 generation_provider_model,
-                timeout_seconds=READINESS_PROBE_TIMEOUT_SECONDS,
+                timeout_seconds=settings.generation_timeout_seconds,
                 model_settings=generation_request_settings,
             )
 
-        generation_readiness = CachedReadinessProbe(dependency_readiness_probe(probe_generation))
+        generation_readiness = CachedReadinessProbe(
+            dependency_readiness_probe(probe_generation, timeout_seconds=settings.generation_timeout_seconds)
+        )
 
     if runtime.memory_rerank_enabled:
         rerank_provider_model = generation_provider_model
@@ -750,19 +865,36 @@ async def _generation_pipelines(
                 ),
                 model_settings=rerank_request_settings,
                 name="memory_rerank",
+                prompt_key="memory.rerank",
             )
             generated_reranker = LLMMemoryReranker(UsageReportingStructuredGenerator(rerank_generator))
+            _register_prompt_demonstrators(
+                prompt_demonstrators,
+                ("memory.rerank",),
+                rerank_model,
+                InferenceLimits(
+                    timeout_seconds=settings.rerank_timeout_seconds or settings.generation_timeout_seconds,
+                    max_requests=settings.rerank_max_requests or settings.generation_max_requests,
+                ),
+                rerank_request_settings,
+            )
 
             if separate_rerank_model or settings.rerank_model_settings:
 
                 async def probe_rerank() -> None:
+                    timeout_seconds = settings.rerank_timeout_seconds or settings.generation_timeout_seconds
                     await probe_pydantic_ai_model(
                         rerank_provider_model,
-                        timeout_seconds=READINESS_PROBE_TIMEOUT_SECONDS,
+                        timeout_seconds=timeout_seconds,
                         model_settings=rerank_request_settings,
                     )
 
-                rerank_readiness = CachedReadinessProbe(dependency_readiness_probe(probe_rerank))
+                rerank_readiness = CachedReadinessProbe(
+                    dependency_readiness_probe(
+                        probe_rerank,
+                        timeout_seconds=settings.rerank_timeout_seconds or settings.generation_timeout_seconds,
+                    )
+                )
 
     return (
         generated_memory,
@@ -774,6 +906,29 @@ async def _generation_pipelines(
         generation_readiness,
         rerank_readiness,
     )
+
+
+async def preflight_builtin_runtime(config: BuiltinConfig) -> None:
+    """Validate Runtime composition without opening persistence or making requests."""
+
+    async with AsyncExitStack() as resources:
+        await _generation_pipelines(
+            config.inference,
+            config.runtime,
+            resources,
+            None,
+            BUILTIN_SOURCE_REGISTRY,
+        )
+        if config.inference.embedding_model is not None:
+            await _embedding_models(config.inference, resources, None)
+        if config.runtime.schedule_seconds is not None and config.inference.generation_model is None:
+            raise BuiltinConfigurationError("scheduled-pipeline")
+        if config.runtime.experience_schedule_seconds is not None and config.inference.generation_model is None:
+            raise BuiltinConfigurationError("scheduled-experience-pipeline")
+        if config.runtime.memory_rerank_enabled and (
+            config.inference.generation_model is None and config.inference.rerank_model is None
+        ):
+            raise BuiltinConfigurationError("memory-reranker")
 
 
 async def _open_pydantic_ai_model(
@@ -972,4 +1127,4 @@ def _search_modes(capabilities: MemoryCapabilities) -> tuple[MemorySearchMode, .
     return tuple(modes)
 
 
-__all__ = ["BuiltinConfigurationError", "open_builtin_contexts", "open_builtin_runtime"]
+__all__ = ["BuiltinConfigurationError", "open_builtin_contexts", "open_builtin_runtime", "preflight_builtin_runtime"]

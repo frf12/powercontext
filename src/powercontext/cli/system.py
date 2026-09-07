@@ -37,14 +37,14 @@ from pydantic import ValidationError
 from powercontext.client.settings import normalize_server_url
 from powercontext.http import HealthResponse, ReadinessResponse, ReadinessStatus
 from powercontext.paths import powercontext_data_dir
-from powercontext.transport import is_loopback_host
+from powercontext.server.web import DashboardScope
+from powercontext.transport import canonical_loopback_endpoint, is_loopback_host
 
 HELP_OPTION_NAMES = ("-h", "--help")
 DEFAULT_MARKETPLACE_SOURCE = "oceanbase/powercontext"
 DEFAULT_MARKETPLACE_REF = "master"
 DEFAULT_CLAUDE_CODE_SERVER_URL = "http://127.0.0.1:8000"
 DEFAULT_OPENCLAW_SERVER_URL = "http://127.0.0.1:8000"
-DEFAULT_OPENCLAW_SCOPE_MODE = "agent"
 PLUGIN_NAME = "powercontext"
 CLAUDE_MARKETPLACE_NAME = "powercontext"
 _GITHUB_REPOSITORY = re.compile(r"^[^/\s]+/[^/\s]+$")
@@ -105,10 +105,6 @@ class SetupError(RuntimeError):
     @classmethod
     def unsupported_openclaw_version(cls, version_text: str) -> SetupError:
         return cls(f"OpenClaw {version_text or 'version unknown'} is unsupported; upgrade to >= 2026.8.1-beta.2")
-
-    @classmethod
-    def invalid_openclaw_scope(cls) -> SetupError:
-        return cls("OpenClaw scope must be agent or project")
 
     @classmethod
     def openclaw_server_url_scheme(cls) -> SetupError:
@@ -348,7 +344,6 @@ class OpenClawSetupResult:
     plugin: str
     plugin_path: str
     server_url: str
-    scope_mode: str
     data_dir: str
 
 
@@ -523,10 +518,6 @@ def setup_openclaw(
         str,
         typer.Option(help="PowerContext Server base URL configured for the plugin."),
     ] = DEFAULT_OPENCLAW_SERVER_URL,
-    scope_mode: Annotated[
-        str,
-        typer.Option("--scope-mode", help="Memory scope mode: agent or project."),
-    ] = DEFAULT_OPENCLAW_SCOPE_MODE,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Write the result as JSON."),
@@ -541,7 +532,6 @@ def setup_openclaw(
             source=source,
             ref=ref,
             server_url=server_url,
-            scope_mode=scope_mode,
         )
     except SetupError as error:
         typer.echo(str(error), err=True)
@@ -554,7 +544,6 @@ def setup_openclaw(
     typer.echo(f"Plugin: {result.plugin}")
     typer.echo(f"Plugin path: {result.plugin_path}")
     typer.echo(f"Server: {result.server_url}")
-    typer.echo(f"Scope: {result.scope_mode}")
     typer.echo(f"Data directory: {result.data_dir}")
     typer.echo("Next: start a new OpenClaw session.")
 
@@ -697,10 +686,6 @@ def setup_select(
         str | None,
         typer.Option(help="PowerContext Server base URL override for Claude Code and OpenClaw."),
     ] = None,
-    scope_mode: Annotated[
-        str,
-        typer.Option("--scope-mode", help="OpenClaw memory scope mode: agent or project."),
-    ] = DEFAULT_OPENCLAW_SCOPE_MODE,
     capture_prompts: Annotated[
         bool,
         typer.Option(help="Capture Claude Code user prompts as ordinary Source evidence."),
@@ -719,7 +704,6 @@ def setup_select(
         source=source,
         ref=ref,
         server_url=server_url,
-        scope_mode=scope_mode,
         capture_prompts=capture_prompts,
         json_output=json_output,
     )
@@ -1047,11 +1031,13 @@ def run_diagnostics(*, server_url: str) -> dict[str, Diagnostic]:
     """Collect installed-environment diagnostics without changing state."""
 
     package = Diagnostic(status=DiagnosticStatus.OK, detail=f"powercontext {version('powercontext')}")
+    service: dict[str, Diagnostic] = {}
     try:
         server_url = normalize_server_url(server_url)
     except ValueError as error:
         liveness = Diagnostic(status=DiagnosticStatus.FAILED, detail=str(error))
     else:
+        service = _local_service_diagnostics(server_url)
         liveness = _server_liveness_diagnostic(server_url)
     readiness = (
         _server_readiness_diagnostic(server_url)
@@ -1061,11 +1047,108 @@ def run_diagnostics(*, server_url: str) -> dict[str, Diagnostic]:
             detail="not checked because Server liveness failed",
         )
     )
+    dashboard_scopes = (
+        _dashboard_scopes_diagnostic(server_url)
+        if readiness.status in {DiagnosticStatus.OK, DiagnosticStatus.DEGRADED}
+        else Diagnostic(
+            status=DiagnosticStatus.SKIPPED,
+            detail="not checked because Server readiness is not healthy",
+        )
+    )
     return {
         "package": package,
+        **service,
         "server_liveness": liveness,
         "server_readiness": readiness,
+        "dashboard_scopes": dashboard_scopes,
     }
+
+
+def _local_service_diagnostics(server_url: str) -> dict[str, Diagnostic]:
+    """Correlate a loopback diagnostic target with the optional personal service registration."""
+
+    parsed = urlsplit(server_url)
+    if not is_loopback_host(parsed.hostname):
+        return {}
+
+    from powercontext.service.controller import ServiceController
+    from powercontext.service.model import (
+        DefinitionState,
+        ManagerState,
+        RegistrationState,
+        SupportState,
+    )
+
+    controller = ServiceController()
+    try:
+        status = controller.registration_status()
+    except Exception as error:  # Native diagnostics must not hide the Server checks that follow.
+        return {
+            "service_support": Diagnostic(
+                status=DiagnosticStatus.DEGRADED,
+                detail=f"personal service status is unavailable: {error}",
+            )
+        }
+
+    diagnostics: dict[str, Diagnostic] = {}
+    if status.support is SupportState.UNSUPPORTED:
+        diagnostics["service_support"] = Diagnostic(
+            status=DiagnosticStatus.OK,
+            detail=f"unsupported (optional): {status.detail or 'no verified native adapter'}",
+        )
+        return diagnostics
+    diagnostics["service_support"] = Diagnostic(
+        status=DiagnosticStatus.OK,
+        detail="native personal service adapter is supported",
+    )
+
+    if status.registration is RegistrationState.NOT_INSTALLED:
+        diagnostics["service_registration"] = Diagnostic(
+            status=DiagnosticStatus.OK,
+            detail="not_installed (optional)",
+        )
+        return diagnostics
+    if status.registration is not RegistrationState.INSTALLED:
+        diagnostics["service_registration"] = Diagnostic(
+            status=DiagnosticStatus.FAILED,
+            detail=status.detail or status.registration.value,
+        )
+        return diagnostics
+    if status.endpoint is None or canonical_loopback_endpoint(status.endpoint) != canonical_loopback_endpoint(
+        server_url
+    ):
+        return {}
+
+    try:
+        status = controller.status()
+    except Exception as error:  # Manager diagnostics must not hide the Server checks that follow.
+        diagnostics["service_registration"] = Diagnostic(
+            status=DiagnosticStatus.OK,
+            detail="installed",
+        )
+        diagnostics["service_manager"] = Diagnostic(
+            status=DiagnosticStatus.DEGRADED,
+            detail=f"personal service manager status is unavailable: {error}",
+        )
+        return diagnostics
+
+    diagnostics["service_registration"] = Diagnostic(
+        status=DiagnosticStatus.OK,
+        detail="installed",
+    )
+    diagnostics["service_definition"] = Diagnostic(
+        status=(DiagnosticStatus.OK if status.definition is DefinitionState.CURRENT else DiagnosticStatus.FAILED),
+        detail=status.definition.value,
+    )
+    diagnostics["service_manager"] = Diagnostic(
+        status=(DiagnosticStatus.OK if status.manager is ManagerState.ACTIVE else DiagnosticStatus.FAILED),
+        detail=(
+            f"{status.manager.value}; ownership: {status.manager_ownership.value}"
+            if status.log_location is None
+            else (f"{status.manager.value}; ownership: {status.manager_ownership.value}; logs: {status.log_location}")
+        ),
+    )
+    return diagnostics
 
 
 def run_codex_diagnostics() -> dict[str, Diagnostic]:
@@ -1193,6 +1276,57 @@ def _server_readiness_diagnostic(server_url: str) -> Diagnostic:
         detail=f"{server_url} status={readiness.status.value}",
         checks=readiness.checks,
     )
+
+
+def _dashboard_scopes_diagnostic(server_url: str) -> Diagnostic:  # noqa: C901 - endpoint diagnostics have distinct failure branches.
+    """Confirm that the Dashboard can discover at least the automatic default Scope."""
+
+    try:
+        page_status, _ = _request_json(server_url, "/")
+    except OSError:
+        return Diagnostic(status=DiagnosticStatus.DEGRADED, detail="cannot query Dashboard page")
+    if page_status == 401:
+        return Diagnostic(
+            status=DiagnosticStatus.OK,
+            detail="Dashboard scope discovery requires authentication; verify the configured bearer token",
+        )
+    if page_status == 404:
+        return Diagnostic(
+            status=DiagnosticStatus.DEGRADED,
+            detail="Dashboard is disabled; enable it with POWERCONTEXT_SERVER_DASHBOARD_ENABLED=true",
+        )
+    if page_status != 200:
+        return Diagnostic(status=DiagnosticStatus.FAILED, detail="Dashboard page returned an invalid response")
+
+    try:
+        status_code, payload = _request_json(server_url, "/dashboard/scopes")
+    except OSError:
+        return Diagnostic(status=DiagnosticStatus.DEGRADED, detail="cannot query Dashboard scopes")
+    if status_code == 401:
+        return Diagnostic(
+            status=DiagnosticStatus.OK,
+            detail="Dashboard scope discovery requires authentication; verify the configured bearer token",
+        )
+    if status_code != 200 or not isinstance(payload, list):
+        return Diagnostic(
+            status=DiagnosticStatus.FAILED, detail="Dashboard scope discovery returned an invalid response"
+        )
+    if not payload:
+        return Diagnostic(
+            status=DiagnosticStatus.DEGRADED,
+            detail=(
+                "no Dashboard scopes are available; restart the Server to bootstrap the Default Scope, "
+                "or create a Scope through the API"
+            ),
+        )
+    try:
+        for scope in payload:
+            DashboardScope.model_validate(scope)
+    except ValidationError:
+        return Diagnostic(
+            status=DiagnosticStatus.FAILED, detail="Dashboard scope discovery returned an invalid response"
+        )
+    return Diagnostic(status=DiagnosticStatus.OK, detail=f"Dashboard exposes {len(payload)} Scope(s)")
 
 
 def _request_json(server_url: str, path: str) -> tuple[int, object]:

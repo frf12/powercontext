@@ -57,6 +57,11 @@ class _UnusedProvider:
         raise AssertionError(scope_id)
 
 
+class _RegisteredScopes:
+    async def get(self, scope_id: str, /) -> Any:
+        return SimpleNamespace(scope_id=scope_id)
+
+
 class _FailingProviderEmbeddingModel(PydanticAIEmbeddingModelBase):
     def __init__(self, error: Exception) -> None:
         super().__init__()
@@ -233,6 +238,7 @@ def test_topic_memory_fallback_failure_redacts_production_provider_context(
         capabilities=RuntimeCapabilities(memory_extraction=False, memory_search_modes=()),
         topic_memory_search=search,
         topic_memory_embedding_model=embedding,
+        scope_application=cast(Any, _RegisteredScopes()),
     )
     metrics = _RecordingMetrics()
     app = create_app(
@@ -285,23 +291,24 @@ def test_composed_fts_runtime_fails_closed_only_for_missing_topic_processing(tmp
     )
 
     with TestClient(app) as client:
+        scope_id = client.get("/v1/scopes/default").json()["scope_id"]
         capabilities = client.get("/v1/capabilities")
         search = client.post(
             "/v1/topic-memory/search",
-            json={"scope_id": "scope-a", "query": "supervisor recovery"},
+            json={"scope_id": scope_id, "query": "supervisor recovery"},
         )
         missing = client.post(
             "/v1/topic-memory/get",
-            json={"scope_id": "scope-a", "artifact": REFERENCE.model_dump(mode="json")},
+            json={"scope_id": scope_id, "artifact": REFERENCE.model_dump(mode="json")},
         )
         wrong_family = client.post(
             "/v1/topic-memory/get",
             json={
-                "scope_id": "scope-a",
+                "scope_id": scope_id,
                 "artifact": {"family": "memory", "artifact_id": "memory", "revision": 1},
             },
         )
-        flush = client.post("/v1/topic-memory/flush", json={"scope_id": "scope-a"})
+        flush = client.post("/v1/topic-memory/flush", json={"scope_id": scope_id})
 
     assert "topic-memory" in capabilities.json()["artifact_families"]
     assert search.status_code == 200
@@ -321,17 +328,18 @@ def test_prepared_context_focuses_65_term_topic_recall_without_losing_memory(tmp
     query = " ".join(f"term{index:02d}" for index in range(65))
 
     with TestClient(app) as client:
+        scope_id = client.get("/v1/scopes/default").json()["scope_id"]
         remembered = client.post(
             "/v1/memory/remember",
-            json={"scope_id": "scope-a", "kind": "fact", "text": query},
+            json={"scope_id": scope_id, "kind": "fact", "text": query},
         )
         prepared = client.post(
             "/v1/context/prepare",
-            json={"scope_id": "scope-a", "query": query},
+            json={"scope_id": scope_id, "query": query},
         )
         public_topic_search = client.post(
             "/v1/topic-memory/search",
-            json={"scope_id": "scope-a", "query": query},
+            json={"scope_id": scope_id, "query": query},
         )
 
     assert remembered.status_code == 200

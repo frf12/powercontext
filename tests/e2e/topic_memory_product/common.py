@@ -44,7 +44,6 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     BearerAuthConfig,
     DashboardConfig,
-    DashboardScopeConfig,
     McpConfig,
     ServerSettings,
 )
@@ -52,7 +51,6 @@ from powercontext.server.settings import (
 E0_CANARY = "ZIRCON-R8-HERMETIC-CANARY"
 E0_DETAIL_MARKER = "R8-HERMETIC-DETAIL-MUST-NOT-BE-PREPARED"
 E0_SOURCE_ID = "r8-hermetic-source"
-E0_SCOPE_ID = "project:r8-hermetic"
 _E0_TOKEN = "r8-hermetic-one-time-token"  # noqa: S105 - synthetic loopback-only credential.
 
 
@@ -474,6 +472,11 @@ def start_loopback_server(app: FastAPI, *, startup_timeout: float = 30.0) -> Run
     )
 
 
+async def default_scope_id(base_url: str, *, token: str | None) -> str:
+    async with PowerContextClient(base_url, token=token, timeout=10) as client:
+        return (await client.get_default_scope()).scope_id
+
+
 async def exercise_http_mcp_prepared_web_chain(  # noqa: C901
     *,
     base_url: str,
@@ -673,10 +676,7 @@ def run_e0(directory: Path) -> dict[str, object]:
                 embedding_timeout_seconds=5,
             ),
             mcp=McpConfig(enabled=True),
-            dashboard=DashboardConfig(
-                enabled=True,
-                scopes=[DashboardScopeConfig(scope_id=E0_SCOPE_ID, display_name="R8 Hermetic")],
-            ),
+            dashboard=DashboardConfig(enabled=True),
         )
         app = create_server_app(
             settings=settings,
@@ -684,12 +684,13 @@ def run_e0(directory: Path) -> dict[str, object]:
             middleware=(Middleware(AccessTimelineMiddleware, timeline=timeline),),
         )
         powercontext_server = start_loopback_server(app, startup_timeout=60)
+        scope_id = asyncio.run(default_scope_id(powercontext_server.base_url, token=_E0_TOKEN))
         try:
             evidence = asyncio.run(
                 exercise_http_mcp_prepared_web_chain(
                     base_url=powercontext_server.base_url,
                     token=_E0_TOKEN,
-                    scope_id=E0_SCOPE_ID,
+                    scope_id=scope_id,
                     query=E0_CANARY,
                     source_id=E0_SOURCE_ID,
                     source_content=(
@@ -785,6 +786,7 @@ __all__ = [
     "PreparedContextAuditMiddleware",
     "ProductChainError",
     "RunningServer",
+    "default_scope_id",
     "digest_text",
     "exercise_http_mcp_prepared_web_chain",
     "require_no_worker_failures",

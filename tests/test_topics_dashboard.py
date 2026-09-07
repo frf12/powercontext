@@ -40,10 +40,11 @@ from powercontext.builtin.persistence.sqlite.topic_memory_index import SQLiteTop
 from powercontext.builtin.persistence.tables import BUILTIN_TABLES
 from powercontext.builtin.persistence.topic_memory import TopicMemoryRepository
 from powercontext.builtin.persistence.topic_memory_index import CompositeTopicMemoryIndex
+from powercontext.builtin.scope import ScopeNotFoundError
 from powercontext.server.app import create_app
 from powercontext.server.factory import create_server_app
 from powercontext.server.middleware import StaticBearerMiddleware
-from powercontext.server.settings import DashboardConfig, DashboardScopeConfig, McpConfig, ServerSettings
+from powercontext.server.settings import DashboardConfig, McpConfig, ServerSettings
 from powercontext.server.web import mount_web_ui
 from powercontext.sources import SourceRef
 
@@ -123,6 +124,24 @@ class _Topics:
         return self.scoped
 
 
+class _Scopes:
+    def __init__(self) -> None:
+        self.rows = {
+            "scope-a": SimpleNamespace(scope_id="scope-a", title="Scope A", summary="Scope A", parent_scope_id=None),
+            "scope-b": SimpleNamespace(scope_id="scope-b", title="Scope B", summary="Scope B", parent_scope_id=None),
+        }
+
+    async def get(self, scope_id: str) -> SimpleNamespace:
+        try:
+            return self.rows[scope_id]
+        except KeyError:
+            raise ScopeNotFoundError(scope_id) from None
+
+    async def list(self, *, scope_ids=None) -> tuple[SimpleNamespace, ...]:
+        selected = self.rows if scope_ids is None else (scope_id for scope_id in scope_ids if scope_id in self.rows)
+        return tuple(self.rows[scope_id] for scope_id in selected)
+
+
 def _client(
     *,
     authenticated: bool = True,
@@ -133,12 +152,11 @@ def _client(
     token = _AUTH_HEADERS["Authorization"].removeprefix("Bearer ")
     middleware = (Middleware(StaticBearerMiddleware, token=token),) if authenticated else ()
     app = create_app(
-        application=SimpleNamespace(topic_memory=_Topics(scoped)),
+        application=SimpleNamespace(topic_memory=_Topics(scoped), scopes=_Scopes()),
         middleware=middleware,
     )
     mount_web_ui(
         app,
-        scopes={"scope-a": "Scope A", "scope-b": "Scope B"},
         dashboard_enabled=True,
         handoff_report_enabled=handoff_enabled,
         authentication_required=authenticated,
@@ -184,7 +202,7 @@ def test_topics_navigation_uses_the_frozen_read_only_order() -> None:
     assert 'aria-current="page" data-i18n="topicsTitle"' in navigation
     for write_label in ("Create", "Edit", "Delete", "Retire", "Publish", "Flush"):
         assert f">{write_label}<" not in page.text
-    assert "powercontext-brand-topics-v1" in page.text
+    assert "powercontext-brand-topics-remote-v1" in page.text
     assert "topic-memory-r7-v2" in page.text
     for shared_control_key in (
         "switchDark",
@@ -231,9 +249,9 @@ def test_helper_pages_build_urls_from_each_request_host_and_root_path() -> None:
     ("page_path", "entry_script"),
     (
         ("/", "/static/dashboard.js?v=product-language-v5"),
-        ("/skills", "/static/skills.js?v=agent-targets-v2"),
-        ("/reviews", "/static/review.js?v=agent-targets-v2"),
-        ("/handoff-reports", "/static/handoff-report.js?v=scope-report-v2"),
+        ("/skills", "/static/skills.js?v=remote-target-names-topics-v1"),
+        ("/reviews", "/static/review.js?v=standard-packages-topics-v1"),
+        ("/handoff-reports", "/static/handoff-report.js?v=scope-selection-topics-v1"),
     ),
 )
 def test_helper_page_templates_reference_the_translation_complete_entry_script(
@@ -392,7 +410,7 @@ def test_private_topic_routes_reject_unconfigured_scopes_and_stay_hidden() -> No
 def test_composed_dashboard_browses_current_head_and_reads_an_exact_old_revision(tmp_path) -> None:
     database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'topics.db'}")
 
-    async def seed() -> tuple[ArtifactRef, ArtifactRef]:
+    async def seed(scope_id: str) -> tuple[ArtifactRef, ArtifactRef]:
         index = CompositeTopicMemoryIndex(SQLiteTopicMemoryFTSIndex())
         repository = TopicMemoryRepository(index=index)
         async with (
@@ -407,7 +425,7 @@ def test_composed_dashboard_browses_current_head_and_reads_an_exact_old_revision
             )
             old = await repository.publish_create(
                 connection,
-                "scope-a",
+                scope_id,
                 "deployment",
                 TopicMemoryDraft(content=old_content),
                 prepare_topic_memory_projection(old_content),
@@ -419,34 +437,32 @@ def test_composed_dashboard_browses_current_head_and_reads_an_exact_old_revision
             )
             current = await repository.publish_revision(
                 connection,
-                "scope-a",
+                scope_id,
                 old.topic,
                 TopicMemoryDraft(content=current_content),
                 prepare_topic_memory_projection(current_content),
             )
         return old.topic.as_ref(), current.topic.as_ref()
 
-    old_ref, current_ref = asyncio.run(seed())
     app = create_server_app(
         settings=ServerSettings(
-            dashboard=DashboardConfig(
-                enabled=True,
-                scopes=[DashboardScopeConfig(scope_id="scope-a", display_name="Scope A")],
-            ),
+            dashboard=DashboardConfig(enabled=True),
             database=database,
             mcp=McpConfig(enabled=False),
         )
     )
 
     with TestClient(app) as client:
-        page = client.post("/dashboard/topic-memories/list", json={"scope_id": "scope-a"})
+        scope_id = client.get("/v1/scopes/default").json()["scope_id"]
+        old_ref, current_ref = asyncio.run(seed(scope_id))
+        page = client.post("/dashboard/topic-memories/list", json={"scope_id": scope_id})
         old = client.post(
             "/dashboard/topic-memories/get",
-            json={"scope_id": "scope-a", "artifact": old_ref.model_dump(mode="json")},
+            json={"scope_id": scope_id, "artifact": old_ref.model_dump(mode="json")},
         )
         search = client.post(
             "/v1/topic-memory/search",
-            json={"scope_id": "scope-a", "query": "public relevance search", "limit": 20},
+            json={"scope_id": scope_id, "query": "public relevance search", "limit": 20},
         )
 
     assert page.status_code == 200

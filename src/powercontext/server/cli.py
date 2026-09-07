@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
-from collections.abc import Mapping
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -29,10 +27,12 @@ from pydantic import ValidationError
 
 from powercontext.builtin.runtime.composition import open_builtin_runtime
 from powercontext.builtin.runtime.config import BuiltinConfig
-from powercontext.cli.env_file import EnvironmentFileError, environment_context, read_environment_file
+from powercontext.cli.env_file import environment_context
+from powercontext.server.configuration import ServerConfigurationError, server_settings_context
 from powercontext.server.factory import create_server_app
 from powercontext.server.logging import configure_server_logging
 from powercontext.server.settings import (
+    MissingAuthenticationProviderError,
     MissingBearerTokenError,
     ServerSettings,
     UnauthenticatedNonLoopbackBindError,
@@ -54,8 +54,8 @@ _UNSAFE_BIND_CLI_MESSAGE = (
 # operator can set instead of surfacing pydantic's internal validation dump.
 _MISSING_BEARER_CLI_MESSAGE = (
     "authentication is enabled but no bearer token is configured; "
-    "set POWERCONTEXT_SERVER_AUTH_TOKEN=... or disable it with "
-    "POWERCONTEXT_SERVER_AUTH_ENABLED=false"
+    "set POWERCONTEXT_SERVER_AUTH_TOKEN=... or disable Access Control with "
+    "POWERCONTEXT_SERVER_ACCESS_MODE=disabled"
 )
 
 app = typer.Typer(
@@ -86,68 +86,61 @@ def run(
 ) -> None:
     """Run the configured API and/or background service in the foreground."""
 
-    loaded: Mapping[str, str] = {}
-    if env_file is not None:
-        try:
-            loaded = read_environment_file(env_file)
-        except (EnvironmentFileError, OSError) as error:
-            typer.echo(f"Invalid value for --env-file: {error}", err=True)
-            raise typer.Exit(code=2) from error
-    server_environment = {name for name in os.environ if name.startswith("POWERCONTEXT_SERVER_")}
-    loaded_context = (
-        environment_context(loaded, override=True, clear=server_environment) if env_file is not None else nullcontext()
+    role_context = (
+        nullcontext()
+        if role is None
+        else environment_context(
+            {"POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_ROLE": role},
+            override=True,
+        )
     )
-    with loaded_context:
-        # Layer CLI overrides in before validation so the bind policy checks the address
-        # the process will actually use, including values loaded from --env-file.
-        http_overrides: dict[str, Any] = {}
-        if host is not None:
-            http_overrides["host"] = host
-        if port is not None:
-            http_overrides["port"] = port
-        settings_kwargs: dict[str, Any] = {"http": http_overrides} if http_overrides else {}
-        try:
-            role_context = (
-                nullcontext()
-                if role is None
-                else environment_context(
-                    {"POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_ROLE": role},
-                    override=True,
+    try:
+        with role_context, server_settings_context(host=host, port=port, env_file=env_file) as settings:
+            _run_configured_server(settings)
+    except ServerConfigurationError as error:
+        if isinstance(error.cause, ValidationError):
+            raise _friendly_bad_parameter(error.cause) from error
+        hint = "Invalid value for --env-file" if env_file is not None else "Invalid Server configuration"
+        typer.echo(f"{hint}: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    except MissingAuthenticationProviderError as error:
+        raise typer.BadParameter(_MISSING_BEARER_CLI_MESSAGE) from error
+
+
+def _run_configured_server(settings: ServerSettings) -> None:
+    """Run one already-validated configuration in the current process."""
+
+    configure_server_logging(settings.logging)
+    tracing = configure_server_tracing(settings.tracing)
+    try:
+        if settings.runtime.artifact_processing_role == "background":
+            _run_background(
+                BuiltinConfig(
+                    runtime=settings.runtime,
+                    database=settings.database,
+                    handoff_report=settings.handoff_report,
+                    inference=settings.inference,
+                    external_skills=settings.external_skills,
+                ),
+                tracing,
+            )
+            return
+        application = create_server_app(settings=settings, tracing=tracing)
+        if settings.dashboard.enabled:
+            if application.state.dashboard_started:
+                typer.echo(f"PowerContext Dashboard: http://{settings.http.host}:{settings.http.port}/")
+            else:
+                typer.echo(
+                    f"PowerContext Dashboard failed to start: {application.state.dashboard_startup_error}",
+                    err=True,
                 )
-            )
-            with role_context:
-                settings = ServerSettings(**settings_kwargs)
-            config = BuiltinConfig(
-                runtime=settings.runtime,
-                database=settings.database,
-                handoff_report=settings.handoff_report,
-                inference=settings.inference,
-                external_skills=settings.external_skills,
-            )
-        except ValidationError as error:
-            raise _friendly_bad_parameter(error) from error
-        configure_server_logging(settings.logging)
-        tracing = configure_server_tracing(settings.tracing)
-        try:
-            if settings.runtime.artifact_processing_role == "background":
-                _run_background(config, tracing)
-                return
-            application = create_server_app(settings=settings, tracing=tracing)
-            if settings.dashboard.enabled:
-                if application.state.dashboard_started:
-                    typer.echo(f"PowerContext Dashboard: http://{settings.http.host}:{settings.http.port}/")
-                else:
-                    typer.echo(
-                        f"PowerContext Dashboard failed to start: {application.state.dashboard_startup_error}",
-                        err=True,
-                    )
-            _run_server(
-                application,
-                host=settings.http.host,
-                port=settings.http.port,
-            )
-        finally:
-            tracing.shutdown()
+        _run_server(
+            application,
+            host=settings.http.host,
+            port=settings.http.port,
+        )
+    finally:
+        tracing.shutdown()
 
 
 def _friendly_bad_parameter(error: ValidationError) -> typer.BadParameter:

@@ -26,7 +26,11 @@ from powercontext.builtin.artifacts.memory import MemoryHit
 from powercontext.builtin.artifacts.topic_memory import TopicMemorySearchHit
 from powercontext.builtin.runtime import PrepareContextRequest
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
-from powercontext.builtin.runtime.prepared_context import PreparedContextBuilder
+from powercontext.builtin.runtime.prepared_context import (
+    PreparedContextBuilder,
+    PreparedExperienceCandidates,
+    PreparedMemoryCandidates,
+)
 
 MEMORY_REF = ArtifactRef(family="memory", artifact_id="memory", revision=3)
 
@@ -38,6 +42,9 @@ class _PreparedArtifactRef(TypedDict):
 class _PreparedCitation(TypedDict, total=False):
     entry_id: str
     artifact_ref: _PreparedArtifactRef
+    memory_ref: object
+    memory: object
+    artifact: object
 
 
 class _PreparedItem(TypedDict):
@@ -190,6 +197,34 @@ def test_builder_prepares_experience_without_a_memory_head_and_keeps_v1_envelope
     assert item["content"].endswith("Lesson: Regenerate and inspect the client before contract tests.")
 
 
+def test_builder_qualifies_only_cross_scope_citations() -> None:
+    builder = PreparedContextBuilder()
+    prepared = builder.build_scopes_result(
+        request=PrepareContextRequest(query="shared evidence"),
+        current_scope_id="current",
+        memory_candidates=(
+            PreparedMemoryCandidates(scope_id="current", memory_ref=MEMORY_REF, hits=(_hit("local", "Local"),)),
+            PreparedMemoryCandidates(scope_id="shared", memory_ref=MEMORY_REF, hits=(_hit("shared", "Shared"),)),
+        ),
+        experience_candidates=(PreparedExperienceCandidates(scope_id="shared", hits=(_experience_hit(),)),),
+    ).context
+
+    local, experience, shared = _items(prepared.content)
+    assert local["citation"]["memory_ref"] == MEMORY_REF.model_dump(mode="json")
+    assert shared["citation"]["memory"] == {
+        "scope_id": "shared",
+        "artifact": MEMORY_REF.model_dump(mode="json"),
+    }
+    assert experience["citation"]["artifact"] == {
+        "scope_id": "shared",
+        "artifact": {
+            "family": "experience",
+            "artifact_id": "experience-1",
+            "revision": 1,
+        },
+    }
+
+
 def test_builder_keeps_memory_primary_and_bounds_experience_share() -> None:
     experiences = tuple(_experience_hit(f"experience-{index}") for index in range(1, 3))
     prepared = PreparedContextBuilder().build(
@@ -224,7 +259,7 @@ def test_builder_allows_eight_topic_memories_without_a_global_entry_limit_or_det
     assert all(item["citation"]["artifact_ref"]["family"] == "topic-memory" for item in items)
 
 
-def test_builder_uses_independent_eight_eight_two_family_limits() -> None:
+def test_builder_interleaves_families_within_the_global_eight_entry_limit() -> None:
     prepared = PreparedContextBuilder().build(
         memory_ref=MEMORY_REF,
         hits=tuple(_hit(f"memory-{index}", f"Memory {index}") for index in range(8)),
@@ -234,10 +269,10 @@ def test_builder_uses_independent_eight_eight_two_family_limits() -> None:
     )
 
     families = [item.get("kind", "memory") for item in _items(prepared.content)]
-    assert len(families) == 18
+    assert len(families) == 8
     assert families[:6] == ["memory", "topic-memory", "experience"] * 2
-    assert families.count("memory") == 8
-    assert families.count("topic-memory") == 8
+    assert families.count("memory") == 3
+    assert families.count("topic-memory") == 3
     assert families.count("experience") == 2
 
 

@@ -10,6 +10,14 @@ skills-install: ## Install recommended agent skills from skills-lock.json
 	@npx skills experimental_install
 	@echo "Restart Codex to pick up new skills."
 
+.PHONY: notebooks
+notebooks: ## Open the PowerContext feature tutorials and complete team workflow in JupyterLab.
+	@uv run --locked --group notebooks jupyter lab --notebook-dir=examples/jupyter
+
+.PHONY: notebooks-test
+notebooks-test: ## Execute provider-free tutorials in fresh kernels; use ARGS for models, HTTP, and browser.
+	@uv run --locked --group notebooks python examples/jupyter/run.py $(ARGS)
+
 .PHONY: check
 check: integration-manifest-check ## Run code quality tools.
 	@echo "🚀 Checking lock file consistency with 'pyproject.toml'"
@@ -52,6 +60,20 @@ topic-memory-r8-acceptance: ## Run bounded R8 hermetic and available real produc
 .PHONY: harness-sync
 harness-sync: ## Install the Bub replay harness environment.
 	@uv sync --project e2e/bub --locked
+
+OPENDAL_TEST_RUN = uv run --isolated --no-project --python 3.12 \
+	--with-editable ".[server]" \
+	--with-editable ./integrations/opendal \
+	--with pytest --with ruff --with ty
+
+.PHONY: opendal-test
+opendal-test: ## Validate the standalone OpenDAL Connector against this checkout.
+	@$(OPENDAL_TEST_RUN) ruff check --no-fix integrations/opendal
+	@$(OPENDAL_TEST_RUN) ruff format --check integrations/opendal
+	@$(OPENDAL_TEST_RUN) ty check --python .venv --python-version 3.12 \
+		--extra-search-path integrations/opendal/src integrations/opendal/src
+	@$(OPENDAL_TEST_RUN) python -m pytest integrations/opendal/tests
+	@$(OPENDAL_TEST_RUN) powercontext-connector-opendal --help >/dev/null
 
 .PHONY: harness-check
 harness-check: ## Validate the Bub replay harness and committed scenarios.
@@ -111,11 +133,15 @@ js-test: ## Install, build, and test the DeepSeek Harness plugin.
 	@pnpm --dir integrations/dsh/plugins/powercontext test
 	@pnpm --dir integrations/dsh/plugins/powercontext build
 	@git diff --exit-code -- \
-		integrations/dsh/plugins/powercontext/openapi/powercontext.yaml \
 		integrations/dsh/plugins/powercontext/src/operations.generated.ts \
 		integrations/dsh/plugins/powercontext/lib
 	@pnpm --dir integrations/dsh/plugins/powercontext test
 	@pnpm --dir integrations/dsh/plugins/powercontext test:e2e
+
+.PHONY: dsh-runtime-test
+dsh-runtime-test: ## Test the built plugin in the pinned real DSH runtime with a local model fixture.
+	@pnpm --dir integrations/dsh/plugins/powercontext/tests/runtime install --frozen-lockfile
+	@pnpm --dir integrations/dsh/plugins/powercontext test:e2e:runtime
 
 .PHONY: openclaw-plugin-build
 openclaw-plugin-build: ## Build the external OpenClaw memory plugin.
@@ -156,16 +182,18 @@ publish: ## Publish a release to PyPI.
 .PHONY: build-and-publish
 build-and-publish: build publish ## Build and publish.
 
+.PHONY: docs-install
+docs-install: ## Install the website dependencies.
+	@pnpm --dir website install --frozen-lockfile
+
 .PHONY: docs-build
-docs-build: ## Build the documentation and publish the canonical OpenAPI contract.
-	@mkdir -p docs/api
-	@install -m 0644 openapi/powercontext.yaml docs/api/openapi.yaml
-	@trap 'rm -f docs/api/openapi.yaml' EXIT; uv run zensical build --clean -s
+docs-build: docs-install ## Build the static website, including HTTP and Python API references.
+	@CI=true pnpm --dir website build
 
 .PHONY: docs-test
-docs-test: docs-build ## Test if documentation can be built without warnings or errors
-	@test -f site/api/index.html
-	@cmp --silent openapi/powercontext.yaml site/api/openapi.yaml
+docs-test: docs-install ## Lint and build the static website.
+	@CI=true pnpm --dir website lint
+	@CI=true pnpm --dir website build
 
 .PHONY: integration-manifest-docs
 integration-manifest-docs: ## Generate the checked-in integration capability matrix pages.
@@ -180,10 +208,8 @@ integration-manifest-check: integration-manifest-docs-check ## Verify the comple
 	@uv run python -m pytest tests/test_integration_manifest.py
 
 .PHONY: docs
-docs: ## Build and serve the documentation
-	@mkdir -p docs/api
-	@install -m 0644 openapi/powercontext.yaml docs/api/openapi.yaml
-	@trap 'rm -f docs/api/openapi.yaml' EXIT; uv run zensical serve $(ARGS)
+docs: docs-install ## Build and serve the website locally.
+	@pnpm --dir website dev -- $(ARGS)
 
 .PHONY: help
 help:

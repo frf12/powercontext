@@ -18,7 +18,7 @@ import pytest
 from pydantic import BaseModel, SecretStr
 
 from powercontext.builtin.artifacts.search import analyze_text
-from powercontext.builtin.artifacts.skill import ExternalSkillRegistration, ExternalSkillSnapshot
+from powercontext.builtin.artifacts.skill import ExternalSkillRegistration, ExternalSkillSnapshot, SkillPackageRef
 from powercontext.builtin.artifacts.topic_memory import (
     MAX_TOPIC_MEMORY_QUERY_LENGTH,
     MAX_TOPIC_MEMORY_QUERY_TERMS,
@@ -1639,6 +1639,13 @@ def test_selector_and_worker_share_adapter_canonical_external_skill_evidence() -
             captured = ExternalSkillSnapshotCapture(
                 snapshot=ExternalSkillSnapshot(
                     registration=registration,
+                    package=SkillPackageRef(
+                        tree_digest="1" * 64,
+                        archive_digest="2" * 64,
+                        file_count=1,
+                        uncompressed_size=64,
+                        archive_size=64,
+                    ),
                     manifest="# Review\n\nUse the exact review protocol marker.",
                 ),
                 mode=ExternalSkillImportMode.FORK,

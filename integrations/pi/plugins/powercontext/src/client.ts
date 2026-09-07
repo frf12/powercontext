@@ -28,7 +28,7 @@ import { OPERATIONS, type OperationId, type OperationSpec } from './operations.g
 export type JsonObject = Record<string, unknown>
 export type FetchFn = (input: string, init: RequestInit) => Promise<Response>
 
-export type ClientSuccess = { kind: 'json'; value: unknown; status: number; requestId: string | undefined }
+export type ClientSuccess = { kind: 'json'; value: unknown; status: number; requestId: string | undefined; etag?: string }
 
 export interface ClientOptions {
   baseUrl: string
@@ -115,10 +115,67 @@ function decodeError(bytes: Uint8Array): { code?: string; message?: string } {
 function queryString(payload: JsonObject | undefined): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(payload ?? {})) {
-    if (value !== undefined && value !== null) params.set(key, String(value))
+    if (value === undefined || value === null) continue
+    for (const item of Array.isArray(value) ? value : [value]) params.append(key, String(item))
   }
   const encoded = params.toString()
   return encoded ? `?${encoded}` : ''
+}
+
+interface PreparedRequest {
+  path: string
+  query: string
+  headers: Record<string, string>
+  body: JsonObject | undefined
+}
+
+function encodePathSegment(value: unknown): string {
+  return encodeURIComponent(String(value)).replace(/[!'()*]/g, (character) => (
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  ))
+}
+
+function headerPayloadKey(name: string): string {
+  return name.toLowerCase().replaceAll('-', '_')
+}
+
+function prepareRequest(spec: OperationSpec, payload: JsonObject | undefined): PreparedRequest {
+  const remaining = { ...(payload ?? {}) }
+  let path = spec.path as string
+  for (const name of spec.pathParameters as readonly string[]) {
+    const value = remaining[name]
+    if (value === undefined || value === null) {
+      throw new TypeError(`${spec.method} ${spec.path} requires ${name}`)
+    }
+    path = path.replace(`{${name}}`, encodePathSegment(value))
+    delete remaining[name]
+  }
+
+  const headers: Record<string, string> = {}
+  for (const name of spec.headerParams as readonly string[]) {
+    const alias = headerPayloadKey(name)
+    const value = remaining[name] ?? remaining[alias]
+    delete remaining[name]
+    delete remaining[alias]
+    if (value !== undefined && value !== null) headers[name] = String(value)
+  }
+
+  const queryPayload: JsonObject = {}
+  for (const name of spec.queryParams as readonly string[]) {
+    const value = remaining[name]
+    delete remaining[name]
+    if (value !== undefined && value !== null) queryPayload[name] = value
+  }
+  return {
+    path,
+    query: queryString(queryPayload),
+    headers,
+    body: spec.location === 'body' ? remaining : undefined,
+  }
+}
+
+function hasStatus(statuses: readonly number[], status: number): boolean {
+  return statuses.includes(status)
 }
 
 function isRedirect(status: number): boolean {
@@ -141,9 +198,10 @@ export class PowerContextClient {
   async request(id: string, payload?: JsonObject, signal?: AbortSignal): Promise<ClientSuccess> {
     if (!(id in OPERATIONS)) throw new UnknownOperationError(id)
     const spec = OPERATIONS[id as OperationId]
-    const url = this.buildUrl(spec, payload)
+    const prepared = prepareRequest(spec, payload)
+    const url = this.buildUrl(prepared)
     try {
-      const response = await this.fetchImpl(url, this.buildInit(spec, payload, signal))
+      const response = await this.fetchImpl(url, this.buildInit(spec, prepared, signal))
       return await this.parseResponse(spec, response)
     } catch (error) {
       if (
@@ -153,19 +211,19 @@ export class PowerContextClient {
       ) {
         throw error
       }
-      throw new UnavailableError(spec.path, error)
+      throw new UnavailableError(prepared.path, error)
     }
   }
 
-  private buildUrl(spec: OperationSpec, payload: JsonObject | undefined): string {
-    const suffix = spec.location === 'query' ? queryString(payload) : ''
-    return `${this.baseUrl}${spec.path}${suffix}`
+  private buildUrl(request: PreparedRequest): string {
+    return `${this.baseUrl}${request.path}${request.query}`
   }
 
-  private buildInit(spec: OperationSpec, payload: JsonObject | undefined, signal?: AbortSignal): RequestInit {
+  private buildInit(spec: OperationSpec, request: PreparedRequest, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'User-Agent': PLUGIN_USER_AGENT,
+      ...request.headers,
     }
     if (this.authorization) headers.Authorization = this.authorization
     const signals = [createTimeoutSignal(this.requestTimeoutMs)]
@@ -176,9 +234,9 @@ export class PowerContextClient {
       redirect: 'manual',
       signal: combineSignals(signals),
     }
-    if (spec.method === 'POST' && spec.location === 'body') {
+    if (spec.location === 'body') {
       headers['Content-Type'] = 'application/json'
-      init.body = JSON.stringify(payload ?? {})
+      init.body = JSON.stringify(request.body ?? {})
     }
     return init
   }
@@ -187,14 +245,20 @@ export class PowerContextClient {
     spec: OperationSpec,
     response: Response,
   ): Promise<ClientSuccess> {
-    if (isRedirect(response.status)) throw new InvalidResponseError(spec.path)
+    const success = (response.status >= 200 && response.status < 300)
+      || hasStatus(spec.successStatuses as readonly number[], response.status)
+    if (isRedirect(response.status) && !success) throw new InvalidResponseError(spec.path)
     const bytes = await readLimitedBody(response)
     const requestId = response.headers.get(REQUEST_ID_HEADER) ?? undefined
-    if (response.status < 200 || response.status >= 300) {
+    if (!success) {
       throw this.httpError(response.status, spec.path, requestId, bytes)
     }
+    if (hasStatus(spec.emptyStatuses as readonly number[], response.status)) {
+      if (bytes.byteLength !== 0) throw new InvalidResponseError(spec.path, requestId)
+      return { kind: 'json', value: null, status: response.status, requestId, etag: response.headers.get('ETag') ?? undefined }
+    }
     try {
-      return { kind: 'json', value: JSON.parse(Buffer.from(bytes).toString('utf8')), status: response.status, requestId }
+      return { kind: 'json', value: JSON.parse(Buffer.from(bytes).toString('utf8')), status: response.status, requestId, etag: response.headers.get('ETag') ?? undefined }
     } catch {
       throw new InvalidResponseError(spec.path, requestId)
     }

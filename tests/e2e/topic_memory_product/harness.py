@@ -60,7 +60,6 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     BearerAuthConfig,
     DashboardConfig,
-    DashboardScopeConfig,
     McpConfig,
     ServerSettings,
 )
@@ -72,6 +71,7 @@ from tests.e2e.topic_memory_product.common import (
     PreparedContextAudit,
     PreparedContextAuditMiddleware,
     ProductChainError,
+    default_scope_id,
     digest_text,
     exercise_http_mcp_prepared_web_chain,
     require_no_worker_failures,
@@ -84,11 +84,8 @@ PLUGIN_SELECTOR = "powercontext@powercontext"
 E1_SCOPE_ID = "project:r8-real-codex"
 E1_CANARY = "TOPAZ-R8-REAL-CODEX-CANARY"
 E2_CANARY = "BERYL-R8-REAL-EMBEDDING-CANARY"
-E2_SCOPE_ID = "project:r8-real-embedding"
 E3_CANARY = "ONYX-R8-OCEANBASE-RECOVERY-CANARY"
-E3_SCOPE_ID = "project:r8-oceanbase-recovery"
 E4_CANARY = "JADE-R8-SEEKDB-CANARY"
-E4_SCOPE_ID = "project:r8-seekdb"
 _E2_TOKEN = "r8-e2-one-time-token"  # noqa: S105 - synthetic loopback-only credential.
 _E4_TOKEN = "r8-e4-one-time-token"  # noqa: S105 - synthetic loopback-only credential.
 DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
@@ -901,22 +898,6 @@ def run_e1(  # noqa: C901
             _run(("git", "init", "--quiet"), cwd=fixture, env=environment, timeout=20)
             _run(("git", "config", "user.email", "r8@example.invalid"), cwd=fixture, env=environment, timeout=20)
             _run(("git", "config", "user.name", "R8 Fixture"), cwd=fixture, env=environment, timeout=20)
-            fixture_instructions = (
-                "# R8 synthetic acceptance fixture\n\n"
-                f"When the complete user prompt is exactly `{E1_CANARY}`, use only the powercontext MCP server. "
-                f"First call search_topic_memory with scope_id `{E1_SCOPE_ID}`, query `{E1_CANARY}`, and limit 8. "
-                "Copy the first hit's artifact object exactly into get_topic_memory with the same scope_id. "
-                "Finally reply only with that exact family, artifact_id, and revision. Do not use shell tools.\n"
-            )
-            (fixture / "AGENTS.md").write_text(fixture_instructions, encoding="utf-8")
-            _run(("git", "add", "AGENTS.md"), cwd=fixture, env=environment, timeout=20)
-            _run(
-                ("git", "commit", "--quiet", "-m", "test: configure synthetic R8 fixture"),
-                cwd=fixture,
-                env=environment,
-                timeout=20,
-            )
-
             generation_root = temp_root / "generation"
             generation_root.mkdir()
             generation_home, generation_auth_audit, generation_provider_env_key = _prepare_codex_home(
@@ -953,10 +934,7 @@ def run_e1(  # noqa: C901
                     generation_max_requests=1,
                 ),
                 mcp=McpConfig(enabled=True),
-                dashboard=DashboardConfig(
-                    enabled=True,
-                    scopes=[DashboardScopeConfig(scope_id=E1_SCOPE_ID, display_name="R8 Real Codex")],
-                ),
+                dashboard=DashboardConfig(enabled=True),
             )
             app = create_server_app(
                 settings=settings,
@@ -967,6 +945,22 @@ def run_e1(  # noqa: C901
                 ),
             )
             server = start_loopback_server(app, startup_timeout=60)
+            scope_id = asyncio.run(default_scope_id(server.base_url, token=token))
+            fixture_instructions = (
+                "# R8 synthetic acceptance fixture\n\n"
+                f"When the complete user prompt is exactly `{E1_CANARY}`, use only the powercontext MCP server. "
+                f"First call search_topic_memory with scope_id `{scope_id}`, query `{E1_CANARY}`, and limit 8. "
+                "Copy the first hit's artifact object exactly into get_topic_memory with the same scope_id. "
+                "Finally reply only with that exact family, artifact_id, and revision. Do not use shell tools.\n"
+            )
+            (fixture / "AGENTS.md").write_text(fixture_instructions, encoding="utf-8")
+            _run(("git", "add", "AGENTS.md"), cwd=fixture, env=environment, timeout=20)
+            _run(
+                ("git", "commit", "--quiet", "-m", "test: configure synthetic R8 fixture"),
+                cwd=fixture,
+                env=environment,
+                timeout=20,
+            )
             plugin = _install_current_plugin(
                 codex_home=codex_home,
                 environment=environment,
@@ -980,7 +974,7 @@ def run_e1(  # noqa: C901
                 **environment,
                 **provider_environment,
                 "POWERCONTEXT_CODEX_AUTHORIZATION": f"Bearer {token}",
-                "POWERCONTEXT_CODEX_SCOPE_ID": E1_SCOPE_ID,
+                "POWERCONTEXT_CODEX_SCOPE_ID": scope_id,
                 "POWERCONTEXT_CODEX_CAPTURE_PROMPTS": "true",
                 "POWERCONTEXT_CODEX_FLUSH_ON_CAPTURE": "false",
                 "POWERCONTEXT_CODEX_REQUEST_TIMEOUT_SECONDS": "5",
@@ -1011,7 +1005,7 @@ def run_e1(  # noqa: C901
                     exercise_http_mcp_prepared_web_chain(
                         base_url=server.base_url,
                         token=token,
-                        scope_id=E1_SCOPE_ID,
+                        scope_id=scope_id,
                         query=E1_CANARY,
                         source_id=None,
                         source_content=None,
@@ -1041,7 +1035,7 @@ def run_e1(  # noqa: C901
             second_summary = _codex_summary(second_events)
             mcp_binding = _validate_codex_search_get_binding(
                 second_events,
-                scope_id=E1_SCOPE_ID,
+                scope_id=scope_id,
                 query=E1_CANARY,
                 exact_ref=chain.exact_ref,
             )
@@ -1216,10 +1210,7 @@ def run_e2(  # noqa: C901
                 embedding_timeout_seconds=config.timeout_seconds,
             ),
             mcp=McpConfig(enabled=True),
-            dashboard=DashboardConfig(
-                enabled=True,
-                scopes=[DashboardScopeConfig(scope_id=E2_SCOPE_ID, display_name="R8 Real Embedding")],
-            ),
+            dashboard=DashboardConfig(enabled=True),
         )
         app = create_server_app(
             settings=settings,
@@ -1227,11 +1218,12 @@ def run_e2(  # noqa: C901
             middleware=(Middleware(AccessTimelineMiddleware, timeline=timeline),),
         )
         server = start_loopback_server(app, startup_timeout=60)
+        scope_id = asyncio.run(default_scope_id(server.base_url, token=_E2_TOKEN))
         chain = asyncio.run(
             exercise_http_mcp_prepared_web_chain(
                 base_url=server.base_url,
                 token=_E2_TOKEN,
-                scope_id=E2_SCOPE_ID,
+                scope_id=scope_id,
                 query=E2_CANARY,
                 source_id="r8-real-embedding-source",
                 source_content=f"Synthetic durable embedding decision: use {E2_CANARY} for the R8 E2 chain.",
@@ -1265,7 +1257,7 @@ def run_e2(  # noqa: C901
             _search_topic_once(
                 fallback_server.base_url,
                 token=_E2_TOKEN,
-                scope_id=E2_SCOPE_ID,
+                scope_id=scope_id,
                 query=E2_CANARY,
             )
         )
@@ -1503,6 +1495,7 @@ async def _wait_for_topic_after_restart(
     base_url: str,
     *,
     process: subprocess.Popen[bytes],
+    scope_id: str,
     timeout_seconds: float,
 ) -> dict[str, object]:
     deadline = time.monotonic() + timeout_seconds
@@ -1512,7 +1505,7 @@ async def _wait_for_topic_after_restart(
             if returncode is not None:
                 raise ProductChainError(f"E3 background process exited before recovery: {returncode}")
             search = await client.search_topic_memory(
-                SearchTopicMemoryRequest(scope_id=E3_SCOPE_ID, query=E3_CANARY, limit=8)
+                SearchTopicMemoryRequest(scope_id=scope_id, query=E3_CANARY, limit=8)
             )
             if search.hits:
                 return {
@@ -1578,15 +1571,16 @@ def run_e3(  # noqa: C901
             ),
             startup_timeout=90,
         )
+        scope_id = asyncio.run(default_scope_id(api_server.base_url, token=None))
         flush = asyncio.run(
             _capture_and_flush(
                 api_server.base_url,
-                scope_id=E3_SCOPE_ID,
+                scope_id=scope_id,
                 source_id="r8-oceanbase-source",
                 content=f"Synthetic OceanBase recovery decision: use {E3_CANARY} for the R8 E3 chain.",
             )
         )
-        before_worker = asyncio.run(_oceanbase_processing_state(config, scope_id=E3_SCOPE_ID))
+        before_worker = asyncio.run(_oceanbase_processing_state(config, scope_id=scope_id))
         pending_before = before_worker.get("pending")
         if not isinstance(pending_before, dict):
             raise ProductChainError("E3 API flush did not persist Pending state")
@@ -1599,7 +1593,7 @@ def run_e3(  # noqa: C901
             raise ProductChainError(f"E3 first background process did not start Topic generation: {returncode}")
         first_exit = _stop_background_process(first_background)
         first_background = None
-        after_interruption = asyncio.run(_oceanbase_processing_state(config, scope_id=E3_SCOPE_ID))
+        after_interruption = asyncio.run(_oceanbase_processing_state(config, scope_id=scope_id))
         interrupted_pending = after_interruption.get("pending")
         if not isinstance(interrupted_pending, dict):
             raise ProductChainError("E3 interrupted worker lost durable Pending state")
@@ -1609,11 +1603,12 @@ def run_e3(  # noqa: C901
             _wait_for_topic_after_restart(
                 api_server.base_url,
                 process=restarted_background,
+                scope_id=scope_id,
                 timeout_seconds=generation_timeout,
             )
         )
         recovered_ref = ArtifactIdentity.from_mapping(cast(Mapping[str, object], recovered["artifact"]))
-        after_recovery = asyncio.run(_oceanbase_processing_state(config, scope_id=E3_SCOPE_ID))
+        after_recovery = asyncio.run(_oceanbase_processing_state(config, scope_id=scope_id))
         cursor_sequence = after_recovery.get("cursor_sequence")
         source_through = pending_before.get("source_through")
         if (
@@ -1730,10 +1725,7 @@ def run_e4(directory: Path, *, generation_timeout: float) -> dict[str, object]: 
                 embedding_timeout_seconds=5,
             ),
             mcp=McpConfig(enabled=True),
-            dashboard=DashboardConfig(
-                enabled=True,
-                scopes=[DashboardScopeConfig(scope_id=E4_SCOPE_ID, display_name="R8 seekDB")],
-            ),
+            dashboard=DashboardConfig(enabled=True),
             handoff_report=HandoffReportConfig(enabled=False),
         )
         server = start_loopback_server(
@@ -1744,11 +1736,12 @@ def run_e4(directory: Path, *, generation_timeout: float) -> dict[str, object]: 
             ),
             startup_timeout=90,
         )
+        scope_id = asyncio.run(default_scope_id(server.base_url, token=_E4_TOKEN))
         chain = asyncio.run(
             exercise_http_mcp_prepared_web_chain(
                 base_url=server.base_url,
                 token=_E4_TOKEN,
-                scope_id=E4_SCOPE_ID,
+                scope_id=scope_id,
                 query=E4_CANARY,
                 source_id="r8-seekdb-source",
                 source_content=f"Synthetic seekDB release decision: use {E4_CANARY} for the R8 E4 chain.",
@@ -1780,7 +1773,7 @@ def run_e4(directory: Path, *, generation_timeout: float) -> dict[str, object]: 
             _search_topic_once(
                 fts_server.base_url,
                 token=_E4_TOKEN,
-                scope_id=E4_SCOPE_ID,
+                scope_id=scope_id,
                 query=E4_CANARY,
             )
         )

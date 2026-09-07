@@ -48,7 +48,7 @@ function extractTranslations(source) {
   const objectEnd = source.indexOf("\n};", objectStart);
   assert.notEqual(objectEnd, -1);
   const objectLiteral = source.slice(objectStart, objectEnd + 2);
-  return Function(`"use strict"; return (${objectLiteral});`)();
+  return Function("tagTranslations", `"use strict"; return (${objectLiteral});`)({en: {}, zh: {}});
 }
 
 function initializeTopicsNavigation(translations, locale) {

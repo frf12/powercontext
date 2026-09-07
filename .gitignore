@@ -97,6 +97,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+examples/jupyter/VALIDATION.*
 
 # IPython
 profile_default/
@@ -174,9 +175,8 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs/zensical documentation
-/site
-/docs/api/openapi.yaml
+# Generated outputs
+site/
 e2e/bub/results/
 
 # mypy

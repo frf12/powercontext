@@ -14,6 +14,10 @@ For the configuration-file workflow, including generation, redacted inspection, 
 [Configure a Server environment](../how-to/configure-server-environment.md). Treat every environment file as a
 secret-bearing deployment artifact.
 
+`service install` additionally requires the file to be a regular, non-symlink file owned by the current user with no
+group or other permissions. The service records its identity and refuses to launch if the file is replaced or its
+ownership, permissions, or contents change; run `service install` again after an intentional update.
+
 ## User data
 
 `POWERCONTEXT_HOME` overrides the directory used by the installed Server:
@@ -25,7 +29,8 @@ export POWERCONTEXT_HOME=/srv/powercontext
 Without an override, the default is:
 
 - Linux: `$XDG_DATA_HOME/powercontext`, or `~/.local/share/powercontext`;
-- macOS: `~/Library/Application Support/powercontext`.
+- macOS: `~/Library/Application Support/powercontext`;
+- Windows: `%LOCALAPPDATA%\\powercontext`.
 
 The default SQLite database is `powercontext.db` in this directory. Scheduled processing uses `scheduler.db` in the
 same directory.
@@ -38,19 +43,26 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | --- | --- | --- |
 | `POWERCONTEXT_SERVER_HTTP_HOST` | `127.0.0.1` | Listener address |
 | `POWERCONTEXT_SERVER_HTTP_PORT` | `8000` | Listener port |
+| `POWERCONTEXT_SERVER_WORKSPACE` | Server startup directory | Resolution root for local project Agent Skill folders |
 | `POWERCONTEXT_SERVER_MCP_ENABLED` | `true` | Enable Streamable HTTP MCP |
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP path |
-| `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | Require one static bearer token for HTTP and MCP |
-| `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Static bearer token; required when authentication is enabled |
+| `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | Legacy static bearer switch; `true` maps to `ACCESS_MODE=enforced` and requires `AUTH_TOKEN` |
+| `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Legacy static bearer token; used as compatibility authentication and mapped to the built-in administrator when no Authentication Provider is injected |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | The only supported Access switch: `disabled` or `enforced` |
+| `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | Stable deployment identity used by the `server` Access Resource |
+| `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` | unset | Explicit service Principal for scheduled jobs in a multi-user enforced deployment |
+| `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION` | unset | Optional display-only description for the scheduled service Principal |
+| `POWERCONTEXT_SERVER_PUBLIC_URL` | unset | Remotely reachable base URL used by remote Skill enrollment guidance; HTTPS is required by default |
+| `POWERCONTEXT_SERVER_ALLOW_INSECURE_HTTP` | `false` | Explicitly allow cleartext HTTP for remote Skill Receiver endpoints and guidance |
 | `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | Opt in to a non-loopback bind while authentication is disabled |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | Enable the Dashboard at the Server root path `/` |
-| `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | JSON array of selectable Dashboard scopes |
 | `POWERCONTEXT_SERVER_HANDOFF_REPORT_ENABLED` | `true` | Enable Handoff Report and its API routes |
 | `POWERCONTEXT_SERVER_LOGGING_LEVEL` | `INFO` | Operational log level |
 | `POWERCONTEXT_SERVER_LOGGING_FORMAT` | `console` | `console` or structured `json` output |
 | `POWERCONTEXT_SERVER_LOGGING_ACCESS` | `true` | Log external HTTP and logical MCP request completion |
 | `POWERCONTEXT_SERVER_METRICS_ENABLED` | `true` | Expose Prometheus metrics at `/metrics` |
 | `POWERCONTEXT_SERVER_TRACING_ENABLED` | `false` | Enable span recording and OTLP export |
+| `POWERCONTEXT_SERVER_CURSOR_SIGNING_SECRET` | local persisted key | Shared secret of at least 32 bytes for signing REST pagination cursors |
 | `POWERCONTEXT_SERVER_DATABASE_KIND` | `sqlite` | Storage backend: `sqlite`, `seekdb`, or `oceanbase` |
 | `POWERCONTEXT_SERVER_DATABASE_URL` | user data SQLite file | SQLAlchemy async URL for SQLite or OceanBase; do not set for seekDB |
 | `POWERCONTEXT_SERVER_DATABASE_PATH` | user data `seekdb` directory | Embedded seekDB path; used only when `DATABASE_KIND=seekdb` |
@@ -91,28 +103,114 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_INFERENCE_RERANK_TIMEOUT_SECONDS` | generation timeout | LLM reranker timeout |
 | `POWERCONTEXT_SERVER_INFERENCE_RERANK_MAX_REQUESTS` | generation request limit | Maximum model requests in one rerank operation |
 | `POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` | unset | Experience incubation interval; unset disables that job |
-| `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | unset | JSON object containing the host identity and explicit Agent Skill targets |
+| `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | automatic local project targets | JSON override containing the host identity and explicit Agent Skill targets |
 
-Static bearer authentication is disabled by default. When enabled, API and MCP requests must include
-`Authorization: Bearer <token>`; the liveness and readiness endpoints remain public. Plain HTTP is trusted only on a
+When the cursor signing secret is unset, a file-backed SQLite Server creates a private key beside its database;
+other persistent backends create one in the PowerContext user data directory. In-memory SQLite uses a process-local
+key. Configure the same `POWERCONTEXT_SERVER_CURSOR_SIGNING_SECRET` on every replica so a cursor remains valid after
+restart or when the next request reaches another replica. Never expose or rotate this value while issued cursors
+must remain valid.
+
+Access Control is disabled by default. In `enforced` mode, API and MCP requests must establish a Principal through the
+selected Authentication Provider; the liveness and readiness endpoints remain public. The built-in `static-bearer`
+Provider accepts `Authorization: Bearer <token>`. Plain HTTP is trusted only on a
 loopback address (`localhost`, `::1`, or any address in `127.0.0.0/8`). The Server refuses to start when it binds to a
 non-loopback address while authentication is disabled; either enable authentication, keep the bind on loopback, or,
 when TLS is terminated upstream or the network is otherwise controlled, set
 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` to opt in explicitly. Use TLS before exposing an
 authenticated Server over a network.
 
-The Python Client and CLI apply the matching rule for outbound requests: a configured unencrypted `http://` Server
-URL is accepted only for loopback hosts. The Client refuses to send any request, authenticated or not, over
-unencrypted non-loopback HTTP. Code whose `http://` base URL is only a routing label for a transport that is secure in
-practice, such as an in-process ASGI app, Unix-domain socket, or TLS-terminating proxy, must supply its own
-`http_client` and pass `trust_transport_security=True` explicitly. See
+`POWERCONTEXT_SERVER_ACCESS_MODE` is the only supported switch. `disabled` bypasses authorization decisions inside the
+trusted local boundary. `enforced` enables one policy enforcement point plus Binding and audit behavior. Authorization
+defaults to the built-in implementation and can be replaced through `create_server_app(access_control=...)`;
+Authentication is supplied through `create_server_app(authentication_provider=...)`. Without an injected Authentication
+Provider, the Server accepts only the legacy `AUTH_TOKEN` fallback and bootstraps its fixed `server-token` Principal as a
+built-in administrator. Startup fails when neither is available. The old `AUTH_ENABLED=true` plus `AUTH_TOKEN`
+configuration maps automatically to `ACCESS_MODE=enforced`.
+
+Authentication establishes a Principal; Access Control decides what that Principal may do. Principal IDs are
+deployment-wide unique, non-reused identifiers; `description` is display metadata and is not part of identity. The
+built-in static token always represents one service Principal, so it cannot distinguish user A from user B. The
+compatibility token materializes explicit Server and per-scope roles for that Principal. Inject the deployment
+Authentication Provider and corresponding AccessControlService when different users or groups need different access.
+
+Scheduled Source processing and Experience incubation run as the fixed static Principal, or as the service Principal
+selected by `ACCESS_BACKGROUND_PRINCIPAL_ID`. That Principal must have `scope.contribute` for each processed scope;
+new Memory entries and Candidates retain it as their direct proposed owner. An enforced multi-user deployment that
+configures a schedule without this explicit Principal fails at startup.
+
+Remote, multi-user, and shared-Dashboard deployments must use `enforced`. In that mode, HTTP, MCP, Dashboard data
+routes, and metrics share one Server PEP. Configured Dashboard scopes are filtered by the current Principal's
+`scope.read` decision before they are returned. `/v1/access/me` reports the `server`/`scope`/`artifact` Resource Kinds,
+Provider batch/list/relationship capabilities and Artifact Family profiles. Managed Skill export and installation do
+not introduce separate Access actions: the recipient first needs `artifact.read` on the logical Skill identity, then
+chooses whether and how to install an exact Revision.
+
+The built-in Access schema uses the configured SQLite, seekDB, or OceanBase backend, but remains Server-owned rather
+than becoming a Runtime domain. A custom deployment can inject an `AccessControlService` into `create_server_app`.
+`CasbinAuthorizationProvider` is the included writable external adapter: it evaluates the fixed action vocabulary in
+embedded Casbin while using the canonical Binding Store as its persistent adapter, so it supports point/batch checks,
+safe resource filters, create/revoke, expiry, and CAS without a second policy shadow. Pass that provider as both the
+decision provider and `relationships`, and retain the relational repository as the audit store.
+
+`AuthZenAuthorizationProvider` is an included decision-only adapter for the OpenID AuthZEN Authorization API 1.0
+`evaluation` and `evaluations` endpoints. Configure its capabilities with `multi_requirement_check=true`,
+`relationship_management=false`, and `safe_resource_filtering=false`; self-service Binding mutation and authorized
+resource listing then return 503 instead of claiming an unsafe capability. The adapter accepts HTTPS endpoints or
+loopback HTTP, rejects credentials embedded in URLs, and does not expose PDP response bodies or errors. An
+authentication middleware must still bind an opaque `PrincipalRef`; `scope_id` is only a resource partition and never
+establishes identity.
+
+The Python Client and CLI apply the matching rule for general outbound requests: a configured unencrypted `http://`
+Server URL is accepted only for loopback hosts. The explicit remote Skill Receiver PoC exception is documented below.
+Code whose `http://` base URL is only a routing label for a transport that is secure in practice, such as an in-process
+ASGI app, Unix-domain socket, or TLS-terminating proxy, must supply its own `http_client` and pass
+`trust_transport_security=True` explicitly. See
 [Deploy the Server](../how-to/deploy-server.md) for a safe Docker and remote-access setup.
 
-The Dashboard is enabled by default and shares the Server listener and port with the HTTP API and MCP. With no scopes
-configured, the page shows an empty state. Dashboard initialization failures are logged with their direct cause and do
-not prevent the Server HTTP API, MCP, or health checks from starting.
+The Dashboard is enabled by default and shares the Server listener and port with the HTTP API and MCP. It discovers
+the default Scope and every created Scope from the Server. Dashboard initialization failures are logged with their
+direct cause and do not prevent the Server HTTP API, MCP, or health checks from starting.
 
-When bearer authentication is enabled, the HTML shells at `/`, `/topics`, `/skills`, `/reviews`, and `/handoff-reports`, plus
+By default, the Server treats its startup directory as the workspace and exposes two writable local project targets:
+`<workspace>/.agents/skills` for Codex and `<workspace>/.claude/skills` for Claude Code. Missing directories are harmless
+and are created only after the user confirms an installation in the Dashboard. Set `POWERCONTEXT_SERVER_WORKSPACE` once
+for systemd, containers, or other launchers whose working directory is not the project; the page does not ask users to
+enter Skill paths.
+
+Configure `POWERCONTEXT_SERVER_PUBLIC_URL` once when remote Skill Receivers should connect through a different externally
+reachable origin than the one used to open the Dashboard. The Skills Dashboard then generates the enrollment command
+without asking for an address on every target. When it is unset, the Dashboard automatically uses its current HTTPS
+origin, or its current HTTP origin when the explicit insecure switch is enabled. If neither is available, the enrollment
+command relies on the remote CLI's configured Server URL.
+
+For a first-phase PoC on a protected internal test network, direct HTTP requires explicit consent on both sides. Set
+`POWERCONTEXT_SERVER_ALLOW_INSECURE_HTTP=true`, advertise an `http://` `POWERCONTEXT_SERVER_PUBLIC_URL`, and bind the
+listener to an address reachable by the target. The Dashboard shows a cleartext warning and adds
+`remote-enroll --allow-insecure-http`; a manually entered enrollment command must include the same option. Without the
+Server setting, the remote endpoints reject non-loopback HTTP. Without the Receiver option, the CLI rejects the URL
+before transmitting the one-time enrollment code. The permission is stored in the owner-only Receiver configuration so
+`remote-watch` and its systemd user service keep the same policy without embedding credentials or extra flags in the
+unit. This switch adds no TLS, network isolation, or protection against interception: do not use it on the public
+Internet or an untrusted network, and prefer HTTPS for persistent deployments.
+
+```bash
+export POWERCONTEXT_SERVER_HTTP_HOST=0.0.0.0
+export POWERCONTEXT_SERVER_PUBLIC_URL=http://powercontext.internal.example:8765
+export POWERCONTEXT_SERVER_ALLOW_INSECURE_HTTP=true
+export POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true
+powercontext server run
+
+# On the target project:
+powercontext --server-url http://powercontext.internal.example:8765 \
+  skill remote-enroll --workspace "$PWD" --install-service --allow-insecure-http
+```
+
+The non-loopback opt-in in this example is independent of the Receiver transport exception: it acknowledges that all
+Server routes on this listener are reachable without the Server-wide bearer token. Prefer enabling authentication or
+terminating TLS in front of a loopback-bound Server whenever the deployment permits it.
+
+When compatibility static Bearer authentication is enforced, the HTML shells at `/`, `/topics`, `/skills`, `/reviews`, and `/handoff-reports`, plus
 their static assets, remain public so the browser can render the sign-in form. Data requests stay protected. Enter the
 Server token in that form; the browser keeps it only in the current tab's session storage. Disable both Dashboard and
 Handoff Report if even these sign-in pages must not be exposed.
@@ -169,9 +267,11 @@ The built-in reranker is an LLM listwise reranker, not a dedicated cross-encoder
 generation model and its provider settings. Set `POWERCONTEXT_SERVER_INFERENCE_RERANK_MODEL` to give that LLM operation
 an independent model, base URL, headers, settings, timeout, and request limit.
 
-The same configured generation model gates explicit Experience generation, managed Skill generation and evolution,
-and external Skill import or fork. Without it, these operations return a capability error before persisting a
-Candidate. Candidate Review, exact reads, and external Skill scan/list/resolve continue to work.
+The same configured generation model gates explicit Experience generation, managed Skill generation, and semantic
+Skill fork/evolution. Exact external Skill import and complete package upload do not use a model: PowerContext validates
+and stores the canonical package bytes, then creates a pending Candidate with the same package digest. Without a
+generation model, semantic generation returns a capability error before persisting a Candidate; Review, package
+inspection and download, exact import, usage recording, and external Skill scan/list/resolve continue to work.
 
 Experience incubation is a separate APScheduler job with its own persisted Source cursor. Each activation inspects a
 fixed window of at most 32 Sources and exposes only Content Sources whose metadata contains
@@ -183,17 +283,60 @@ See [Create and review an Experience](../how-to/create-and-review-experience.md)
 
 ### Agent Skill targets
 
-`POWERCONTEXT_SERVER_EXTERNAL_SKILLS` is a JSON object containing one local host identity and explicit Codex or Claude
-Code Skill targets. For its JSON shape and verification steps, see
-[Configure Agent Skill targets](../how-to/configure-agent-skill-targets.md).
+The zero-configuration flow uses the Codex and Claude Code project folders under the workspace. Provide a JSON override
+only for custom paths, user-level targets, environment compatibility facts, or to explicitly disable local discovery.
+For a basic JSON shape and verification flow, see
+[Configure Agent Skill targets](../how-to/configure-agent-skill-targets.md). A compatibility-aware override looks like:
 
-Target IDs must be unique. `agent_kind` supports `codex` and `claude_code`; installation scopes are `user`, `project`,
-and `plugin`. PowerContext scans only the immediate Skill package directories under these explicit targets; it does not
-infer a home directory, install packages, or grant execution authority. `allow_managed_publish` defaults to `false`;
-when true, the authenticated Skills Library or Review page may explicitly create or safely update an approved managed
-Skill in that target. The page still cannot submit an arbitrary path or overwrite a foreign or modified package. The
+```bash
+export POWERCONTEXT_SERVER_EXTERNAL_SKILLS='{
+  "host_id": "workstation-1",
+  "targets": [
+    {
+      "target_id": "codex-project",
+      "agent_kind": "codex",
+      "installation_scope": "project",
+      "path": "/srv/project/.agents/skills",
+      "allow_managed_publish": true,
+      "environment": {
+        "operating_system": "linux",
+        "architecture": "x86_64",
+        "commands": {"python": "3.13.2", "bash": "5.2"},
+        "network_policy": "restricted",
+        "writable_roots": ["workspace"],
+        "dependency_install_policy": "denied",
+        "environment_names": ["CI"]
+      }
+    },
+    {
+      "target_id": "claude-project",
+      "agent_kind": "claude_code",
+      "installation_scope": "project",
+      "path": "/srv/project/.claude/skills",
+      "allow_managed_publish": true
+    }
+  ]
+}'
+```
+Setting `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` replaces both automatically generated project targets in full; use
+`{"host_id": null, "targets": []}` to disable local discovery and publication. Target IDs must be unique. `agent_kind`
+supports `codex` and `claude_code`; installation scopes are `user`, `project`, and `plugin`. PowerContext scans only the
+immediate Skill package directories under default or explicit targets; it does not infer a user home directory, install
+packages, or grant execution authority. The two generated project targets let users explicitly install from the
+Dashboard. Custom targets default `allow_managed_publish` to `false`; when true, the authenticated Skills Library or
+Review page may explicitly create or safely update an approved managed
+Skill in that target. Publication materializes the exact reviewed package, including scripts and references, without
+executing it or injecting a sidecar into the package. The same pages can safely unpublish only an intact package whose
+binding and tree digest still match; local drift and foreign content remain untouched. The page still cannot submit an
+arbitrary path or overwrite a foreign or modified package. The
 `host_id`, locator, and registration are local-environment state, not a cross-host contract. Existing `codex_roots`
 configuration remains accepted as a Codex-only compatibility form; new configuration should use `targets`.
+
+The optional `environment` object contains only observed, secret-free compatibility facts. Command values are version
+labels, and `environment_names` records names only, never values. PowerContext does not probe or execute package scripts
+to construct this profile. When it is absent, packages containing scripts report unknown compatibility; when present,
+the Skills Library compares known script interpreters with the observed command names and displays a reasoned assessment.
+The assessment does not grant network, filesystem, dependency-install, or environment access.
 
 The Server always creates non-recording OpenTelemetry request context so `X-PowerContext-Request-ID` can be derived from the
 inbound span. To enable recording and export for a CLI-managed Server, install
@@ -203,7 +346,9 @@ that do not use the `powercontext` command may omit the `cli` extra.
 
 Enabling tracing also produces spans for the generation and embedding calls that PowerContext constructs, without
 recording prompts, model responses, Memory content, or vectors. See
-[Trace with Phoenix](../how-to/trace-with-phoenix.md) for a working configuration.
+[Trace with Phoenix](../how-to/trace-with-phoenix.md) for a working configuration, and
+[Trace with Langfuse](../how-to/trace-with-langfuse.md) for a backend that authenticates the exporter through
+`OTEL_EXPORTER_OTLP_HEADERS`.
 
 To use OceanBase, provide its URL through your environment or secret manager:
 
@@ -238,7 +383,7 @@ only through the environment so it does not appear in command-line arguments.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `POWERCONTEXT_CODEX_SCOPE_ID` | derived from Git remote or project path | Override project scope |
+| `POWERCONTEXT_CODEX_SCOPE_ID` | unset | Explicitly select an existing Scope instead of resolving bindings and the Server default |
 | `POWERCONTEXT_CODEX_AUTHORIZATION` | unset | Complete `Bearer <token>` header for Hook and MCP requests |
 | `POWERCONTEXT_CODEX_CAPTURE_PROMPTS` | `true` | Capture user prompts as Source evidence |
 | `POWERCONTEXT_CODEX_FLUSH_ON_CAPTURE` | `false` | Wait for Source processing after capture |
@@ -247,15 +392,16 @@ only through the environment so it does not appear in command-line arguments.
 | `POWERCONTEXT_CODEX_FLUSH_MAX_CALLS` | `4` | Maximum flush calls per prompt |
 
 The outer Codex hook timeout is ten seconds. Recall, capture, and flush fail independently and never block Codex when
-the Server is unavailable or rejects authentication. The variable must be present in the environment that starts
-Codex; restart Codex after changing it.
+the Server is unavailable or rejects authentication. Without an explicit Scope, the plugin resolves the Session
+binding, workspace binding, then Server default. Configuration variables must be present in the environment that
+starts Codex; restart Codex after changing them.
 
 ## Claude Code plugin
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `POWERCONTEXT_CLAUDE_SERVER_URL` | `http://127.0.0.1:8000` | Server base URL used by the Hook |
-| `POWERCONTEXT_CLAUDE_SCOPE_ID` | derived from Git remote or project path | Override project scope |
+| `POWERCONTEXT_CLAUDE_SCOPE_ID` | unset | Override durable bindings and the Server default Scope |
 | `POWERCONTEXT_CLAUDE_AUTHORIZATION` | unset | Complete `Bearer <token>` header for Hook and MCP requests |
 | `POWERCONTEXT_CLAUDE_CAPTURE_PROMPTS` | `true` | Capture user prompts as ordinary Source evidence |
 | `POWERCONTEXT_CLAUDE_FLUSH_ON_CAPTURE` | `false` | Wait for Source processing after capture |
@@ -276,7 +422,7 @@ after changing its environment.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `POWERCONTEXT_DSH_BASE_URL` | `http://127.0.0.1:8000` | Server base URL used by the plugin |
-| `POWERCONTEXT_DSH_SCOPE_ID` | derived from Git remote or project path | Override project scope |
+| `POWERCONTEXT_DSH_SCOPE_ID` | unset | Explicit existing Scope before workspace binding and Server default |
 | `POWERCONTEXT_DSH_AUTHORIZATION` | unset | Complete `Bearer <token>` header for plugin HTTP requests |
 | `POWERCONTEXT_DSH_CAPTURE_PROMPTS` | `true` | Capture user prompts as Source evidence |
 | `POWERCONTEXT_DSH_FLUSH_ON_CAPTURE` | `false` | Wait for Source processing after capture |
@@ -288,7 +434,7 @@ after changing its environment.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `POWERCONTEXT_PI_BASE_URL` | `http://127.0.0.1:8000` | Server base URL; non-loopback endpoints must use HTTPS |
-| `POWERCONTEXT_PI_SCOPE_ID` | derived from Git remote or project path | Override project scope |
+| `POWERCONTEXT_PI_SCOPE_ID` | unset | Explicit existing Scope before workspace binding and Server default |
 | `POWERCONTEXT_PI_AUTHORIZATION` | unset | Complete `Bearer <token>` header for package HTTP requests |
 | `POWERCONTEXT_PI_CAPTURE_PROMPTS` | `true` | Capture eligible user prompts as Source evidence |
 | `POWERCONTEXT_PI_REQUEST_TIMEOUT_MS` | `1000` | Per-request timeout in milliseconds |

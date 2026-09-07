@@ -71,6 +71,11 @@ class _UnusedProvider:
         raise AssertionError(scope_id)
 
 
+class _RegisteredScopes:
+    async def get(self, scope_id: str, /) -> Any:
+        return object()
+
+
 class _Embedding:
     profile = EmbeddingProfile(profile_id="topic-v1", model="test", dimension=2)
 
@@ -105,6 +110,7 @@ def _runtime(**kwargs: Any) -> BuiltinRuntime:
     return BuiltinRuntime(
         provider=_UnusedProvider(),
         capabilities=RuntimeCapabilities(memory_extraction=False, memory_search_modes=()),
+        scope_application=cast(Any, _RegisteredScopes()),
         **kwargs,
     )
 

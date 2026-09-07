@@ -29,8 +29,9 @@ from powercontext.builtin.persistence.tables import (
 )
 from powercontext.builtin.runtime.relational import RelationalContexts
 from powercontext.errors import RevisionConflictError
-from powercontext.sources import SourceMaterialization, SourceRef
+from powercontext.sources import SourceDefinitionRegistry, SourceMaterialization, SourceRef
 from tests.builtin.persistence.contract import (
+    SOURCE_ADAPTERS,
     Handoff,
     HandoffContent,
     HandoffDraft,
@@ -103,7 +104,10 @@ def test_two_artifact_families_share_revisions_and_ordered_direct_lineage() -> N
 def test_relational_contexts_persist_topic_memory_revisions_and_exact_lineage() -> None:
     async def scenario() -> None:
         async with repository_profile() as (profile, repositories):
-            contexts = RelationalContexts(database=profile.database)
+            contexts = RelationalContexts(
+                database=profile.database,
+                source_registry=SourceDefinitionRegistry.from_adapters(SOURCE_ADAPTERS),
+            )
             source = NoteSource(
                 name="note-1",
                 materialization=SourceMaterialization.CAPTURED,

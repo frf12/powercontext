@@ -34,7 +34,10 @@ header:
 
   paths-ignore:
     - '**/*.md'
+    - '**/*.mdx'
     - '**/*.json'
+    # Notebook JSON stores the license in the first Markdown cell with escaped newlines.
+    - 'examples/jupyter/*.ipynb'
     - '**/*.svg'
     - '.github/**'
     - '**/.gitignore'
@@ -43,7 +46,9 @@ header:
     - '**/LICENSE'
     - 'NOTICE'
     - '**/LICENSE.oceanbase-design'
-    - '**/uv.lock'
+    - '**/*.lock'
+    - '**/*-lock.yaml'
+    - '**/*.lockb'
     - 'benchmark/locomo/dataset/**'
     - 'benchmark/locomo/results/**'
     - 'tox.ini'
@@ -58,6 +63,8 @@ header:
     - '.gitattributes'
     - '**/*.service.in'
     - '**/*.jsonl'
+    # license-eye cannot determine the comment style of patch files.
+    - '**/*.patch'
     # license-eye cannot determine the comment style of uv requirements files.
     - 'e2e/bub/source-overrides.txt'
 

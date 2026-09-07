@@ -25,7 +25,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef
@@ -42,6 +42,7 @@ from powercontext.builtin.artifacts.handoff import (
     HandoffAudience,
     HandoffCitation,
     HandoffDraft,
+    HandoffEvidenceAuthorizer,
     HandoffOmission,
     HandoffResolution,
     HandoffService,
@@ -62,11 +63,38 @@ from powercontext.builtin.artifacts.memory.errors import (
     InvalidMemoryCitationError,
     MemoryEntryNotFoundError,
 )
+from powercontext.builtin.artifacts.prompt import (
+    GeneratePromptDemonstrations,
+    PromptConfiguration,
+    PromptDemonstrationResult,
+    PromptError,
+)
+from powercontext.builtin.artifacts.prompt.service import PromptService
 from powercontext.builtin.artifacts.search import analyze_text
 from powercontext.builtin.artifacts.skill import (
+    AgentKind,
+    AgentSkillTarget,
     ExternalSkillRegistryUnavailableError,
     ExternalSkillResolution,
     Skill,
+    SkillOrigin,
+    SkillPackageRef,
+    SkillPackageSnapshot,
+    SkillSearchHit,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteSkillDistributionService,
+    RemoteSkillObservation,
+    RemoteSkillReceipt,
+    RemoteSkillReceiptResult,
+    RemoteSkillReconcileResult,
+    RemoteSkillTargetStatus,
+    RemoteTargetCredential,
+    RemoteTargetEnrollment,
+)
+from powercontext.builtin.artifacts.skill.publication import (
+    ManagedSkillPublicationService,
+    ManagedSkillPublicationStatus,
 )
 from powercontext.builtin.artifacts.skill.registry import ExternalSkillRegistryService
 from powercontext.builtin.artifacts.topic_memory import (
@@ -89,6 +117,25 @@ from powercontext.builtin.inference import (
 )
 from powercontext.builtin.inference.models import InferenceUsage
 from powercontext.builtin.inference.usage import bind_usage_reporter
+from powercontext.builtin.persistence.agent_skill_targets import RemoteAgentSkillTarget
+from powercontext.builtin.persistence.artifact_governance import (
+    ArtifactGovernance,
+    ArtifactLifecycleState,
+)
+from powercontext.builtin.persistence.skill_publications import SkillPublication
+from powercontext.builtin.publication import ArtifactPublicationApplication
+from powercontext.builtin.records import (
+    ArtifactCreated,
+    ArtifactRecord,
+    ArtifactRecordPage,
+    ArtifactRevisionPage,
+    ArtifactWrite,
+    BaseValueConflictError,
+    LogicalArtifactRecord,
+    RecordService,
+    ScopeSummaryPage,
+    SourceRecord,
+)
 from powercontext.builtin.review.generation import GeneratedCandidateResult, ReviewedGenerationService
 from powercontext.builtin.review.service import ReviewService
 from powercontext.builtin.runtime._scope_cache import (
@@ -101,6 +148,8 @@ from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, Topi
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
+    CommitConnectorCheckpoint,
+    ConnectorCheckpointState,
     ExperienceCandidate,
     ExperienceIncubationResult,
     ExternalSkillList,
@@ -138,12 +187,19 @@ from powercontext.builtin.runtime.models import (
     SearchTopicMemoryRequest,
     SkillCandidate,
     SourceReceipt,
+    SubmitSourceObservation,
     TopicMemoryFlushResult,
 )
-from powercontext.builtin.runtime.prepared_context import PreparedContextBuild, PreparedContextBuilder
+from powercontext.builtin.runtime.prepared_context import (
+    PreparedContextBuild,
+    PreparedContextBuilder,
+    PreparedExperienceCandidates,
+    PreparedMemoryCandidates,
+)
 from powercontext.builtin.runtime.protocols import (
     BuiltinTriggers,
     PowerContextProvider,
+    RemoteIngestion,
     RuntimeSpan,
     RuntimeTracing,
     TraceAttribute,
@@ -155,10 +211,13 @@ from powercontext.builtin.runtime.readiness import (
     RuntimeReadinessStatus,
 )
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics
+from powercontext.builtin.scope import ScopeApplication, ScopeDescriptor, ScopeSelection
 from powercontext.builtin.sources import (
+    CONTENT_SOURCE_NAME,
     ContentCapture,
     ContentSource,
     ExternalSkillImportMode,
+    SkillUsageCapture,
     SourceCursor,
     validate_scope_id,
 )
@@ -169,6 +228,8 @@ from powercontext.builtin.statistics import (
     Statistics,
     StatisticsPeriod,
 )
+from powercontext.builtin.statistics.aggregation import aggregate_statistics
+from powercontext.builtin.tags import ArtifactTagSet, TagFilter, TagQuery, TagQueryPage, TagTarget
 from powercontext.builtin.work import (
     HANDOFF_BOUNDARY_SOURCE_KIND,
     HANDOFF_RECEIPT_SOURCE_KIND,
@@ -191,8 +252,8 @@ from powercontext.builtin.work import (
     project_work_continuity,
 )
 from powercontext.context import PowerContext
-from powercontext.errors import ArtifactNotFoundError, RevisionConflictError
-from powercontext.sources import SourceRef
+from powercontext.errors import ArtifactNotFoundError, RevisionConflictError, SourceConflictError
+from powercontext.sources import ConnectorBinding, SourceDefinitionManifest, SourceRef
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -219,15 +280,27 @@ ScopeIds = Callable[[], Awaitable[tuple[str, ...]]]
 ReviewServiceFactory = Callable[[str], ReviewService]
 GenerationServiceFactory = Callable[[str], ReviewedGenerationService]
 ExternalSkillRegistryFactory = Callable[[str], ExternalSkillRegistryService]
+SkillPublicationServiceFactory = Callable[[str, str, str], ManagedSkillPublicationService]
 ExternalSkillImporter = Callable[
     [str, str, str, ExternalSkillImportMode, str | None],
     Awaitable[GeneratedCandidateResult],
 ]
 ExperienceIncubator = Callable[[str, int], Awaitable[ExperienceIncubationResult]]
 ExperienceRecall = Callable[[str, str, int], Awaitable[tuple[ExperienceSearchHit, ...]]]
+SkillRecall = Callable[[str, str, int], Awaitable[tuple[SkillSearchHit, ...]]]
+SkillLister = Callable[[str, bool, int], Awaitable[tuple[tuple[Skill, ArtifactGovernance], ...]]]
+SkillOriginReader = Callable[[str, tuple[Skill, ...]], Awaitable[tuple[SkillOrigin, ...]]]
+SkillGovernanceReader = Callable[[str, str], Awaitable[ArtifactGovernance]]
+SkillGovernanceUpdater = Callable[[str, str, int, ArtifactLifecycleState, str | None], Awaitable[ArtifactGovernance]]
+SkillPackageResolver = Callable[[str, ArtifactRef], Awaitable[SkillPackageSnapshot]]
+PackageSnapshotResolver = Callable[[str, SkillPackageRef], Awaitable[SkillPackageSnapshot]]
+SkillPackageUploader = Callable[[str, bytes, str | None, ArtifactRef | None], Awaitable[SkillCandidate]]
+SkillUsageRecorder = Callable[[str, SkillUsageCapture], Awaitable[SourceReceipt]]
 StatisticsServiceFactory = Callable[[str], RelationalScopedStatistics]
 RecallTokenEstimator = Callable[[str, PreparedContextBuild], Awaitable[RecallTokenMeasurement | None]]
 Clock = Callable[[], datetime]
+ScheduledSourceRunner = Callable[[str, "BuiltinRuntime"], Awaitable[MemoryFlushResult]]
+ScheduledExperienceRunner = Callable[[str, "BuiltinRuntime"], Awaitable[ExperienceIncubationResult]]
 _MEMORY_SEARCH_ATTEMPTS = 3
 
 
@@ -243,8 +316,17 @@ class _RuntimeStateError(RuntimeError):
             "empty-write": "explicit Memory write did not produce a Memory",
             "experience-incubation": "Experience incubation is not configured",
             "external-skill-registry": "External Skill Registry is not configured",
+            "remote-ingestion": "Remote Source ingestion is not configured",
             "review": "Candidate Review services are not configured",
+            "records": "Base Source and Artifact access is not configured",
+            "remote-skill-distribution": "Remote Skill distribution services are not configured",
             "scheduler": "Built-in Runtime scheduler is already started",
+            "scope": "Scope services are not configured",
+            "skill-publication": "Managed Skill publication services are not configured",
+            "skill-provenance": "Managed Skill provenance services are not configured",
+            "skill-governance": "Managed Skill governance services are not configured",
+            "skill-package": "Managed Skill package services are not configured",
+            "skill-usage": "Managed Skill usage recording is not configured",
             "statistics": "Statistics services are not configured",
             "topic-memory-browse": "Topic Memory browsing is not configured",
         }
@@ -259,6 +341,22 @@ class ScopedSourceApplication:
         self.scope_id = validate_scope_id(scope_id)
 
     async def capture(self, value: CaptureSource, /) -> SourceReceipt:
+        if self._runtime._record_service is not None:
+            try:
+                async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
+                    record = await self._runtime._records().capture_source(
+                        self.scope_id,
+                        CONTENT_SOURCE_NAME,
+                        value.source_id,
+                        value.content,
+                        value.metadata,
+                    )
+            except BaseValueConflictError as error:
+                raise SourceConflictError("identity", error.identity) from None
+            return SourceReceipt(
+                source_ref=SourceRef(source_type=record.source_type, source_id=record.source_id),
+                sequence=record.position,
+            )
         async with self._runtime._context(self.scope_id) as context:
             source, sequence = await context.sources.capture(
                 ContentCapture(
@@ -278,6 +376,204 @@ class SourceApplication:
 
     def for_scope(self, scope_id: str, /) -> ScopedSourceApplication:
         return ScopedSourceApplication(self._runtime, scope_id)
+
+
+class ScopedRecordApplication:
+    """Run base Source and Artifact operations in one Scope."""
+
+    def __init__(self, runtime: BuiltinRuntime, scope_id: str) -> None:
+        self._runtime = runtime
+        self.scope_id = validate_scope_id(scope_id)
+
+    async def create_source(
+        self,
+        source_type: str,
+        content: JsonValue,
+        /,
+    ) -> SourceRecord:
+        async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await self._runtime._records().create_source(
+                self.scope_id,
+                source_type,
+                content,
+            )
+
+    async def get_source(self, source_type: str, source_id: str, /) -> SourceRecord:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().get_source(self.scope_id, source_type, source_id)
+
+    async def create_artifact(
+        self,
+        family: str,
+        write: ArtifactWrite,
+        /,
+    ) -> ArtifactCreated:
+        async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await self._runtime._records().create_artifact(self.scope_id, family, write)
+
+    async def get_artifact(self, family: str, artifact_id: str, /) -> ArtifactRecord:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().get_artifact(self.scope_id, family, artifact_id)
+
+    async def get_artifact_revision(
+        self,
+        family: str,
+        artifact_id: str,
+        revision: int,
+        /,
+    ) -> ArtifactRecord:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().get_artifact_revision(
+                self.scope_id,
+                family,
+                artifact_id,
+                revision,
+            )
+
+    async def list_artifact_revisions(
+        self,
+        family: str,
+        artifact_id: str,
+        /,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> ArtifactRevisionPage:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().list_artifact_revisions(
+                self.scope_id, family, artifact_id, limit=limit, cursor=cursor
+            )
+
+    async def current_memory_entry(self, artifact_id: str, entry_id: str, /) -> MemoryEntryVersion:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().current_memory_entry(self.scope_id, artifact_id, entry_id)
+
+    async def logical_artifacts(self) -> tuple[LogicalArtifactRecord, ...]:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().logical_artifacts(self.scope_id)
+
+    async def query_artifacts(
+        self,
+        family: str,
+        /,
+        *,
+        limit: int,
+        cursor: str | None,
+        tag_filter: TagFilter | None = None,
+    ) -> ArtifactRecordPage:
+        async with self._runtime._scope_operation(self.scope_id):
+            filters = {} if tag_filter is None else {"tag_filter": tag_filter}
+            return await self._runtime._records().query_artifacts(
+                self.scope_id,
+                family,
+                limit=limit,
+                cursor=cursor,
+                **filters,
+            )
+
+    async def get_tags(self, target: TagTarget) -> ArtifactTagSet:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().get_tags(self.scope_id, target)
+
+    async def replace_tags(self, target: TagTarget, tags: tuple[str, ...], *, expected_etag: str) -> ArtifactTagSet:
+        async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await self._runtime._records().replace_tags(self.scope_id, target, tags, expected_etag=expected_etag)
+
+    async def query_tags(self, query: TagQuery, *, caller: str = "runtime") -> TagQueryPage:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().query_tags(self.scope_id, query, caller=caller)
+
+    async def replace_artifact(
+        self,
+        family: str,
+        artifact_id: str,
+        expected_etag: str,
+        write: ArtifactWrite,
+        /,
+    ) -> ArtifactRecord:
+        async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await self._runtime._records().replace_artifact(
+                self.scope_id,
+                family,
+                artifact_id,
+                expected_etag,
+                write,
+            )
+
+
+class RecordApplication:
+    """Select scoped base access and list observable Scopes."""
+
+    def __init__(self, runtime: BuiltinRuntime) -> None:
+        self._runtime = runtime
+
+    def for_scope(self, scope_id: str, /) -> ScopedRecordApplication:
+        return ScopedRecordApplication(self._runtime, scope_id)
+
+    async def list_scopes(self, *, limit: int, cursor: str | None) -> ScopeSummaryPage:
+        async with self._runtime._operation():
+            return await self._runtime._records().list_scopes(limit=limit, cursor=cursor)
+
+
+class ScopedPromptApplication:
+    """Read configuration and generate suggestions inside an existing Scope."""
+
+    def __init__(self, runtime: BuiltinRuntime, scope_id: str) -> None:
+        self._runtime = runtime
+        self.scope_id = validate_scope_id(scope_id)
+
+    async def read_configuration(self, key: str, /) -> PromptConfiguration:
+        async with self._runtime._scope_operation(self.scope_id):
+            service = self._runtime._prompt_service
+            if service is None:
+                raise PromptError("prompt_customization_unavailable")
+            return await service.read_configuration(self.scope_id, key)
+
+    async def generate_demonstrations(
+        self, key: str, request: GeneratePromptDemonstrations, /
+    ) -> PromptDemonstrationResult:
+        async with self._runtime._scope_operation(self.scope_id):
+            service = self._runtime._prompt_service
+            if service is None:
+                raise PromptError("prompt_customization_unavailable")
+            return await service.generate_demonstrations(key, request)
+
+
+class PromptApplication:
+    def __init__(self, runtime: BuiltinRuntime) -> None:
+        self._runtime = runtime
+
+    def for_scope(self, scope_id: str, /) -> ScopedPromptApplication:
+        return ScopedPromptApplication(self._runtime, scope_id)
+
+
+class RemoteIngestionApplication:
+    """Expose worker-owned Definition and observation operations."""
+
+    def __init__(self, runtime: BuiltinRuntime, service: RemoteIngestion | None) -> None:
+        self._runtime = runtime
+        self._service = service
+
+    def _require_service(self) -> RemoteIngestion:
+        if self._service is None:
+            raise _RuntimeStateError("remote-ingestion")
+        return self._service
+
+    async def register(self, manifest: SourceDefinitionManifest, /) -> SourceDefinitionManifest:
+        async with self._runtime._operation():
+            return await self._require_service().register_source_definition(manifest)
+
+    async def checkpoint(self, binding: ConnectorBinding, /) -> ConnectorCheckpointState:
+        async with self._runtime._scope_operation(binding.scope_id):
+            return await self._require_service().connector_checkpoint(binding)
+
+    async def submit(self, request: SubmitSourceObservation, /) -> SourceReceipt:
+        async with self._runtime._scope_operation(request.scope_id):
+            return await self._require_service().submit_source_observation(request)
+
+    async def commit(self, request: CommitConnectorCheckpoint, /) -> ConnectorCheckpointState:
+        async with self._runtime._scope_operation(request.binding.scope_id):
+            return await self._require_service().commit_connector_checkpoint(request)
 
 
 class ScopedStatisticsApplication:
@@ -352,6 +648,27 @@ class StatisticsApplication:
     def for_scope(self, scope_id: str, /) -> ScopedStatisticsApplication:
         return ScopedStatisticsApplication(self._runtime, scope_id)
 
+    async def overview(
+        self,
+        selection: ScopeSelection,
+        *,
+        period: StatisticsPeriod = StatisticsPeriod.THIRTY_DAYS,
+    ) -> Statistics:
+        if self._runtime.scopes is None:
+            raise _RuntimeStateError("statistics")
+        async with self._runtime._operation():
+            resolved = await self._runtime.scopes.resolve_selection(selection)
+            captured_at = self._runtime._clock()
+            snapshots = tuple([
+                await self._runtime._statistics(scope.scope_id).overview(period, captured_at) for scope in resolved
+            ])
+        return aggregate_statistics(
+            selection,
+            tuple(scope.scope_id for scope in resolved),
+            snapshots,
+            captured_at,
+        )
+
 
 class ScopedContextApplication:
     """Prepare final context for one scope using Runtime-owned source policy."""
@@ -361,89 +678,57 @@ class ScopedContextApplication:
         self.scope_id = validate_scope_id(scope_id)
 
     async def prepare(self, request: PrepareContextRequest, /) -> PreparedContext:
-        async with self._runtime._scope_operation(self.scope_id):
-            return await self._prepare(request)
+        async with self._runtime._scope_operation(self.scope_id) as scope:
+            return await self._prepare(request, scope)
 
-    async def _prepare(self, request: PrepareContextRequest, /) -> PreparedContext:
+    async def _prepare(self, request: PrepareContextRequest, scope: ScopeDescriptor, /) -> PreparedContext:
         builder = PreparedContextBuilder()
-        async with (
-            self._runtime._context(self.scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_RECALL) as context,
-            self._runtime._locked(self.scope_id),
-        ):
-            with self._runtime._stage(
-                _MEMORY_SEARCH_STAGE,
-                attributes={
-                    _MEMORY_SEARCH_REQUESTED_MODE: "auto",
-                    _MEMORY_SEARCH_LIMIT: builder.memory_candidate_limit,
-                },
-            ) as span:
-                service = context.artifacts.memory
-                current = await _head_or_none(service, context.artifacts.memory_artifact_id)
-                memory_hits = ()
-                search_mode: str | None = None
-                if current is not None:
-                    result = await service.search(
-                        request.query,
-                        memories=(current,),
-                        limit=builder.memory_candidate_limit,
-                        mode="auto",
-                    )
-                    memory_hits = result.hits
-                    search_mode = result.mode
-                if span is not None:
-                    attributes: dict[str, TraceAttribute] = {
-                        _MEMORY_SEARCH_MEMORY_PRESENT: current is not None,
-                        _MEMORY_SEARCH_RESULT_COUNT: len(memory_hits),
-                    }
-                    if search_mode is not None:
-                        attributes[_MEMORY_SEARCH_MODE] = search_mode
-                    span.set_attributes(attributes)
+        scope_ids = [self.scope_id, *scope.context_references]
 
-            topic_memory_hits = await self._topic_memory_hits(
-                request.query.strip(), builder.topic_memory_candidate_limit
+        memory_candidates: list[PreparedMemoryCandidates] = []
+        experience_candidates: list[PreparedExperienceCandidates] = []
+        for scope_id in scope_ids:
+            memory, experiences = await self._recall_scope(
+                scope_id,
+                request,
+                memory_limit=builder.memory_candidate_limit,
+                experience_limit=builder.experience_candidate_limit,
             )
+            memory_candidates.append(memory)
+            experience_candidates.append(experiences)
+        memory_candidates = _limit_memory_candidates(memory_candidates, builder.memory_candidate_limit)
+        experience_candidates = _limit_experience_candidates(
+            experience_candidates,
+            builder.experience_candidate_limit,
+        )
+        topic_memory_hits = await self._topic_memory_hits(request.query.strip(), builder.topic_memory_candidate_limit)
 
-            experience_recall = self._runtime._experience_recall
-            with self._runtime._stage(
-                "experience.search",
-                attributes={
-                    "powercontext.experience.search.configured": experience_recall is not None,
-                    "powercontext.experience.search.limit": builder.experience_candidate_limit,
-                },
-            ) as span:
-                experience_hits = (
-                    ()
-                    if experience_recall is None
-                    else await experience_recall(
-                        self.scope_id,
-                        request.query,
-                        builder.experience_candidate_limit,
-                    )
-                )
-                if span is not None:
-                    span.set_attributes({"powercontext.experience.search.result_count": len(experience_hits)})
-
-            with self._runtime._stage(
-                "context.build",
-                attributes={
-                    "powercontext.context.build.memory_candidate_count": len(memory_hits),
-                    "powercontext.context.build.topic_memory_candidate_count": len(topic_memory_hits),
-                    "powercontext.context.build.experience_candidate_count": len(experience_hits),
-                },
-            ) as span:
-                build = builder.build_result(
-                    request=request,
-                    memory_ref=None if current is None else current.as_ref(),
-                    hits=memory_hits,
-                    topic_memory_hits=topic_memory_hits,
-                    experience_hits=experience_hits,
-                )
-                if span is not None:
-                    span.set_attributes({
-                        "powercontext.context.build.selected_count": len(build.origins),
-                        "powercontext.context.build.status": build.context.status,
-                        "powercontext.context.build.content_bytes": build.context.content_bytes,
-                    })
+        with self._runtime._stage(
+            "context.build",
+            attributes={
+                "powercontext.context.build.scope_count": len(scope_ids),
+                "powercontext.context.build.memory_candidate_count": sum(
+                    len(candidates.hits) for candidates in memory_candidates
+                ),
+                "powercontext.context.build.topic_memory_candidate_count": len(topic_memory_hits),
+                "powercontext.context.build.experience_candidate_count": sum(
+                    len(candidates.hits) for candidates in experience_candidates
+                ),
+            },
+        ) as span:
+            build = builder.build_scopes_result(
+                request=request,
+                current_scope_id=self.scope_id,
+                memory_candidates=memory_candidates,
+                topic_memory_hits=topic_memory_hits,
+                experience_candidates=experience_candidates,
+            )
+            if span is not None:
+                span.set_attributes({
+                    "powercontext.context.build.selected_count": len(build.origins),
+                    "powercontext.context.build.status": build.context.status,
+                    "powercontext.context.build.content_bytes": build.context.content_bytes,
+                })
         if self._runtime._recall_token_estimator is not None:
             try:
                 measurement = await self._runtime._recall_token_estimator(self.scope_id, build)
@@ -463,6 +748,75 @@ class ScopedContextApplication:
                 if measurement is not None:
                     await self._runtime.statistics.for_scope(self.scope_id).record_recall(measurement)
         return build.context
+
+    async def _recall_scope(
+        self,
+        scope_id: str,
+        request: PrepareContextRequest,
+        *,
+        memory_limit: int,
+        experience_limit: int,
+    ) -> tuple[PreparedMemoryCandidates, PreparedExperienceCandidates]:
+        async with (
+            self._runtime._context(scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_RECALL) as context,
+            self._runtime._locked(scope_id),
+        ):
+            with self._runtime._stage(
+                _MEMORY_SEARCH_STAGE,
+                attributes={
+                    _MEMORY_SEARCH_REQUESTED_MODE: "auto",
+                    _MEMORY_SEARCH_LIMIT: memory_limit,
+                },
+            ) as span:
+                service = context.artifacts.memory
+                current = await _head_or_none(service, context.artifacts.memory_artifact_id)
+                memory_hits = ()
+                search_mode: str | None = None
+                if current is not None and memory_limit > 0:
+                    result = await service.search(
+                        request.query,
+                        memories=(current,),
+                        limit=memory_limit,
+                        mode="auto",
+                    )
+                    memory_hits = result.hits
+                    search_mode = result.mode
+                if span is not None:
+                    attributes: dict[str, TraceAttribute] = {
+                        _MEMORY_SEARCH_MEMORY_PRESENT: current is not None,
+                        _MEMORY_SEARCH_RESULT_COUNT: len(memory_hits),
+                    }
+                    if search_mode is not None:
+                        attributes[_MEMORY_SEARCH_MODE] = search_mode
+                    span.set_attributes(attributes)
+
+            experience_recall = self._runtime._experience_recall
+            with self._runtime._stage(
+                "experience.search",
+                attributes={
+                    "powercontext.experience.search.configured": experience_recall is not None,
+                    "powercontext.experience.search.limit": experience_limit,
+                },
+            ) as span:
+                experience_hits = (
+                    ()
+                    if experience_recall is None or experience_limit == 0
+                    else await experience_recall(
+                        scope_id,
+                        request.query,
+                        experience_limit,
+                    )
+                )
+                if span is not None:
+                    span.set_attributes({"powercontext.experience.search.result_count": len(experience_hits)})
+        return (
+            PreparedMemoryCandidates(
+                scope_id=scope_id,
+                memory_ref=None if current is None else current.as_ref(),
+                hits=memory_hits,
+            ),
+            PreparedExperienceCandidates(scope_id=scope_id, hits=experience_hits),
+        )
 
     async def _topic_memory_hits(self, query: str, limit: int) -> tuple[TopicMemorySearchHit, ...]:
         configured = self._runtime._topic_memory_search is not None
@@ -486,6 +840,50 @@ class ScopedContextApplication:
             if span is not None:
                 span.set_attributes({"powercontext.topic_memory.search.result_count": len(hits)})
             return hits
+
+
+def _limit_memory_candidates(
+    candidates: list[PreparedMemoryCandidates],
+    limit: int,
+) -> list[PreparedMemoryCandidates]:
+    counts = _round_robin_counts(tuple(len(group.hits) for group in candidates), limit)
+    return [
+        PreparedMemoryCandidates(
+            scope_id=group.scope_id,
+            memory_ref=group.memory_ref,
+            hits=group.hits[:count],
+        )
+        for group, count in zip(candidates, counts, strict=True)
+    ]
+
+
+def _limit_experience_candidates(
+    candidates: list[PreparedExperienceCandidates],
+    limit: int,
+) -> list[PreparedExperienceCandidates]:
+    counts = _round_robin_counts(tuple(len(group.hits) for group in candidates), limit)
+    return [
+        PreparedExperienceCandidates(scope_id=group.scope_id, hits=group.hits[:count])
+        for group, count in zip(candidates, counts, strict=True)
+    ]
+
+
+def _round_robin_counts(sizes: tuple[int, ...], limit: int) -> tuple[int, ...]:
+    counts = [0] * len(sizes)
+    remaining = limit
+    while remaining > 0:
+        advanced = False
+        for index, size in enumerate(sizes):
+            if counts[index] >= size:
+                continue
+            counts[index] += 1
+            remaining -= 1
+            advanced = True
+            if remaining == 0:
+                break
+        if not advanced:
+            break
+    return tuple(counts)
 
 
 class ContextApplication:
@@ -610,6 +1008,127 @@ class ScopedSkillApplication:
         async with self._runtime._scoped_operation(self.scope_id):
             return await self._runtime._review(self.scope_id).get_skill(request.artifact)
 
+    async def search(self, query: str, limit: int, /) -> tuple[SkillSearchHit, ...]:
+        recall = self._runtime._skill_recall
+        if recall is None:
+            return ()
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await recall(self.scope_id, query, limit)
+
+    async def list(
+        self,
+        *,
+        include_deprecated: bool = False,
+        limit: int = 100,
+    ) -> tuple[tuple[Skill, ArtifactGovernance], ...]:
+        lister = self._runtime._skill_lister
+        if lister is None:
+            return ()
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await lister(self.scope_id, include_deprecated, limit)
+
+    async def origins(self, skills: tuple[Skill, ...], /) -> tuple[SkillOrigin, ...]:
+        """Resolve display provenance for current Skill revisions in one bounded read."""
+
+        reader = self._runtime._skill_origin_reader
+        if reader is None:
+            raise _RuntimeStateError("skill-provenance")
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await reader(self.scope_id, skills)
+
+    async def package(self, artifact: ArtifactRef, /) -> SkillPackageSnapshot:
+        resolver = self._runtime._skill_package_resolver
+        if resolver is None:
+            raise _RuntimeStateError("skill-package")
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await resolver(self.scope_id, artifact)
+
+    async def package_snapshot(self, package: SkillPackageRef, /) -> SkillPackageSnapshot:
+        resolver = self._runtime._package_snapshot_resolver
+        if resolver is None:
+            raise _RuntimeStateError("skill-package")
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await resolver(self.scope_id, package)
+
+    async def upload_package(
+        self,
+        archive_bytes: bytes,
+        reason: str | None,
+        target: ArtifactRef | None,
+        /,
+    ) -> SkillCandidate:
+        uploader = self._runtime._skill_package_uploader
+        if uploader is None:
+            raise _RuntimeStateError("skill-package")
+        async with self._runtime._scoped_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await uploader(self.scope_id, archive_bytes, reason, target)
+
+    async def record_usage(self, observation: SkillUsageCapture, /) -> SourceReceipt:
+        recorder = self._runtime._skill_usage_recorder
+        if recorder is None:
+            raise _RuntimeStateError("skill-usage")
+        async with self._runtime._scoped_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await recorder(self.scope_id, observation)
+
+    async def governance(self, artifact_id: str, /) -> ArtifactGovernance:
+        reader = self._runtime._skill_governance_reader
+        if reader is None:
+            raise _RuntimeStateError("skill-governance")
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await reader(self.scope_id, artifact_id)
+
+    async def update_lifecycle(
+        self,
+        artifact_id: str,
+        expected_generation: int,
+        lifecycle_state: ArtifactLifecycleState,
+        replacement_artifact_id: str | None,
+        /,
+    ) -> ArtifactGovernance:
+        updater = self._runtime._skill_governance_updater
+        if updater is None:
+            raise _RuntimeStateError("skill-governance")
+        async with self._runtime._scoped_operation(self.scope_id), self._runtime._locked(self.scope_id):
+            return await updater(
+                self.scope_id,
+                artifact_id,
+                expected_generation,
+                lifecycle_state,
+                replacement_artifact_id,
+            )
+
+    async def inspect_publication(
+        self,
+        artifact: ArtifactRef,
+        target: AgentSkillTarget,
+        /,
+    ) -> ManagedSkillPublicationStatus:
+        async with self._runtime._scoped_operation(self.scope_id):
+            service = self._runtime._skill_publications(self.scope_id, target, artifact)
+            return await service.inspect(artifact, target)
+
+    async def publish(
+        self,
+        artifact: ArtifactRef,
+        target: AgentSkillTarget,
+        /,
+        *,
+        allow_deprecated: bool = False,
+    ) -> ManagedSkillPublicationStatus:
+        async with self._runtime._scoped_operation(self.scope_id):
+            service = self._runtime._skill_publications(self.scope_id, target, artifact)
+            return await service.publish(artifact, target, allow_deprecated=allow_deprecated)
+
+    async def unpublish(
+        self,
+        artifact: ArtifactRef,
+        target: AgentSkillTarget,
+        /,
+    ) -> ManagedSkillPublicationStatus:
+        async with self._runtime._scoped_operation(self.scope_id):
+            service = self._runtime._skill_publications(self.scope_id, target, artifact)
+            return await service.unpublish(artifact, target)
+
 
 class SkillApplication:
     """Select a scoped managed Skill application service."""
@@ -619,6 +1138,151 @@ class SkillApplication:
 
     def for_scope(self, scope_id: str, /) -> ScopedSkillApplication:
         return ScopedSkillApplication(self._runtime, scope_id)
+
+
+class RemoteSkillApplication:
+    """Expose remote target lifecycle and Receiver reconciliation through the Runtime boundary."""
+
+    def __init__(self, runtime: BuiltinRuntime) -> None:
+        self._runtime = runtime
+
+    def _service(self) -> RemoteSkillDistributionService:
+        service = self._runtime._remote_skill_distribution
+        if service is None:
+            raise _RuntimeStateError("remote-skill-distribution")
+        return service
+
+    async def list_targets(
+        self,
+        scope_id: str,
+        /,
+        *,
+        target_id: str | None = None,
+        limit: int = 100,
+    ) -> tuple[RemoteSkillTargetStatus, ...]:
+        async with self._runtime._scoped_operation(scope_id):
+            return await self._service().list_targets(
+                scope_id,
+                target_id=target_id,
+                limit=limit,
+            )
+
+    async def create_target(
+        self,
+        scope_id: str,
+        agent_kind: AgentKind,
+        display_name: str,
+        /,
+    ) -> RemoteTargetEnrollment:
+        async with self._runtime._scoped_operation(scope_id):
+            return await self._service().create_target(scope_id, agent_kind, display_name)
+
+    async def enroll(
+        self,
+        enrollment_code: str,
+        installation_id: str,
+        receiver_version: str,
+        environment_fingerprint: str | None,
+        machine_hostname: str | None = None,
+        workspace_name: str | None = None,
+        /,
+    ) -> RemoteTargetCredential:
+        async with self._runtime._operation():
+            return await self._service().enroll(
+                enrollment_code,
+                installation_id,
+                receiver_version,
+                environment_fingerprint,
+                machine_hostname,
+                workspace_name,
+            )
+
+    async def rename_target(
+        self,
+        scope_id: str,
+        target_id: str,
+        expected_generation: int,
+        display_name: str,
+        /,
+    ) -> RemoteAgentSkillTarget:
+        async with self._runtime._scoped_operation(scope_id):
+            return await self._service().rename_target(scope_id, target_id, expected_generation, display_name)
+
+    async def revoke_target(
+        self,
+        scope_id: str,
+        target_id: str,
+        expected_generation: int,
+        /,
+    ) -> RemoteAgentSkillTarget:
+        async with self._runtime._scoped_operation(scope_id):
+            return await self._service().revoke_target(scope_id, target_id, expected_generation)
+
+    async def publish(
+        self,
+        scope_id: str,
+        target_id: str,
+        artifact: ArtifactRef,
+        expected_generation: int | None,
+        /,
+        *,
+        allow_deprecated: bool = False,
+    ) -> SkillPublication:
+        async with self._runtime._scoped_operation(scope_id):
+            return await self._service().publish(
+                scope_id,
+                target_id,
+                artifact,
+                expected_generation,
+                allow_deprecated=allow_deprecated,
+            )
+
+    async def unpublish(
+        self,
+        scope_id: str,
+        target_id: str,
+        artifact_id: str,
+        expected_generation: int,
+        /,
+    ) -> SkillPublication:
+        async with self._runtime._scoped_operation(scope_id):
+            return await self._service().unpublish(scope_id, target_id, artifact_id, expected_generation)
+
+    async def reconcile(
+        self,
+        credential: str,
+        observations: tuple[RemoteSkillObservation, ...],
+        receiver_version: str,
+        environment_fingerprint: str | None,
+        /,
+    ) -> RemoteSkillReconcileResult:
+        async with self._runtime._operation():
+            return await self._service().reconcile(
+                credential,
+                observations,
+                receiver_version,
+                environment_fingerprint,
+            )
+
+    async def download(
+        self,
+        credential: str,
+        generation: int,
+        artifact: ArtifactRef,
+        package: SkillPackageRef,
+        /,
+    ) -> SkillPackageSnapshot:
+        async with self._runtime._operation():
+            return await self._service().download(credential, generation, artifact, package)
+
+    async def receipt(
+        self,
+        credential: str,
+        receipt: RemoteSkillReceipt,
+        /,
+    ) -> RemoteSkillReceiptResult:
+        async with self._runtime._operation():
+            return await self._service().receipt(credential, receipt)
 
 
 class ScopedHandoffApplication:
@@ -654,13 +1318,22 @@ class ScopedHandoffApplication:
         self,
         handoff: PreparedHandoff | ArtifactRef,
         /,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None = None,
     ) -> HandoffResolution:
         async with self._runtime._context(self.scope_id) as context:
-            return await context.artifacts.handoff.continue_from(handoff)
+            return await context.artifacts.handoff.continue_from(
+                handoff,
+                evidence_authorizer=evidence_authorizer,
+            )
 
-    async def continue_latest(self) -> HandoffResolution:
+    async def continue_latest(
+        self,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None = None,
+    ) -> HandoffResolution:
         async with self._runtime._context(self.scope_id) as context:
-            return await context.artifacts.handoff.continue_latest()
+            return await context.artifacts.handoff.continue_latest(evidence_authorizer=evidence_authorizer)
 
     async def latest(self) -> Handoff | None:
         async with self._runtime._context(self.scope_id) as context:
@@ -991,6 +1664,7 @@ class ScopedMemoryApplication:
                             memories=(current,),
                             limit=request.limit,
                             mode=request.mode,
+                            **({} if request.tag_filter is None else {"tag_filter": request.tag_filter}),
                         )
                     except (CapabilityNotSupportedError, InvalidMemoryCitationError) as error:
                         latest = await _head_or_none(service, context.artifacts.memory_artifact_id)
@@ -1013,13 +1687,15 @@ class ScopedMemoryApplication:
                         rerank=result.rerank,
                     )
 
-    async def list(self, *, include_inactive: bool = False) -> MemoryEntriesPage:
+    async def list(self, *, include_inactive: bool = False, tag_filter: TagFilter | None = None) -> MemoryEntriesPage:
         async with self._runtime._context(self.scope_id) as context:
             service = context.artifacts.memory
             current = await _head_or_none(service, context.artifacts.memory_artifact_id)
             if current is None:
                 return MemoryEntriesPage(memory_ref=None)
-            entries = tuple(_entry_record(current, entry) for entry in await service.entries(current))
+            entries = tuple(
+                _entry_record(current, entry) for entry in await service.entries(current, tag_filter=tag_filter)
+            )
             if not include_inactive:
                 entries = tuple(entry for entry in entries if entry.state == "active")
             return MemoryEntriesPage(
@@ -1304,7 +1980,12 @@ class ScheduledSourceProcessor:
                     operation="process_source_window",
                 ) as span:
                     try:
-                        result = await self._runtime.memory.for_scope(scope_id).flush()
+                        runner = self._runtime._scheduled_source_runner
+                        result = (
+                            await self._runtime.memory.for_scope(scope_id).flush()
+                            if runner is None
+                            else await runner(scope_id, self._runtime)
+                        )
                     except asyncio.CancelledError:
                         _log_scheduled_processing(
                             "cancelled",
@@ -1354,7 +2035,12 @@ class ScheduledExperienceProcessor:
                     operation="incubate_experience_candidates",
                 ) as span:
                     try:
-                        result = await self._runtime.experience.for_scope(scope_id).incubate()
+                        runner = self._runtime._scheduled_experience_runner
+                        result = (
+                            await self._runtime.experience.for_scope(scope_id).incubate()
+                            if runner is None
+                            else await runner(scope_id, self._runtime)
+                        )
                     except asyncio.CancelledError:
                         _log_scheduled_processing(
                             "cancelled",
@@ -1434,6 +2120,15 @@ class BuiltinRuntime:
         review_service: ReviewServiceFactory | None = None,
         generation_service: GenerationServiceFactory | None = None,
         experience_recall: ExperienceRecall | None = None,
+        skill_recall: SkillRecall | None = None,
+        skill_lister: SkillLister | None = None,
+        skill_origin_reader: SkillOriginReader | None = None,
+        skill_governance_reader: SkillGovernanceReader | None = None,
+        skill_governance_updater: SkillGovernanceUpdater | None = None,
+        skill_package_resolver: SkillPackageResolver | None = None,
+        package_snapshot_resolver: PackageSnapshotResolver | None = None,
+        skill_package_uploader: SkillPackageUploader | None = None,
+        skill_usage_recorder: SkillUsageRecorder | None = None,
         experience_incubator: ExperienceIncubator | None = None,
         topic_memory_search: TopicMemorySearch | None = None,
         topic_memory_get: TopicMemoryGet | None = None,
@@ -1444,11 +2139,20 @@ class BuiltinRuntime:
         topic_memory_search_observer: TopicMemorySearchObserver | None = None,
         external_skill_registry: ExternalSkillRegistryFactory | None = None,
         external_skill_importer: ExternalSkillImporter | None = None,
+        skill_publication_service: SkillPublicationServiceFactory | None = None,
+        remote_skill_distribution: RemoteSkillDistributionService | None = None,
         statistics_service: StatisticsServiceFactory | None = None,
+        record_service: RecordService | None = None,
+        prompt_service: PromptService | None = None,
         recall_token_estimator: RecallTokenEstimator | None = None,
+        publication_application: ArtifactPublicationApplication | None = None,
+        scope_application: ScopeApplication | None = None,
         readiness: RuntimeReadinessChecks | None = None,
         clock: Clock | None = None,
         tracing: RuntimeTracing | None = None,
+        scheduled_source_runner: ScheduledSourceRunner | None = None,
+        scheduled_experience_runner: ScheduledExperienceRunner | None = None,
+        remote_ingestion: RemoteIngestion | None = None,
     ) -> None:
         if source_window_limit < 1:
             raise _RuntimeConfigurationError("source_window_limit")
@@ -1459,6 +2163,15 @@ class BuiltinRuntime:
         self._review_service = review_service
         self._generation_service = generation_service
         self._experience_recall = experience_recall
+        self._skill_recall = skill_recall
+        self._skill_lister = skill_lister
+        self._skill_origin_reader = skill_origin_reader
+        self._skill_governance_reader = skill_governance_reader
+        self._skill_governance_updater = skill_governance_updater
+        self._skill_package_resolver = skill_package_resolver
+        self._package_snapshot_resolver = package_snapshot_resolver
+        self._skill_package_uploader = skill_package_uploader
+        self._skill_usage_recorder = skill_usage_recorder
         self._experience_incubator = experience_incubator
         self._topic_memory_search = topic_memory_search
         self._topic_memory_get = topic_memory_get
@@ -1469,11 +2182,19 @@ class BuiltinRuntime:
         self._topic_memory_search_observer = topic_memory_search_observer
         self._external_skill_registry = external_skill_registry
         self._external_skill_importer = external_skill_importer
+        self._skill_publication_service = skill_publication_service
+        self._remote_skill_distribution = remote_skill_distribution
         self._statistics_service = statistics_service
+        self._record_service = record_service
+        self._prompt_service = prompt_service
         self._recall_token_estimator = recall_token_estimator
+        self.publications = publication_application
+        self.scopes = scope_application
         self._readiness = RuntimeReadinessChecks() if readiness is None else readiness
         self._clock = _utc_now if clock is None else clock
         self._tracing = tracing
+        self._scheduled_source_runner = scheduled_source_runner
+        self._scheduled_experience_runner = scheduled_experience_runner
         self.source_window_limit = source_window_limit
         self._scope_cache = ScopeCache(
             scope_cache_size,
@@ -1490,6 +2211,7 @@ class BuiltinRuntime:
         self._scheduler: AsyncIOScheduler | None = None
         self._scheduler_runtime_key: str | None = None
         self.sources = SourceApplication(self)
+        self.ingestion = RemoteIngestionApplication(self, remote_ingestion)
         self.context = ContextApplication(self)
         self.experience = ExperienceApplication(self)
         self.external_skills = ExternalSkillApplication(self)
@@ -1497,8 +2219,11 @@ class BuiltinRuntime:
         self.work = WorkApplication(self)
         self.memory = MemoryApplication(self)
         self.topic_memory = TopicMemoryApplication(self)
+        self.records = RecordApplication(self)
+        self.prompts = PromptApplication(self)
         self.review = ReviewApplication(self)
         self.skill = SkillApplication(self)
+        self.remote_skills = RemoteSkillApplication(self)
         self.statistics = StatisticsApplication(self)
         self.handoff_report: HandoffReportApplication | None = None
         self.artifact_processing_supervisor: ArtifactProcessingSupervisor | None = None
@@ -1659,11 +2384,14 @@ class BuiltinRuntime:
                         self._lifecycle.notify_all()
 
     @asynccontextmanager
-    async def _scope_operation(self, scope_id: str) -> AsyncIterator[None]:
+    async def _scope_operation(self, scope_id: str) -> AsyncIterator[ScopeDescriptor]:
         scope = validate_scope_id(scope_id)
         async with self._operation():
+            if self.scopes is None:
+                raise _RuntimeStateError("scope")
+            registered = await self.scopes.get(scope)
             with self._scope_cache.lease(scope):
-                yield
+                yield registered
 
     @asynccontextmanager
     async def _scoped_operation(
@@ -1744,6 +2472,11 @@ class BuiltinRuntime:
             raise _RuntimeStateError("review")
         return self._review_service(validate_scope_id(scope_id))
 
+    def _records(self) -> RecordService:
+        if self._record_service is None:
+            raise _RuntimeStateError("records")
+        return self._record_service
+
     def _generation(self, scope_id: str) -> ReviewedGenerationService:
         if self._generation_service is None:
             raise _RuntimeStateError("review")
@@ -1753,6 +2486,16 @@ class BuiltinRuntime:
         if self._external_skill_registry is None:
             raise ExternalSkillRegistryUnavailableError
         return self._external_skill_registry(validate_scope_id(scope_id))
+
+    def _skill_publications(
+        self,
+        scope_id: str,
+        target: AgentSkillTarget,
+        artifact: ArtifactRef,
+    ) -> ManagedSkillPublicationService:
+        if self._skill_publication_service is None:
+            raise _RuntimeStateError("skill-publication")
+        return self._skill_publication_service(validate_scope_id(scope_id), target.target_id, artifact.artifact_id)
 
     def _statistics(self, scope_id: str) -> RelationalScopedStatistics:
         if self._statistics_service is None:

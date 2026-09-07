@@ -17,30 +17,55 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from types import TracebackType
-from typing import Self, TypeVar
+from typing import Any, Self, TypeVar, cast
+from urllib.parse import quote
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from powercontext.client.errors import InvalidResponseError, ServerResponseError, TransportError
+from powercontext.client.errors import InvalidResponseError, TransportError, server_response_error
+from powercontext.client.tags import ArtifactTagSetResponse
 from powercontext.client.tracing import ClientSpan
 from powercontext.http import (
+    AccessAuditPage,
+    AccessBinding,
+    AccessBindingPage,
+    AccessBindingReplacement,
+    AccessCheckRequest,
+    AccessCheckResponse,
+    AccessMeResponse,
+    AccessResourcePage,
+    AccessRolePage,
     AcknowledgeHandoffRequest,
     ActivateHandoffRequest,
     ApproveArtifactCandidateRequest,
     ArtifactCandidate,
     ArtifactCandidatePage,
-    AttachHandoffReportWorkspaceRequest,
+    ArtifactCreated,
+    ArtifactPage,
+    ArtifactPublication,
+    ArtifactRevision,
+    ArtifactRevisionPage,
     Capabilities,
     CaptureContentSourceRequest,
     CaptureContentSourceResponse,
+    ClearScopeBindingRequest,
+    ClearScopeBindingResponse,
+    CommitConnectorCheckpointRequest,
     CommitHandoffRequest,
     CommittedHandoff,
+    ConnectorCheckpointState,
     ContinueHandoffRequest,
-    CreateHandoffReportProjectRequest,
+    CreateAccessBindingRequest,
+    CreateArtifactRequest,
+    CreateRemoteSkillTargetRequest,
+    CreateScopeRequest,
+    CreateSourceRequest,
     CreateWorkContractRequest,
-    DetachHandoffReportWorkspaceRequest,
+    DownloadRemoteSkillPackageRequest,
+    EnrollRemoteSkillTargetRequest,
     ErrorResponse,
     ExperienceArtifact,
     ExternalSkillResolution,
@@ -51,13 +76,14 @@ from powercontext.http import (
     FlushTopicMemoryResponse,
     GeneratedCandidateResponse,
     GenerateExperienceRequest,
+    GeneratePromptDemonstrationsRequest,
     GenerateSkillRequest,
     GetArtifactCandidateRequest,
+    GetConnectorCheckpointRequest,
     GetExperienceRequest,
-    GetHandoffReportProjectRequest,
     GetHandoffReportRequest,
-    GetHandoffReportWorkspaceRequest,
     GetMemoryEntryRequest,
+    GetSkillPackageRequest,
     GetSkillRequest,
     GetStatsRequest,
     GetTopicMemoryRequest,
@@ -65,24 +91,27 @@ from powercontext.http import (
     HandoffActivation,
     HandoffCurrentWorkRequest,
     HandoffDraft,
-    HandoffReportActivityPage,
     HandoffReportResponse,
-    HandoffReportWorkspaceBinding,
     HandoffResolution,
     HealthResponse,
     ImportExternalSkillRequest,
-    KnownHandoffScopePage,
+    ListAccessAuditRequest,
+    ListAccessBindingsRequest,
+    ListAccessResourcesRequest,
+    ListAccessRolesRequest,
     ListArtifactCandidatesRequest,
+    ListArtifactRevisionsRequest,
+    ListArtifactsRequest,
     ListExternalSkillsRequest,
     ListExternalSkillsResponse,
-    ListHandoffReportActivitiesRequest,
-    ListHandoffReportKnownScopesRequest,
-    ListHandoffReportProjectsRequest,
-    ListHandoffReportWorkstreamsRequest,
+    ListManagedSkillsRequest,
+    ListManagedSkillsResponse,
     ListMemoryChangesRequest,
     ListMemoryChangesResponse,
     ListMemoryEntriesRequest,
     ListMemoryEntriesResponse,
+    ListRemoteSkillTargetsRequest,
+    ListRemoteSkillTargetsResponse,
     MemoryEntry,
     MemoryMutationResponse,
     PrepareContextRequest,
@@ -90,95 +119,168 @@ from powercontext.http import (
     PreparedHandoff,
     PreparedWorkHandoff,
     PrepareHandoffRequest,
-    ProjectDescriptor,
-    ProjectPage,
+    PromptConfiguration,
+    PromptDemonstrationResult,
     ProposeExperienceRequest,
+    ProposeSkillPackageRequest,
     ProposeSkillRequest,
-    PurgeHandoffReportActivitiesRequest,
-    PurgeHandoffReportActivitiesResponse,
+    PublishArtifactRequest,
+    PublishRemoteSkillRequest,
     ReadinessResponse,
-    RecordHandoffReportActivityRequest,
+    ReconcileRemoteSkillsRequest,
+    ReconcileRemoteSkillsResponse,
+    RecordRemoteSkillReceiptRequest,
+    RecordSkillUsageRequest,
     RecordTaskOutcomeRequest,
-    RegisterHandoffReportWorkstreamRequest,
+    RegisterSourceDefinitionRequest,
     RejectArtifactCandidateRequest,
     RememberMemoryRequest,
+    RemoteSkillPublication,
+    RemoteSkillReceiptResponse,
+    RemoteSkillTarget,
+    RemoteSkillTargetCredential,
+    RemoteSkillTargetEnrollment,
+    RenameRemoteSkillTargetRequest,
+    ReplaceAccessBindingRequest,
+    ReplaceArtifactRequest,
     ResolveExternalSkillRequest,
+    ResolveScopeBindingRequest,
+    ResolveScopeSelectionRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
+    RevokeAccessBindingRequest,
+    RevokeRemoteSkillTargetRequest,
     ScanExternalSkillsRequest,
     ScanExternalSkillsResponse,
+    ScopeBinding,
+    ScopeDescriptor,
     ScopedStats,
+    ScopePage,
     SearchMemoryRequest,
     SearchMemoryResponse,
     SearchTopicMemoryRequest,
     SearchTopicMemoryResponse,
+    SetDefaultScopeRequest,
+    SetScopeBindingRequest,
     SkillArtifact,
-    StoredHandoffReportActivity,
+    SkillGovernance,
+    SkillPackageDownload,
+    SkillPackageManifest,
+    SourceDefinitionManifest,
+    SourceObservationReceipt,
+    SourceRecord,
+    SubmitSourceObservationRequest,
     TopicMemoryArtifact,
-    UpdateHandoffReportProjectRequest,
-    UpdateHandoffReportWorkstreamRequest,
+    UnpublishRemoteSkillRequest,
+    UpdateScopeRequest,
+    UpdateSkillLifecycleRequest,
     WorkSourceReceipt,
-    WorkstreamDescriptor,
-    WorkstreamPage,
+)
+from powercontext.http._generated.models import (
+    ArtifactTagPage,
+    ArtifactTagSet,
+    QueryArtifactTagsRequest,
+    ReplaceArtifactTagsRequest,
 )
 from powercontext.http._generated.operations import (
     ACKNOWLEDGE_HANDOFF,
     ACTIVATE_HANDOFF,
     APPROVE_ARTIFACT_CANDIDATE,
-    ATTACH_HANDOFF_REPORT_WORKSPACE,
     CAPTURE_CONTENT_SOURCE,
+    CHECK_ACCESS,
+    CLEAR_SCOPE_BINDING,
+    COMMIT_CONNECTOR_CHECKPOINT,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
-    CREATE_HANDOFF_REPORT_PROJECT,
+    CREATE_ACCESS_BINDING,
+    CREATE_ARTIFACT,
+    CREATE_REMOTE_SKILL_TARGET,
+    CREATE_SCOPE,
+    CREATE_SOURCE,
     CREATE_WORK_CONTRACT,
-    DETACH_HANDOFF_REPORT_WORKSPACE,
+    DOWNLOAD_REMOTE_SKILL_PACKAGE,
+    DOWNLOAD_SKILL_PACKAGE,
+    ENROLL_REMOTE_SKILL_TARGET,
     FINALIZE_HANDOFF,
     FLUSH_MEMORY,
     FLUSH_TOPIC_MEMORY,
     GENERATE_EXPERIENCE,
+    GENERATE_PROMPT_DEMONSTRATIONS,
     GENERATE_SKILL,
+    GET_ACCESS_PRINCIPAL,
+    GET_ARTIFACT,
     GET_ARTIFACT_CANDIDATE,
+    GET_ARTIFACT_REVISION,
+    GET_ARTIFACT_TAGS,
     GET_CAPABILITIES,
+    GET_CONNECTOR_CHECKPOINT,
+    GET_DEFAULT_SCOPE,
     GET_EXPERIENCE,
     GET_HANDOFF_REPORT,
-    GET_HANDOFF_REPORT_PROJECT,
-    GET_HANDOFF_REPORT_WORKSPACE,
     GET_LIVENESS,
     GET_MEMORY_ENTRY,
+    GET_MEMORY_ENTRY_TAGS,
+    GET_PROMPT_CONFIGURATION,
     GET_READINESS,
+    GET_SCOPE,
     GET_SKILL,
+    GET_SKILL_PACKAGE_MANIFEST,
+    GET_SOURCE,
     GET_STATS,
     GET_TOPIC_MEMORY,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
+    LIST_ACCESS_AUDIT,
+    LIST_ACCESS_BINDINGS,
+    LIST_ACCESS_RESOURCES,
+    LIST_ACCESS_ROLES,
     LIST_ARTIFACT_CANDIDATES,
+    LIST_ARTIFACT_REVISIONS,
+    LIST_ARTIFACTS,
     LIST_EXTERNAL_SKILLS,
-    LIST_HANDOFF_REPORT_ACTIVITIES,
-    LIST_HANDOFF_REPORT_KNOWN_SCOPES,
-    LIST_HANDOFF_REPORT_PROJECTS,
-    LIST_HANDOFF_REPORT_WORKSTREAMS,
+    LIST_MANAGED_SKILLS,
     LIST_MEMORY_CHANGES,
     LIST_MEMORY_ENTRIES,
+    LIST_REMOTE_SKILL_TARGETS,
+    LIST_SCOPES,
     PREPARE_CONTEXT,
     PREPARE_HANDOFF,
     PROPOSE_EXPERIENCE,
     PROPOSE_SKILL,
-    PURGE_HANDOFF_REPORT_ACTIVITIES,
-    RECORD_HANDOFF_REPORT_ACTIVITY,
+    PROPOSE_SKILL_PACKAGE,
+    PUBLISH_ARTIFACT,
+    PUBLISH_REMOTE_SKILL,
+    QUERY_ARTIFACT_TAGS,
+    RECONCILE_REMOTE_SKILLS,
+    RECORD_REMOTE_SKILL_RECEIPT,
+    RECORD_SKILL_USAGE,
     RECORD_TASK_OUTCOME,
-    REGISTER_HANDOFF_REPORT_WORKSTREAM,
+    REGISTER_SOURCE_DEFINITION,
     REJECT_ARTIFACT_CANDIDATE,
     REMEMBER_MEMORY,
+    RENAME_REMOTE_SKILL_TARGET,
+    REPLACE_ACCESS_BINDING,
+    REPLACE_ARTIFACT,
+    REPLACE_ARTIFACT_TAGS,
+    REPLACE_MEMORY_ENTRY_TAGS,
     RESOLVE_EXTERNAL_SKILL,
+    RESOLVE_SCOPE_BINDING,
+    RESOLVE_SCOPE_SELECTION,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
+    REVOKE_ACCESS_BINDING,
+    REVOKE_REMOTE_SKILL_TARGET,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
     SEARCH_TOPIC_MEMORY,
-    UPDATE_HANDOFF_REPORT_PROJECT,
-    UPDATE_HANDOFF_REPORT_WORKSTREAM,
+    SET_DEFAULT_SCOPE,
+    SET_SCOPE_BINDING,
+    SUBMIT_SOURCE_OBSERVATION,
+    UNPUBLISH_REMOTE_SKILL,
+    UPDATE_SCOPE,
+    UPDATE_SKILL_LIFECYCLE,
     Operation,
 )
 from powercontext.transport import is_plaintext_non_loopback
@@ -199,6 +301,7 @@ class PowerContextClient:
         timeout: float = 10.0,
         http_client: httpx.AsyncClient | None = None,
         trust_transport_security: bool = False,
+        allow_insecure_http: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         # Plaintext HTTP is only trusted on loopback -- for *any* request, not just an authenticated
@@ -211,9 +314,11 @@ class PowerContextClient:
         # exactly as exposed as one we would open ourselves. Supplying a transport is therefore not
         # evidence of safety: the guard stays on for caller-supplied transports too, and a caller that
         # knows its transport is secure must say so explicitly via ``trust_transport_security`` rather
-        # than have safety inferred from the argument being set.
+        # than have safety inferred from the argument being set. ``allow_insecure_http`` is the
+        # separate, explicit cleartext escape hatch used by a remote Skill Receiver after its own
+        # protected-network consent check; it does not claim that the transport is secure.
         transport_trusted = http_client is not None and trust_transport_security
-        if not transport_trusted and is_plaintext_non_loopback(self._base_url):
+        if not transport_trusted and not allow_insecure_http and is_plaintext_non_loopback(self._base_url):
             raise ValueError("refusing to send requests over unencrypted non-loopback HTTP")  # noqa: TRY003
         self._headers = {"Authorization": f"Bearer {token}"} if token else None
         self._owned_http_client: httpx.AsyncClient | None = None
@@ -255,122 +360,65 @@ class PowerContextClient:
 
         return await self._request(GET_CAPABILITIES)
 
+    async def list_scopes(self) -> ScopePage:
+        """List durable Scope descriptors."""
+
+        return await self._request(LIST_SCOPES)
+
+    async def create_scope(self, request: CreateScopeRequest) -> ScopeDescriptor:
+        """Create one independent Scope boundary."""
+
+        return await self._request(CREATE_SCOPE, request)
+
+    async def get_scope(self, scope_id: str) -> ScopeDescriptor:
+        """Read one exact Scope descriptor."""
+
+        return await self._request(GET_SCOPE, path_parameters={"scope_id": scope_id})
+
+    async def update_scope(self, scope_id: str, request: UpdateScopeRequest) -> ScopeDescriptor:
+        """Replace mutable Scope metadata and relationships."""
+
+        return await self._request(UPDATE_SCOPE, request, path_parameters={"scope_id": scope_id})
+
+    async def get_default_scope(self) -> ScopeDescriptor:
+        """Read the host's default Scope target."""
+
+        return await self._request(GET_DEFAULT_SCOPE)
+
+    async def set_default_scope(self, request: SetDefaultScopeRequest) -> ScopeDescriptor:
+        """Change the host's default Scope target."""
+
+        return await self._request(SET_DEFAULT_SCOPE, request)
+
+    async def resolve_scope_selection(self, request: ResolveScopeSelectionRequest) -> ScopePage:
+        """Resolve all, exact, or subtree into exact Scope descriptors."""
+
+        return await self._request(RESOLVE_SCOPE_SELECTION, request)
+
+    async def resolve_scope_binding(self, request: ResolveScopeBindingRequest) -> ScopeDescriptor:
+        """Resolve explicit and external host bindings to one Scope."""
+
+        return await self._request(RESOLVE_SCOPE_BINDING, request)
+
+    async def set_scope_binding(self, request: SetScopeBindingRequest) -> ScopeBinding:
+        """Bind one external integration identity to a Scope."""
+
+        return await self._request(SET_SCOPE_BINDING, request)
+
+    async def clear_scope_binding(self, request: ClearScopeBindingRequest) -> ClearScopeBindingResponse:
+        """Clear one external integration binding."""
+
+        return await self._request(CLEAR_SCOPE_BINDING, request)
+
+    async def publish_artifact(self, request: PublishArtifactRequest) -> ArtifactPublication:
+        """Deliver one exact Artifact revision into another Scope."""
+
+        return await self._request(PUBLISH_ARTIFACT, request)
+
     async def get_stats(self, request: GetStatsRequest) -> ScopedStats:
         """Read current inventory and bounded usage for one scope."""
 
         return await self._request(GET_STATS, request)
-
-    async def create_handoff_report_project(
-        self,
-        request: CreateHandoffReportProjectRequest,
-    ) -> ProjectDescriptor:
-        """Create one explicit Report Project."""
-
-        return await self._request(CREATE_HANDOFF_REPORT_PROJECT, request)
-
-    async def get_handoff_report_project(
-        self,
-        request: GetHandoffReportProjectRequest,
-    ) -> ProjectDescriptor:
-        """Read one current Report Project descriptor."""
-
-        return await self._request(GET_HANDOFF_REPORT_PROJECT, request)
-
-    async def update_handoff_report_project(
-        self,
-        request: UpdateHandoffReportProjectRequest,
-    ) -> ProjectDescriptor:
-        """CAS-update one Report Project descriptor."""
-
-        return await self._request(UPDATE_HANDOFF_REPORT_PROJECT, request)
-
-    async def list_handoff_report_projects(
-        self,
-        request: ListHandoffReportProjectsRequest,
-    ) -> ProjectPage:
-        """List Report Projects with cursor pagination."""
-
-        return await self._request(LIST_HANDOFF_REPORT_PROJECTS, request)
-
-    async def list_handoff_report_known_scopes(
-        self,
-        request: ListHandoffReportKnownScopesRequest,
-    ) -> KnownHandoffScopePage:
-        """List scopes that contain a committed Handoff."""
-
-        return await self._request(LIST_HANDOFF_REPORT_KNOWN_SCOPES, request)
-
-    async def register_handoff_report_workstream(
-        self,
-        request: RegisterHandoffReportWorkstreamRequest,
-    ) -> WorkstreamDescriptor:
-        """Register one existing scope as a Report Workstream."""
-
-        return await self._request(REGISTER_HANDOFF_REPORT_WORKSTREAM, request)
-
-    async def list_handoff_report_workstreams(
-        self,
-        request: ListHandoffReportWorkstreamsRequest,
-    ) -> WorkstreamPage:
-        """List Workstreams belonging to one Report Project."""
-
-        return await self._request(LIST_HANDOFF_REPORT_WORKSTREAMS, request)
-
-    async def update_handoff_report_workstream(
-        self,
-        request: UpdateHandoffReportWorkstreamRequest,
-    ) -> WorkstreamDescriptor:
-        """CAS-update one Report Workstream descriptor."""
-
-        return await self._request(UPDATE_HANDOFF_REPORT_WORKSTREAM, request)
-
-    async def record_handoff_report_activity(
-        self,
-        request: RecordHandoffReportActivityRequest,
-    ) -> StoredHandoffReportActivity:
-        """Record one explicit Report-owned Activity observation."""
-
-        return await self._request(RECORD_HANDOFF_REPORT_ACTIVITY, request)
-
-    async def list_handoff_report_activities(
-        self,
-        request: ListHandoffReportActivitiesRequest,
-    ) -> HandoffReportActivityPage:
-        """List one frozen cursor page of Report-owned Activities."""
-
-        return await self._request(LIST_HANDOFF_REPORT_ACTIVITIES, request)
-
-    async def purge_handoff_report_activities(
-        self,
-        request: PurgeHandoffReportActivitiesRequest,
-    ) -> PurgeHandoffReportActivitiesResponse:
-        """Purge Report-owned Activities before an observation boundary."""
-
-        return await self._request(PURGE_HANDOFF_REPORT_ACTIVITIES, request)
-
-    async def get_handoff_report_workspace(
-        self,
-        request: GetHandoffReportWorkspaceRequest,
-    ) -> HandoffReportWorkspaceBinding:
-        """Read one confirmed Workspace-to-Project binding."""
-
-        return await self._request(GET_HANDOFF_REPORT_WORKSPACE, request)
-
-    async def attach_handoff_report_workspace(
-        self,
-        request: AttachHandoffReportWorkspaceRequest,
-    ) -> HandoffReportWorkspaceBinding:
-        """Attach a Workspace to an exact Report Project using CAS."""
-
-        return await self._request(ATTACH_HANDOFF_REPORT_WORKSPACE, request)
-
-    async def detach_handoff_report_workspace(
-        self,
-        request: DetachHandoffReportWorkspaceRequest,
-    ) -> HandoffReportWorkspaceBinding:
-        """Detach a Workspace binding using its exact version."""
-
-        return await self._request(DETACH_HANDOFF_REPORT_WORKSPACE, request)
 
     async def get_handoff_report(self, request: GetHandoffReportRequest) -> HandoffReportResponse | str:
         """Generate the current canonical Handoff Report projection."""
@@ -418,7 +466,7 @@ class PowerContextClient:
         )
         if response.status_code != GET_HANDOFF_REPORT.success_status:
             error = _decode_error(response.content)
-            raise ServerResponseError(
+            raise server_response_error(
                 status_code=response.status_code,
                 request_id=response.headers.get(REQUEST_ID_HEADER),
                 code=None if error is None else error.error.code,
@@ -431,6 +479,283 @@ class PowerContextClient:
         """Capture raw content as durable Source evidence."""
 
         return await self._request(CAPTURE_CONTENT_SOURCE, request)
+
+    async def get_access_principal(self) -> AccessMeResponse:
+        """Return the authenticated Principal and enforceable Access capabilities."""
+
+        return await self._request(GET_ACCESS_PRINCIPAL)
+
+    async def check_access(self, request: AccessCheckRequest) -> AccessCheckResponse:
+        """Evaluate one compound requirement for the current Principal."""
+
+        return await self._request(CHECK_ACCESS, request)
+
+    async def list_access_resources(self, request: ListAccessResourcesRequest) -> AccessResourcePage:
+        """List only relationships already visible to the current Principal."""
+
+        return await self._request(LIST_ACCESS_RESOURCES, request)
+
+    async def list_access_roles(self, request: ListAccessRolesRequest) -> AccessRolePage:
+        """List stable built-in role definitions."""
+
+        return await self._request(LIST_ACCESS_ROLES, request)
+
+    async def list_access_bindings(self, request: ListAccessBindingsRequest) -> AccessBindingPage:
+        """List bindings within an authorized administrative boundary."""
+
+        return await self._request(LIST_ACCESS_BINDINGS, request)
+
+    async def create_access_binding(self, request: CreateAccessBindingRequest) -> AccessBinding:
+        """Create or idempotently return one Access Binding."""
+
+        return await self._request(CREATE_ACCESS_BINDING, request)
+
+    async def revoke_access_binding(self, request: RevokeAccessBindingRequest) -> AccessBinding:
+        """Revoke one Access Binding using compare-and-swap."""
+
+        return await self._request(REVOKE_ACCESS_BINDING, request)
+
+    async def replace_access_binding(self, request: ReplaceAccessBindingRequest) -> AccessBindingReplacement:
+        """Atomically replace an immutable Access Binding."""
+
+        return await self._request(REPLACE_ACCESS_BINDING, request)
+
+    async def list_access_audit(self, request: ListAccessAuditRequest) -> AccessAuditPage:
+        """List data-minimized authorization and relationship audit events."""
+
+        return await self._request(LIST_ACCESS_AUDIT, request)
+
+    async def create_source(self, scope_id: str, request: CreateSourceRequest) -> SourceRecord:
+        """Create one durable Source without invoking generation."""
+
+        return await self._request(CREATE_SOURCE, request, path_parameters={"scope_id": scope_id})
+
+    async def get_source(self, scope_id: str, source_type: str, source_id: str) -> SourceRecord:
+        """Read one exact Source in a Scope and Source type."""
+
+        return await self._request(
+            GET_SOURCE,
+            path_parameters={"scope_id": scope_id, "source_type": source_type, "source_id": source_id},
+        )
+
+    async def create_artifact(self, scope_id: str, request: CreateArtifactRequest) -> ArtifactCreated:
+        """Atomically commit revision one and its system provenance Source."""
+
+        return await self._request(CREATE_ARTIFACT, request, path_parameters={"scope_id": scope_id})
+
+    async def get_artifact(
+        self,
+        scope_id: str,
+        family: str,
+        artifact_id: str,
+        *,
+        if_none_match: str | None = None,
+    ) -> ArtifactRevision | None:
+        """Read the current visible Artifact head."""
+
+        return await self._request(
+            GET_ARTIFACT,
+            path_parameters={"scope_id": scope_id, "family": family, "artifact_id": artifact_id},
+            extra_headers=None if if_none_match is None else {"If-None-Match": if_none_match},
+        )
+
+    async def get_artifact_tags(
+        self,
+        scope_id: str,
+        family: str,
+        artifact_id: str,
+        *,
+        if_none_match: str | None = None,
+    ) -> ArtifactTagSetResponse | None:
+        """Read scope-local labels with the server-issued ETag; None means 304."""
+        return await self._tag_request(
+            GET_ARTIFACT_TAGS,
+            None,
+            {"scope_id": scope_id, "family": family, "artifact_id": artifact_id},
+            headers={} if if_none_match is None else {"If-None-Match": if_none_match},
+        )
+
+    async def replace_artifact_tags(
+        self,
+        scope_id: str,
+        family: str,
+        artifact_id: str,
+        request: ReplaceArtifactTagsRequest,
+        *,
+        expected_etag: str,
+    ) -> ArtifactTagSetResponse:
+        """Replace labels without revising content; use the ETag from a prior read."""
+        result = await self._tag_request(
+            REPLACE_ARTIFACT_TAGS,
+            request,
+            {"scope_id": scope_id, "family": family, "artifact_id": artifact_id},
+            headers={"If-Match": expected_etag},
+        )
+        if result is None:
+            raise InvalidResponseError(REPLACE_ARTIFACT_TAGS.path, request_id=None)
+        return result
+
+    async def get_memory_entry_tags(
+        self,
+        scope_id: str,
+        artifact_id: str,
+        entry_id: str,
+        *,
+        if_none_match: str | None = None,
+    ) -> ArtifactTagSetResponse | None:
+        """Read one logical entry's labels, including an inactive manifest entry."""
+        return await self._tag_request(
+            GET_MEMORY_ENTRY_TAGS,
+            None,
+            {"scope_id": scope_id, "artifact_id": artifact_id, "entry_id": entry_id},
+            headers={} if if_none_match is None else {"If-None-Match": if_none_match},
+        )
+
+    async def replace_memory_entry_tags(
+        self,
+        scope_id: str,
+        artifact_id: str,
+        entry_id: str,
+        request: ReplaceArtifactTagsRequest,
+        *,
+        expected_etag: str,
+    ) -> ArtifactTagSetResponse:
+        """Replace one logical entry's labels without changing its version."""
+        result = await self._tag_request(
+            REPLACE_MEMORY_ENTRY_TAGS,
+            request,
+            {"scope_id": scope_id, "artifact_id": artifact_id, "entry_id": entry_id},
+            headers={"If-Match": expected_etag},
+        )
+        if result is None:
+            raise InvalidResponseError(REPLACE_MEMORY_ENTRY_TAGS.path, request_id=None)
+        return result
+
+    async def query_artifact_tags(self, scope_id: str, request: QueryArtifactTagsRequest) -> ArtifactTagPage:
+        """Find visible targets by exact tags within a Scope."""
+        return await self._request(QUERY_ARTIFACT_TAGS, request, path_parameters={"scope_id": scope_id})
+
+    async def _tag_request(
+        self,
+        operation: Operation[Any, ArtifactTagSet],
+        request: ReplaceArtifactTagsRequest | None,
+        path_parameters: dict[str, str],
+        *,
+        headers: dict[str, str],
+    ) -> ArtifactTagSetResponse | None:
+        response_headers: dict[str, str] = {}
+        result = await self._request(
+            operation,
+            request,
+            path_parameters=path_parameters,
+            extra_headers=headers,
+            response_headers=response_headers,
+        )
+        if result is None:
+            return None
+        etag = response_headers.get("etag")
+        if etag is None:
+            raise InvalidResponseError(operation.path, request_id=response_headers.get(REQUEST_ID_HEADER.lower()))
+        return ArtifactTagSetResponse(tag_set=result, etag=etag)
+
+    async def get_artifact_revision(
+        self,
+        scope_id: str,
+        family: str,
+        artifact_id: str,
+        revision: int,
+    ) -> ArtifactRevision:
+        """Read one exact immutable Artifact revision."""
+
+        return await self._request(
+            GET_ARTIFACT_REVISION,
+            path_parameters={
+                "scope_id": scope_id,
+                "family": family,
+                "artifact_id": artifact_id,
+                "revision": revision,
+            },
+        )
+
+    async def list_artifacts(self, scope_id: str, family: str, request: ListArtifactsRequest) -> ArtifactPage:
+        """List current Artifact heads for one family."""
+
+        return await self._request(
+            LIST_ARTIFACTS,
+            request,
+            path_parameters={"scope_id": scope_id, "family": family},
+        )
+
+    async def list_artifact_revisions(
+        self, scope_id: str, family: str, artifact_id: str, request: ListArtifactRevisionsRequest
+    ) -> ArtifactRevisionPage:
+        """List immutable revision metadata using a stable, scoped pagination snapshot."""
+
+        return await self._request(
+            LIST_ARTIFACT_REVISIONS,
+            request,
+            path_parameters={"scope_id": scope_id, "family": family, "artifact_id": artifact_id},
+        )
+
+    async def get_prompt_configuration(self, scope_id: str, prompt_key: str) -> PromptConfiguration:
+        """Read the saved selection and Runtime defaults without creating a revision."""
+
+        return await self._request(
+            GET_PROMPT_CONFIGURATION,
+            path_parameters={"scope_id": scope_id, "prompt_key": prompt_key},
+        )
+
+    async def generate_prompt_demonstrations(
+        self, scope_id: str, prompt_key: str, request: GeneratePromptDemonstrationsRequest
+    ) -> PromptDemonstrationResult:
+        """Suggest typed demonstrations without saving or changing a Prompt."""
+
+        return await self._request(
+            GENERATE_PROMPT_DEMONSTRATIONS,
+            request,
+            path_parameters={"scope_id": scope_id, "prompt_key": prompt_key},
+        )
+
+    async def replace_artifact(
+        self,
+        scope_id: str,
+        family: str,
+        artifact_id: str,
+        request: ReplaceArtifactRequest,
+        *,
+        expected_etag: str,
+    ) -> ArtifactRevision:
+        """Commit a complete next revision using optimistic concurrency."""
+
+        return await self._request(
+            REPLACE_ARTIFACT,
+            request,
+            path_parameters={"scope_id": scope_id, "family": family, "artifact_id": artifact_id},
+            extra_headers={"If-Match": expected_etag},
+        )
+
+    async def register_source_definition(self, request: RegisterSourceDefinitionRequest) -> SourceDefinitionManifest:
+        """Register one immutable worker-owned Source Definition manifest."""
+
+        return await self._request(REGISTER_SOURCE_DEFINITION, request)
+
+    async def get_connector_checkpoint(self, request: GetConnectorCheckpointRequest) -> ConnectorCheckpointState:
+        """Read the current opaque checkpoint for one Connector binding."""
+
+        return await self._request(GET_CONNECTOR_CHECKPOINT, request)
+
+    async def submit_source_observation(self, request: SubmitSourceObservationRequest) -> SourceObservationReceipt:
+        """Submit one worker-materialized Source observation."""
+
+        return await self._request(SUBMIT_SOURCE_OBSERVATION, request)
+
+    async def commit_connector_checkpoint(
+        self,
+        request: CommitConnectorCheckpointRequest,
+    ) -> ConnectorCheckpointState:
+        """Commit a binding checkpoint using optimistic comparison."""
+
+        return await self._request(COMMIT_CONNECTOR_CHECKPOINT, request)
 
     async def create_work_contract(self, request: CreateWorkContractRequest) -> WorkSourceReceipt:
         """Create one grounded delegation baseline as durable Source evidence."""
@@ -567,6 +892,110 @@ class PowerContextClient:
 
         return await self._request(GET_SKILL, request)
 
+    async def list_managed_skills(self, request: ListManagedSkillsRequest) -> ListManagedSkillsResponse:
+        """List or search current governed managed Skill heads."""
+
+        return await self._request(LIST_MANAGED_SKILLS, request)
+
+    async def update_skill_lifecycle(self, request: UpdateSkillLifecycleRequest) -> SkillGovernance:
+        """Apply one governance generation CAS lifecycle transition."""
+
+        return await self._request(UPDATE_SKILL_LIFECYCLE, request)
+
+    async def get_skill_package_manifest(self, request: GetSkillPackageRequest) -> SkillPackageManifest:
+        """Read verified exact package metadata and file inventory."""
+
+        return await self._request(GET_SKILL_PACKAGE_MANIFEST, request)
+
+    async def download_skill_package(self, request: GetSkillPackageRequest) -> SkillPackageDownload:
+        """Read canonical exact package ZIP bytes as bounded base64."""
+
+        return await self._request(DOWNLOAD_SKILL_PACKAGE, request)
+
+    async def propose_skill_package(self, request: ProposeSkillPackageRequest) -> ArtifactCandidate:
+        """Create a pending exact package Candidate without LLM rewriting."""
+
+        return await self._request(PROPOSE_SKILL_PACKAGE, request)
+
+    async def record_skill_usage(self, request: RecordSkillUsageRequest) -> CaptureContentSourceResponse:
+        """Capture one bounded exact Skill usage observation as immutable Source evidence."""
+
+        return await self._request(RECORD_SKILL_USAGE, request)
+
+    async def create_remote_skill_target(
+        self,
+        request: CreateRemoteSkillTargetRequest,
+    ) -> RemoteSkillTargetEnrollment:
+        """Create a pending remote target and one-time enrollment code."""
+
+        return await self._request(CREATE_REMOTE_SKILL_TARGET, request)
+
+    async def list_remote_skill_targets(
+        self,
+        request: ListRemoteSkillTargetsRequest,
+    ) -> ListRemoteSkillTargetsResponse:
+        """List credential-free target and publication status for one scope."""
+
+        return await self._request(LIST_REMOTE_SKILL_TARGETS, request)
+
+    async def enroll_remote_skill_target(
+        self,
+        request: EnrollRemoteSkillTargetRequest,
+    ) -> RemoteSkillTargetCredential:
+        """Consume one enrollment code and receive a per-target credential."""
+
+        return await self._request(ENROLL_REMOTE_SKILL_TARGET, request)
+
+    async def revoke_remote_skill_target(
+        self,
+        request: RevokeRemoteSkillTargetRequest,
+    ) -> RemoteSkillTarget:
+        """Revoke one remote target credential using generation CAS."""
+
+        return await self._request(REVOKE_REMOTE_SKILL_TARGET, request)
+
+    async def rename_remote_skill_target(
+        self,
+        request: RenameRemoteSkillTargetRequest,
+    ) -> RemoteSkillTarget:
+        """Rename one remote target using generation CAS."""
+
+        return await self._request(RENAME_REMOTE_SKILL_TARGET, request)
+
+    async def publish_remote_skill(self, request: PublishRemoteSkillRequest) -> RemoteSkillPublication:
+        """Set an exact approved package as remote desired state."""
+
+        return await self._request(PUBLISH_REMOTE_SKILL, request)
+
+    async def unpublish_remote_skill(self, request: UnpublishRemoteSkillRequest) -> RemoteSkillPublication:
+        """Set desired absence for one remote publication."""
+
+        return await self._request(UNPUBLISH_REMOTE_SKILL, request)
+
+    async def reconcile_remote_skills(
+        self,
+        request: ReconcileRemoteSkillsRequest,
+    ) -> ReconcileRemoteSkillsResponse:
+        """Read latest-generation actions using this client's target credential."""
+
+        return await self._request(RECONCILE_REMOTE_SKILLS, request)
+
+    async def download_remote_skill_package(
+        self,
+        request: DownloadRemoteSkillPackageRequest,
+    ) -> SkillPackageDownload:
+        """Download an exact package authorized for this target generation."""
+
+        return await self._request(DOWNLOAD_REMOTE_SKILL_PACKAGE, request)
+
+    async def record_remote_skill_receipt(
+        self,
+        request: RecordRemoteSkillReceiptRequest,
+    ) -> RemoteSkillReceiptResponse:
+        """Record target-local delivery evidence for one exact generation."""
+
+        return await self._request(RECORD_REMOTE_SKILL_RECEIPT, request)
+
     async def scan_external_skills(self, request: ScanExternalSkillsRequest) -> ScanExternalSkillsResponse:
         """Refresh the configured host-local external Skill Registry."""
 
@@ -616,52 +1045,51 @@ class PowerContextClient:
         self,
         operation: Operation[_RequestT, _ResponseT],
         request: _RequestT | None = None,
+        *,
+        path_parameters: Mapping[str, str | int] | None = None,
+        query_parameters: Mapping[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+        response_headers: dict[str, str] | None = None,
     ) -> _ResponseT:
-        json_payload = None
-        query_parameters = None
-        if request is not None:
-            if operation.request_type is None:
-                message = f"{operation.operation_id} does not accept a request"
-                raise TypeError(message)
-            payload = TypeAdapter(operation.request_type).dump_python(
-                request,
-                mode="json",
-                by_alias=True,
-            )
-            if operation.request_location == "query":
-                query_parameters = {key: value for key, value in payload.items() if value is not None}
-            else:
-                json_payload = payload
+        path, json_payload, request_query = _prepare_request(
+            operation,
+            request,
+            path_parameters=path_parameters,
+            query_parameters=query_parameters,
+        )
 
         span = ClientSpan.start(operation.operation_id)
         try:
             headers = {} if self._headers is None else dict(self._headers)
+            if extra_headers is not None:
+                headers.update(extra_headers)
             span.inject(headers)
             response = await self._http_client.request(
                 operation.method,
-                f"{self._base_url}{operation.path}",
+                f"{self._base_url}{path}",
                 json=json_payload,
                 headers=headers,
-                params=query_parameters,
+                params=request_query or None,
             )
         except asyncio.CancelledError as error:
             span.finish("cancelled", error=error)
             raise
         except httpx.HTTPError as exc:
             span.finish("failure", error=exc)
-            raise TransportError(operation.path) from exc
+            raise TransportError(path) from exc
         except BaseException as error:
             span.finish("failure", error=error)
             raise
-        span.finish(
-            "success" if response.status_code == operation.success_status else "failure",
-            status_code=response.status_code,
-        )
+        declared_not_modified = response.status_code == 304 and 304 in operation.responses
+        succeeded = response.status_code == operation.success_status or declared_not_modified
+        span.finish("success" if succeeded else "failure", status_code=response.status_code)
 
         request_id = response.headers.get(REQUEST_ID_HEADER)
-        if response.status_code != operation.success_status:
+        if response_headers is not None:
+            response_headers.update(response.headers)
+        if not succeeded:
             error = _decode_error(response.content)
-            raise ServerResponseError(
+            raise server_response_error(
                 status_code=response.status_code,
                 request_id=request_id,
                 code=None if error is None else error.error.code,
@@ -669,13 +1097,70 @@ class PowerContextClient:
                 details=None if error is None else error.error.details,
             )
 
+        if response.status_code in {204, 304} or operation.response_type is None:
+            return cast(_ResponseT, None)
+
         try:
             return TypeAdapter(operation.response_type).validate_json(response.content)
         except ValidationError as exc:
             raise InvalidResponseError(
-                operation.path,
+                path,
                 request_id=request_id,
             ) from exc
+
+
+def _prepare_request(
+    operation: Operation[Any, Any],
+    request: object | None,
+    *,
+    path_parameters: Mapping[str, str | int] | None,
+    query_parameters: Mapping[str, Any] | None,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    json_payload: dict[str, Any] | None = None
+    request_query: dict[str, Any] = {}
+    if request is not None:
+        if operation.request_type is None:
+            message = f"{operation.operation_id} does not accept a request"
+            raise TypeError(message)
+        payload = TypeAdapter(operation.request_type).dump_python(request, mode="json", by_alias=True)
+        if not isinstance(payload, dict):
+            message = "Request must serialize to an object."
+            raise TypeError(message)
+        if operation.request_location == "query":
+            request_query.update({key: value for key, value in payload.items() if value is not None})
+        else:
+            json_payload = payload
+    if query_parameters is not None:
+        request_query.update({key: value for key, value in query_parameters.items() if value is not None})
+    path = _bind_operation_path(operation, path_parameters)
+    return path, json_payload, request_query or None
+
+
+def _bind_operation_path(
+    operation: Operation[Any, Any],
+    path_parameters: Mapping[str, str | int] | None,
+) -> str:
+    values = {} if path_parameters is None else dict(path_parameters)
+    expected = set(operation.path_parameters)
+    provided = set(values)
+    if provided != expected:
+        missing = sorted(expected - provided)
+        unexpected = sorted(provided - expected)
+        message = f"{operation.operation_id} path parameters do not match"
+        if missing:
+            message += f"; missing: {', '.join(missing)}"
+        if unexpected:
+            message += f"; unexpected: {', '.join(unexpected)}"
+        raise TypeError(message)
+
+    path = operation.path
+    for name in operation.path_parameters:
+        value = values[name]
+        if not isinstance(value, str | int) or isinstance(value, bool):
+            message = f"{operation.operation_id} path parameter {name} must be a string or integer"
+            raise TypeError(message)
+        path = path.replace(f"{{{name}}}", quote(str(value), safe=""))
+    return path
 
 
 def _decode_error(content: bytes) -> ErrorResponse | None:

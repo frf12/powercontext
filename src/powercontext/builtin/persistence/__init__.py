@@ -14,7 +14,13 @@
 
 """SQLAlchemy-backed relational persistence building blocks."""
 
+from powercontext.builtin.persistence.agent_skill_targets import (
+    RemoteAgentSkillTarget,
+    RemoteAgentSkillTargetRepository,
+    RemoteAgentSkillTargetState,
+)
 from powercontext.builtin.persistence.candidates import CandidateRepository
+from powercontext.builtin.persistence.connectors import ConnectorCheckpointRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import (
     ArtifactProcessingLeadershipLostError,
@@ -31,6 +37,13 @@ from powercontext.builtin.persistence.errors import (
     StoredPayloadConflictError,
 )
 from powercontext.builtin.persistence.external_skills import ExternalSkillRepository
+from powercontext.builtin.persistence.skill_packages import SkillPackageRepository
+from powercontext.builtin.persistence.skill_publications import (
+    SkillPublication,
+    SkillPublicationDesiredState,
+    SkillPublicationRepository,
+)
+from powercontext.builtin.persistence.source_definitions import SourceDefinitionManifestRepository
 from powercontext.builtin.persistence.statistics import (
     StatisticsRepository,
     StoredInventoryCounts,
@@ -62,6 +75,7 @@ __all__ = (
     "AsyncDatabase",
     "CandidateRepository",
     "CompositeTopicMemoryIndex",
+    "ConnectorCheckpointRepository",
     "DatabaseClosedError",
     "ExternalSkillRepository",
     "GenerationConflictError",
@@ -71,8 +85,16 @@ __all__ = (
     "InvalidStoredPayloadError",
     "NoTopicMemoryIndex",
     "PersistenceError",
+    "RemoteAgentSkillTarget",
+    "RemoteAgentSkillTargetRepository",
+    "RemoteAgentSkillTargetState",
     "RepositoryError",
     "RepositoryNotFoundError",
+    "SkillPackageRepository",
+    "SkillPublication",
+    "SkillPublicationDesiredState",
+    "SkillPublicationRepository",
+    "SourceDefinitionManifestRepository",
     "StatisticsRepository",
     "StoredArtifactProcessingBindingState",
     "StoredArtifactProcessingLease",

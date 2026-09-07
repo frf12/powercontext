@@ -45,6 +45,8 @@ from powercontext.builtin.runtime.application import (
     ExternalSkillApplication,
     HandoffApplication,
     MemoryApplication,
+    RemoteIngestionApplication,
+    RemoteSkillApplication,
     ReviewApplication,
     ScheduledExperienceProcessor,
     ScheduledSourceProcessor,
@@ -80,6 +82,7 @@ from powercontext.builtin.runtime.composition import (
     BuiltinConfigurationError,
     open_builtin_contexts,
     open_builtin_runtime,
+    preflight_builtin_runtime,
 )
 from powercontext.builtin.runtime.config import (
     BuiltinConfig,
@@ -93,6 +96,8 @@ from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, Topi
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
+    CommitConnectorCheckpoint,
+    ConnectorCheckpointState,
     ExperienceCandidate,
     ExperienceCandidatePage,
     ExperienceIncubationResult,
@@ -136,9 +141,10 @@ from powercontext.builtin.runtime.models import (
     SearchTopicMemoryRequest,
     SkillCandidate,
     SourceReceipt,
+    SubmitSourceObservation,
     TopicMemoryFlushResult,
 )
-from powercontext.builtin.runtime.protocols import PowerContextProvider
+from powercontext.builtin.runtime.protocols import PowerContextProvider, RemoteIngestion
 from powercontext.builtin.runtime.readiness import (
     CachedReadinessProbe,
     ReadinessCheckStatus,
@@ -168,6 +174,7 @@ from powercontext.builtin.statistics import (
     RecallTokenStatistics,
     RecallTokenValue,
     ResolvedUsagePeriod,
+    ScopeStatistics,
     SourceInventoryStatistics,
     Statistics,
     StatisticsPeriod,
@@ -194,6 +201,8 @@ __all__ = [
     "CandidateFamilyCount",
     "CandidateInventoryStatistics",
     "CaptureSource",
+    "CommitConnectorCheckpoint",
+    "ConnectorCheckpointState",
     "DatabaseConfig",
     "ExperienceApplication",
     "ExperienceCandidate",
@@ -272,6 +281,9 @@ __all__ = [
     "RecallTokenValue",
     "RejectArtifactCandidateRequest",
     "RememberMemoryRequest",
+    "RemoteIngestion",
+    "RemoteIngestionApplication",
+    "RemoteSkillApplication",
     "ResolveExternalSkillRequest",
     "ResolvedUsagePeriod",
     "RetireMemoryEntryRequest",
@@ -287,6 +299,7 @@ __all__ = [
     "RuntimeReadinessStatus",
     "ScheduledExperienceProcessor",
     "ScheduledSourceProcessor",
+    "ScopeStatistics",
     "ScopedExperienceApplication",
     "ScopedExternalSkillApplication",
     "ScopedHandoffApplication",
@@ -309,6 +322,7 @@ __all__ = [
     "Statistics",
     "StatisticsApplication",
     "StatisticsPeriod",
+    "SubmitSourceObservation",
     "TopicMemoryApplication",
     "TopicMemoryFlushResult",
     "TopicMemoryProcessingUnavailableError",
@@ -317,4 +331,5 @@ __all__ = [
     "dependency_readiness_probe",
     "open_builtin_contexts",
     "open_builtin_runtime",
+    "preflight_builtin_runtime",
 ]

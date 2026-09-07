@@ -34,6 +34,7 @@ from powercontext.builtin.artifacts.memory.models import (
     MemorySearchMode,
     MemoryUsedSearchMode,
 )
+from powercontext.builtin.artifacts.prompt import PromptCapability
 from powercontext.builtin.artifacts.skill import (
     ExternalSkillProviderScan,
     ExternalSkillResolution,
@@ -49,7 +50,8 @@ from powercontext.builtin.review import (
 )
 from powercontext.builtin.review.generation import SkillGenerationOrigin
 from powercontext.builtin.sources import ExternalSkillImportMode
-from powercontext.sources import SourceRef
+from powercontext.builtin.tags import TagFilter
+from powercontext.sources import ConnectorBinding, SourceObservation, SourceRef
 
 PreparedContextSchema: TypeAlias = Literal["powercontext.prepared-context.v1"]
 PreparedContextStatus: TypeAlias = Literal["ready", "empty"]
@@ -77,6 +79,28 @@ class SourceReceipt(BaseModel):
     sequence: int
 
 
+class SubmitSourceObservation(BaseModel):
+    """Submit one worker-materialized observation for durable acceptance."""
+
+    scope_id: str
+    observation: SourceObservation
+
+
+class ConnectorCheckpointState(BaseModel):
+    """Current opaque checkpoint for one exact Connector binding."""
+
+    binding: ConnectorBinding
+    checkpoint: JsonValue | None
+
+
+class CommitConnectorCheckpoint(BaseModel):
+    """Compare and replace one binding checkpoint after durable submissions."""
+
+    binding: ConnectorBinding
+    expected: JsonValue | None
+    checkpoint: JsonValue | None
+
+
 class RuntimeCapabilities(BaseModel):
     """Behavior available from the assembled Source-to-Memory Runtime."""
 
@@ -86,6 +110,7 @@ class RuntimeCapabilities(BaseModel):
     external_skill_registry: bool = False
     memory_search_modes: tuple[MemorySearchMode, ...]
     handoff_generation: bool = False
+    prompts: dict[str, PromptCapability] = Field(default_factory=dict)
     context_versions: tuple[PreparedContextSchema, ...] = (PREPARED_CONTEXT_SCHEMA,)
 
 
@@ -130,6 +155,7 @@ class ExperienceIncubationResult(BaseModel):
     current_cursor: int = Field(ge=0)
     source_count: int = Field(ge=0)
     candidate_count: int = Field(ge=0)
+    candidate_ids: tuple[str, ...] = ()
 
     @property
     def processed(self) -> bool:
@@ -149,6 +175,7 @@ class SearchMemoryRequest(BaseModel):
     query: str
     limit: int = 10
     mode: MemorySearchMode = "auto"
+    tag_filter: TagFilter | None = None
 
 
 class MemorySearchPage(BaseModel):

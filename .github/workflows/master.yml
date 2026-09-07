@@ -67,6 +67,9 @@ jobs:
       - name: Test DSH package
         run: make js-test
 
+      - name: Test built plugin in the real DSH runtime
+        run: make dsh-runtime-test
+
   pi-package:
     runs-on: ubuntu-latest
     steps:
@@ -79,8 +82,22 @@ jobs:
       - name: Test Pi package
         run: make pi-test
 
+  opendal-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
 
-  check-docs:
+      - name: Set up the Python environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.12"
+
+      - name: Test OpenDAL package
+        run: make opendal-test
+
+
+  check-website:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -89,5 +106,8 @@ jobs:
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
 
-      - name: Check if documentation can be built
+      - name: Set up website tools
+        uses: jdx/mise-action@v2
+
+      - name: Check website
         run: make docs-test

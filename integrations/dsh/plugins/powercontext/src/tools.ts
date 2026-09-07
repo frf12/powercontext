@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { invokeOperation, renderToolResult, toolResultSchema, type PluginRuntime, type ToolResult } from './invoke.ts'
+import { invokeOperation, renderToolResult, reportDirectFailure, toolResultSchema, type PluginRuntime, type ToolResult } from './invoke.ts'
 import type { JsonObject } from './client.ts'
 import { sessionCwd, UNSCOPED_MESSAGE } from './scope.ts'
 
@@ -55,9 +55,14 @@ async function run(
   operationId: string,
   payload: JsonObject,
 ): Promise<ToolResult> {
-  const scopeId = await runtime.resolveScope(sessionCwd(exec.agent?.session.header.cwd))
-  if (!scopeId) return { ok: false, code: 'unscoped', message: UNSCOPED_MESSAGE }
-  return invokeOperation(runtime.client, operationId, payload, scopeId, exec.signal)
+  try {
+    const scopeId = await runtime.resolveScope(sessionCwd(exec.agent?.session.header.cwd), exec.signal)
+    if (!scopeId) return { ok: false, code: 'unscoped', message: UNSCOPED_MESSAGE }
+    return await invokeOperation(runtime.client, operationId, payload, scopeId, exec.signal,
+      error => reportDirectFailure(runtime, 'tool_call', error))
+  } catch (error) {
+    return reportDirectFailure(runtime, 'tool_call', error)
+  }
 }
 
 type ToolCallKind = 'read' | 'edit' | 'delete' | 'search'
@@ -115,7 +120,7 @@ function memoryTools(runtime: PluginRuntime, defineTool: DefineTool): unknown[] 
     }),
     pcTool(defineTool, {
       name: 'pc_memory_list',
-      description: 'List memory entries in the current project scope.',
+      description: 'List memory entries in the current Scope.',
       kind: 'read',
       parameters: {
         include_inactive: { type: 'boolean', description: 'Include retired entries for audit only.' },

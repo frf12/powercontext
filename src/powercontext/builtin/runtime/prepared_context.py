@@ -20,7 +20,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from powercontext.artifacts import ArtifactRef
+from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceSearchHit, render_experience
 from powercontext.builtin.artifacts.memory.models import MemoryCitation, MemoryHit
 from powercontext.builtin.artifacts.topic_memory import TopicMemory, TopicMemorySearchHit
@@ -40,7 +40,7 @@ _TRUST_POLICY = (
 
 @dataclass(frozen=True)
 class _PreparedContextEntry:
-    origin: MemoryCitation | ArtifactRef
+    origin: PreparedContextOrigin
     kind: str
     citation: dict[str, object]
     content: str
@@ -52,17 +52,46 @@ class PreparedContextBuild:
     """Final public context and the exact origins selected to produce it."""
 
     context: PreparedContext
-    origins: tuple[MemoryCitation | ArtifactRef, ...]
+    origins: tuple[PreparedContextOrigin, ...]
+
+
+@dataclass(frozen=True)
+class MemoryEntryAddress:
+    """Identify one exact Memory entry version across Scope boundaries."""
+
+    memory: ArtifactAddress
+    entry_id: str
+    entry_version_id: str
+
+
+PreparedContextOrigin = MemoryCitation | ArtifactRef | MemoryEntryAddress | ArtifactAddress
+
+
+@dataclass(frozen=True)
+class PreparedMemoryCandidates:
+    """Memory candidates read from one Scope."""
+
+    scope_id: str
+    memory_ref: ArtifactRef | None = None
+    hits: tuple[MemoryHit, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparedExperienceCandidates:
+    """Experience candidates read from one Scope."""
+
+    scope_id: str
+    hits: tuple[ExperienceSearchHit, ...] = ()
 
 
 class PreparedContextBuilder:
     """Select and render final context without I/O, persistence, or reranking."""
 
-    memory_candidate_limit = 8
+    memory_candidate_limit = 16
     topic_memory_candidate_limit = 8
-    experience_candidate_limit = 2
+    experience_candidate_limit = 8
     candidate_limit = memory_candidate_limit
-    memory_entry_limit = 8
+    entry_limit = 8
     topic_memory_entry_limit = 8
     experience_entry_limit = 2
     max_entry_content_bytes = 2000
@@ -96,18 +125,50 @@ class PreparedContextBuilder:
         topic_memory_hits: Sequence[TopicMemorySearchHit] = (),
         experience_hits: Sequence[ExperienceSearchHit] = (),
     ) -> PreparedContextBuild:
-        if len(hits) > self.memory_candidate_limit:
+        return self.build_scopes_result(
+            request=request,
+            current_scope_id=None,
+            memory_candidates=(PreparedMemoryCandidates(scope_id="", memory_ref=memory_ref, hits=tuple(hits)),),
+            topic_memory_hits=topic_memory_hits,
+            experience_candidates=(PreparedExperienceCandidates(scope_id="", hits=tuple(experience_hits)),),
+        )
+
+    def build_scopes_result(
+        self,
+        *,
+        request: PrepareContextRequest,
+        current_scope_id: str | None,
+        memory_candidates: Sequence[PreparedMemoryCandidates] = (),
+        topic_memory_hits: Sequence[TopicMemorySearchHit] = (),
+        experience_candidates: Sequence[PreparedExperienceCandidates] = (),
+    ) -> PreparedContextBuild:
+        if sum(len(candidates.hits) for candidates in memory_candidates) > self.memory_candidate_limit:
             raise PreparedContextInvariantError("memory-candidate-limit")
         if len(topic_memory_hits) > self.topic_memory_candidate_limit:
             raise PreparedContextInvariantError("topic-memory-candidate-limit")
-        if len(experience_hits) > self.experience_candidate_limit:
+        if sum(len(candidates.hits) for candidates in experience_candidates) > self.experience_candidate_limit:
             raise PreparedContextInvariantError("experience-candidate-limit")
-        if hits and memory_ref is None:
-            raise PreparedContextInvariantError("memory-ref-missing")
 
-        memory_entries = self._memory_entries(memory_ref, hits)
+        memory_entries = _interleave_groups(
+            tuple(
+                self._memory_entries(
+                    candidates.memory_ref,
+                    candidates.hits,
+                    scope_id=None if candidates.scope_id == current_scope_id else candidates.scope_id or None,
+                )
+                for candidates in memory_candidates
+            )
+        )
         topic_memory_entries = self._topic_memory_entries(topic_memory_hits)
-        experience_entries = self._experience_entries(experience_hits)
+        experience_entries = _interleave_groups(
+            tuple(
+                self._experience_entries(
+                    candidates.hits,
+                    scope_id=None if candidates.scope_id == current_scope_id else candidates.scope_id or None,
+                )
+                for candidates in experience_candidates
+            )
+        )[: self.experience_entry_limit]
         entries = self._fit_entries(request, memory_entries, topic_memory_entries, experience_entries)
 
         if not entries:
@@ -125,7 +186,11 @@ class PreparedContextBuilder:
         self,
         memory_ref: ArtifactRef | None,
         hits: Sequence[MemoryHit],
+        *,
+        scope_id: str | None = None,
     ) -> tuple[_PreparedContextEntry, ...]:
+        if hits and memory_ref is None:
+            raise PreparedContextInvariantError("memory-ref-missing")
         memory_entries: list[_PreparedContextEntry] = []
         seen: set[tuple[str, str]] = set()
         for hit in hits:
@@ -138,18 +203,30 @@ class PreparedContextBuilder:
             seen.add(citation_key)
             if not hit.entry_id.strip() or not hit.entry_version_id.strip() or not hit.text.strip():
                 continue
-            if len(memory_entries) >= self.memory_entry_limit:
-                break
             citation = MemoryCitation(
                 memory_ref=hit.memory_ref,
                 entry_id=hit.entry_id,
                 entry_version_id=hit.entry_version_id,
             )
+            origin: PreparedContextOrigin = citation
+            rendered_citation = citation.model_dump(mode="json")
+            if scope_id is not None:
+                memory = ArtifactAddress(scope_id=scope_id, artifact=hit.memory_ref)
+                origin = MemoryEntryAddress(
+                    memory=memory,
+                    entry_id=hit.entry_id,
+                    entry_version_id=hit.entry_version_id,
+                )
+                rendered_citation = {
+                    "memory": memory.model_dump(mode="json"),
+                    "entry_id": hit.entry_id,
+                    "entry_version_id": hit.entry_version_id,
+                }
             memory_entries.append(
                 _PreparedContextEntry(
-                    origin=citation,
+                    origin=origin,
                     kind="memory",
-                    citation=citation.model_dump(mode="json"),
+                    citation=rendered_citation,
                     content=hit.text,
                     truncated=False,
                 )
@@ -188,6 +265,8 @@ class PreparedContextBuilder:
     def _experience_entries(
         self,
         hits: Sequence[ExperienceSearchHit],
+        *,
+        scope_id: str | None = None,
     ) -> tuple[_PreparedContextEntry, ...]:
         experience_entries: list[_PreparedContextEntry] = []
         seen_experiences: set[tuple[str, int]] = set()
@@ -198,13 +277,16 @@ class PreparedContextBuilder:
             if identity in seen_experiences:
                 continue
             seen_experiences.add(identity)
-            if len(experience_entries) >= self.experience_entry_limit:
-                break
+            origin: PreparedContextOrigin = hit.artifact_ref
+            rendered_citation: dict[str, object] = {"artifact_ref": hit.artifact_ref.model_dump(mode="json")}
+            if scope_id is not None:
+                origin = ArtifactAddress(scope_id=scope_id, artifact=hit.artifact_ref)
+                rendered_citation = {"artifact": origin.model_dump(mode="json")}
             experience_entries.append(
                 _PreparedContextEntry(
-                    origin=hit.artifact_ref,
+                    origin=origin,
                     kind="experience",
-                    citation={"artifact_ref": hit.artifact_ref.model_dump(mode="json")},
+                    citation=rendered_citation,
                     content=render_experience(hit.content),
                     truncated=False,
                 )
@@ -220,6 +302,8 @@ class PreparedContextBuilder:
     ) -> tuple[_PreparedContextEntry, ...]:
         entries: list[_PreparedContextEntry] = []
         for candidate in _interleave(memory_entries, topic_memory_entries, experience_entries):
+            if len(entries) >= self.entry_limit:
+                break
             fitted = self._fit_entry(
                 entries,
                 origin=candidate.origin,
@@ -236,7 +320,7 @@ class PreparedContextBuilder:
         self,
         entries: Sequence[_PreparedContextEntry],
         *,
-        origin: MemoryCitation | ArtifactRef,
+        origin: PreparedContextOrigin,
         kind: str,
         citation: dict[str, object],
         text: str,
@@ -294,6 +378,13 @@ def _interleave(
             ordered.append(topics[index])
         if index < len(experiences):
             ordered.append(experiences[index])
+    return tuple(ordered)
+
+
+def _interleave_groups(groups: Sequence[Sequence[_PreparedContextEntry]]) -> tuple[_PreparedContextEntry, ...]:
+    ordered: list[_PreparedContextEntry] = []
+    for index in range(max((len(group) for group in groups), default=0)):
+        ordered.extend(group[index] for group in groups if index < len(group))
     return tuple(ordered)
 
 

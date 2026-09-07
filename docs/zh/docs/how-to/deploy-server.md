@@ -5,8 +5,45 @@ description: 使用持久化数据、健康检查、鉴权和安全网络边界�
 
 # 部署 Server
 
-`powercontext server run` 是前台进程。个人工作站可以直接在终端中运行；长期运行时，应由容器平台或服务管理器负责启动、
-重启和收集日志。
+`powercontext server run` 是前台进程。在个人 macOS、Linux 或 Windows 工作站上，PowerContext 可以把同一个 Server runner 注册到原生当前用户服务管理器。托管部署仍应使用容器平台或管理员拥有的服务管理器。
+
+## 运行持久个人 Server
+
+安装并启动可选的当前用户服务：
+
+```bash
+powercontext service install
+powercontext service status
+```
+
+Linux 使用 `systemd --user`，日志进入 user journal；macOS 使用当前用户 LaunchAgent；Windows 使用当前用户的 Task Scheduler task。macOS 和 Windows 的 stdout、stderr 写入 PowerContext 用户数据目录。
+
+`service status` 会返回精确的日志 selector 或路径。
+
+在 Windows 上，如果没有提供 `--start-on-login` 或 `--no-start-on-login`，命令会询问是否在当前用户下次登录时
+自动启动；直接按 Enter 的默认选择是不启用。需要非交互选择时，请提供其中一个选项。
+
+使用显式 Server 配置时，先保护并验证环境文件：
+
+```bash
+chmod 600 /path/to/powercontext.env
+powercontext config validate --env-file /path/to/powercontext.env
+powercontext service install --env-file /path/to/powercontext.env
+```
+
+在 Windows 上，校验前需要移除继承权限，只授予当前用户、`SYSTEM` 和本机 `Administrators` 访问权限，例如：
+
+```powershell
+icacls $env:USERPROFILE\powercontext.env /inheritance:r /grant:r "$env:USERNAME:(F)" "SYSTEM:(F)" "Administrators:(F)"
+```
+
+原生定义只记录环境文件的绝对路径和不含内容的文件 identity metadata；在 Windows 上还记录当前用户的 owner SID，
+launcher 每次启动都会重新校验它。不复制 credential 或调用者的 shell environment。
+升级 PowerContext 或修改环境文件后应重新执行 `service install`。以下命令会删除注册，但保留 Server 数据和日志：
+
+```bash
+powercontext service uninstall
+```
 
 ## 选择网络边界
 
@@ -76,7 +113,7 @@ SQLite 数据库和 scheduler 状态。
 从 secret manager 把强 token 加载到 Server 进程环境：
 
 ```bash
-export POWERCONTEXT_SERVER_AUTH_ENABLED=true
+export POWERCONTEXT_SERVER_ACCESS_MODE=enforced
 export POWERCONTEXT_SERVER_AUTH_TOKEN="$POWERCONTEXT_DEPLOYMENT_TOKEN"
 powercontext server run
 ```
@@ -88,7 +125,7 @@ docker run --rm \
   --name powercontext-server \
   --publish 127.0.0.1:8000:8000 \
   --volume powercontext-data:/data \
-  --env POWERCONTEXT_SERVER_AUTH_ENABLED=true \
+  --env POWERCONTEXT_SERVER_ACCESS_MODE=enforced \
   --env POWERCONTEXT_SERVER_AUTH_TOKEN \
   powercontext-server:local
 ```
