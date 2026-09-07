@@ -160,18 +160,19 @@ def test_worker_failure_capture_cannot_be_reported_as_pass() -> None:
         require_no_worker_failures("E1", failures)
 
 
-def test_e1_codex_generation_and_plugin_subprocesses_exclude_layer_secrets(
+def test_e1_codex_generation_plugin_and_browser_subprocesses_exclude_layer_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     embedding_secret = "r8-embedding-authorization-secret"  # noqa: S105 - synthetic canary.
     oceanbase_secret = "r8-oceanbase-password-secret"  # noqa: S105 - synthetic canary.
+    browser_token = "r8-browser-token"  # noqa: S105 - synthetic canary.
     source_environment = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path / "home"),
         "POWERCONTEXT_R8_EMBEDDING_HEADERS_JSON": json.dumps({"Authorization": embedding_secret}),
         "POWERCONTEXT_R8_OCEANBASE_URL": f"mysql+aoceanbase://r8:{oceanbase_secret}@db.invalid/r8",
-        "UNRELATED_PROCESS_SECRET": "r8-unrelated-secret",
+        "UNRELATED_SECRET": "r8-unrelated-secret",
     }
     environment = harness._e1_subprocess_environment(source_environment)
     observed_environments: list[dict[str, str]] = []
@@ -226,13 +227,26 @@ def test_e1_codex_generation_and_plugin_subprocesses_exclude_layer_secrets(
         1,
     )
     harness._install_current_plugin(codex_home=codex_home, environment=environment, timeout=1)
+    monkeypatch.setattr(harness, "_browser_python", lambda: Path("/synthetic/playwright-python"))
+    monkeypatch.setattr(harness, "_browser_executable", lambda: Path("/synthetic/chromium"))
+    browser = harness._capture_browser_evidence(
+        directory=tmp_path,
+        base_url="http://127.0.0.1:1",
+        token=browser_token,
+        artifact_ref="topic:test@1",
+        source_ref="content:test",
+        environment=environment,
+    )
 
-    assert observed_environments
+    assert browser["status"] == "PASS"
+    assert len(observed_environments) == 5
+    assert observed_environments[-1]["POWERCONTEXT_R8_BROWSER_TOKEN"] == browser_token
+    assert observed_environments[-1]["POWERCONTEXT_R8_BROWSER_EXECUTABLE"] == "/synthetic/chromium"
     for observed in observed_environments:
         encoded = json.dumps(observed, sort_keys=True)
         assert "POWERCONTEXT_R8_EMBEDDING_HEADERS_JSON" not in observed
         assert "POWERCONTEXT_R8_OCEANBASE_URL" not in observed
-        assert "UNRELATED_PROCESS_SECRET" not in observed
+        assert "UNRELATED_SECRET" not in observed
         assert embedding_secret not in encoded
         assert oceanbase_secret not in encoded
         assert observed["OPENAI_API_KEY"] == "r8-loopback-only"
