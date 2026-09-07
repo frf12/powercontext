@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import BaseModel, ValidationError
 
+import powercontext.http as http_models
 from powercontext.http import (
     AcknowledgeHandoffRequest,
     ActivateHandoffRequest,
@@ -150,6 +153,22 @@ from powercontext.http._generated.operations import (
 from powercontext.server.app import create_app
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import HandoffReportConfig, ServerSettings
+
+
+def test_http_public_exports_resolve() -> None:
+    assert [name for name in http_models.__all__ if not hasattr(http_models, name)] == []
+
+
+def test_http_star_import_resolves_every_public_export() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "from powercontext.http import *"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
 
 CONTRACT_PATH = Path(__file__).resolve().parents[1] / "openapi" / "powercontext.yaml"
 

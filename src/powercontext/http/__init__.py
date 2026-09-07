@@ -684,8 +684,6 @@ __all__ = [
     "TaskCheckStatus",
     "TaskOutcome",
     "TaskOutcomeStatus",
-    "TextSearchMode",
-    "TextSearchUsedMode",
     "Timezone",
     "TokenEstimatorProfile",
     "TopicMemoryArtifact",
