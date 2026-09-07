@@ -493,7 +493,7 @@ TOPIC_MEMORY_REVISION_PUBLICATIONS_TABLE = Table(
 TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE = Table(
     "pc_topic_memory_retrieval_shape",
     SHARED_METADATA,
-    Column("singleton", Integer, primary_key=True),
+    Column("singleton", Integer, primary_key=True, autoincrement=False),
     Column("shape", identity_string(16), nullable=False),
     Column("profile_fingerprint", identity_string(64)),
     CheckConstraint("singleton = 1", name="ck_pc_topic_memory_retrieval_shape_singleton"),

@@ -60,6 +60,7 @@ def test_oceanbase_topic_schema_compiles_native_text_and_vector_storage() -> Non
     assert "FOREIGN KEY(scope_id, family, artifact_id, revision)" in publication
     assert "shape VARCHAR(16)" in retrieval_shape
     assert "profile_fingerprint VARCHAR(64)" in retrieval_shape
+    assert "AUTO_INCREMENT" not in retrieval_shape
     assert "title MEDIUMTEXT NOT NULL" in active_topic
     assert "summary MEDIUMTEXT NOT NULL" in active_topic
     assert "chunk_text MEDIUMTEXT NOT NULL" in active_chunks
