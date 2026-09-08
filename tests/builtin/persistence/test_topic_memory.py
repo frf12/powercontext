@@ -80,6 +80,9 @@ class _SwitchableIndex:
     async def initialize(self, connection: AsyncConnection, /) -> None:
         await self.delegate.initialize(connection)
 
+    async def validate_current(self, connection: AsyncConnection, /) -> None:
+        await self.delegate.validate_current(connection)
+
     async def replace(
         self,
         connection: AsyncConnection,

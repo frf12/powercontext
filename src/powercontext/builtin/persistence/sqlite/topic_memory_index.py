@@ -27,9 +27,11 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    column,
     delete,
     insert,
     select,
+    table,
     text,
 )
 from sqlalchemy.exc import SQLAlchemyError
@@ -55,7 +57,10 @@ from powercontext.builtin.persistence.tables import (
     TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
     identity_string,
 )
-from powercontext.builtin.persistence.topic_memory_index import topic_memory_embedding_profile_fingerprint
+from powercontext.builtin.persistence.topic_memory_index import (
+    topic_memory_embedding_profile_fingerprint,
+    validate_current_topic_vectors,
+)
 from powercontext.limits import MAX_ARTIFACT_ID_LENGTH, MAX_SCOPE_ID_LENGTH
 
 SQLITE_TOPIC_MEMORY_FTS_MARKER_TABLE = Table(
@@ -245,6 +250,9 @@ class SQLiteTopicMemoryFTSIndex:
     capabilities = TopicMemoryCapabilities(fts=True)
     tables: tuple[Table, ...] = SQLITE_TOPIC_MEMORY_FTS_TABLES
 
+    async def validate_current(self, _connection: AsyncConnection, /) -> None:
+        pass
+
     async def initialize(self, connection: AsyncConnection, /) -> None:
         if connection.dialect.name != "sqlite":
             raise TopicMemoryCapabilityError("sqlite-fts")
@@ -368,6 +376,26 @@ class SQLiteTopicMemoryVectorIndex:
     """Maintain complete active Topic and chunk embeddings in sqlite-vec."""
 
     tables: tuple[Table, ...] = SQLITE_TOPIC_MEMORY_VECTOR_TABLES
+
+    async def validate_current(self, connection: AsyncConnection, /) -> None:
+        topic_rows = table("pc_topic_memory_topic_vec", column("rowid"), column("scope_id"))
+        chunk_rows = table("pc_topic_memory_chunk_vec", column("rowid"), column("scope_id"))
+        topics = SQLITE_TOPIC_MEMORY_VECTOR_TOPICS_TABLE
+        chunks = SQLITE_TOPIC_MEMORY_VECTOR_CHUNKS_TABLE
+        await validate_current_topic_vectors(
+            connection,
+            topics,
+            chunks,
+            self._fingerprint,
+            topic_present=select(topic_rows.c.rowid)
+            .where(topic_rows.c.rowid == topics.c.vector_id, topic_rows.c.scope_id == topics.c.scope_id)
+            .correlate(topics)
+            .exists(),
+            chunk_present=select(chunk_rows.c.rowid)
+            .where(chunk_rows.c.rowid == chunks.c.vector_id, chunk_rows.c.scope_id == chunks.c.scope_id)
+            .correlate(chunks)
+            .exists(),
+        )
 
     def __init__(self, profile: EmbeddingProfile) -> None:
         if profile.dimension < 1 or profile.distance != "l2" or profile.normalization != "unit":
