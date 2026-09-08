@@ -192,6 +192,12 @@ tokens。一次实际 generation 请求仍必须满足：
 新 Source，也不占用新的 Journal 位置。全部片段处理成功后，Window 才统一发布并推进 Cursor；任一片段失败时，
 原 Source 与 Cursor 保持不变，供后续重试。
 
+分片结果使用同时受 20 个驻留项和阶段输入 token 预算约束的流式累加器，20 不是整条 Source 的结果总上限。
+完全相同的 Probe 先去重；累加器将溢出前，私有归并阶段把预算内的前缀合成一个中间结果。归并必须覆盖每个
+输入位置、保留 evidence IDs 的精确并集，不能选择历史身份或返回 NOOP。结果最多占阶段输入预算的八分之一。
+单项归并必须缩小估算体积，多项归并必须减少项数；每次压缩最多尝试“输入项数的两倍加一”次，防止模型造成
+无限压缩循环。所有调用继续使用现有阶段请求/输出限制与 Worker timeout。
+
 ## Probe 与历史 Topic 选择
 
 Worker 首先读取当前 Source Window。服务端标记为 `lineage_only` 的 Source 在 token 估算与生成之前排除，其
@@ -262,7 +268,8 @@ Evolver 直接生成最终 Topic 内容。
 Work Item Source
   -> 拆成有界 Source Batch，必要时将单个超长 Source 分段
   -> 每个 Batch 在不加载历史 Topic 的情况下生成临时 Topics
-  -> 全部相关临时 Topics + 一个历史 Topic或空白目标
+  -> 对全部贡献的临时 Topics 做有界中间归并
+  -> 归并后的临时 Topics + 一个历史 Topic或空白目标
   -> 最终 CREATE / UPDATE / NOOP
 ~~~
 
@@ -270,8 +277,10 @@ Work Item Source
 结果的临时 Topics 所引用 SourceRef 的并集。临时 Topic 没有 identity，不写数据库，不参与检索，Worker 结束
 后即丢弃。
 
-如果“全部临时 Topic + 单个历史 Topic”仍超过模型上下文，首版不做递归压缩、历史 Topic 分片或自动拆分。这是
-已知但明确排除的极端输入。Source 分段不取消临时 Topic 数量、模型请求次数和最终历史上下文的独立上限。
+临时结果在数量或 token 溢出前增量归并，加入历史 Topic 前必要时再归并。归并不发布中间状态；遗漏输入覆盖、
+虚构证据或目标、结果超预算、无法缩小结果都会使 Window 失败并保留 Cursor。如果归并结果加单个历史 Topic
+仍不能适配上下文，则失败关闭，不拆分或截断历史内容，也不进入无限归并循环。这不保证模型摘要的语义质量，
+也不保证任意大的输入都能在 Worker timeout 内处理成功。
 
 ## 二次检索与相关组协调
 
@@ -738,7 +747,7 @@ configuration error 失败；Runtime 不创建或回填这些历史向量，也�
 - Pending dirty set 增加 Source 写事务的写放大。
 - 不持久化 Job、checkpoint 和 retry state 简化了系统，但失败后需要重算整个 Window，且无法查询单次任务进度。
 - `global` Supervisor 统一资源控制，但未来多个重型 Family 共用 Worker pool 时可能成为瓶颈。
-- Source 分段增加模型调用次数；“临时 Topic + 历史 Topic”仍可能超过上下文，对这部分材料的递归压缩不在首版范围。
+- Source 分段和中间归并增加模型调用次数；结构校验保护输入覆盖，但信息保真的措辞仍依赖模型，超长历史上下文仍可能失败关闭。
 
 # Rationale and alternatives
 
@@ -793,7 +802,7 @@ Revision 拥有不同通道数，融合排名不可比较，因此保留旧 acti
 
 以下边界已明确排除，不作为实现者自行选择的开放问题：
 
-- 临时 Topic 总内容加单个历史 Topic 仍超过上下文时的递归压缩或拆分策略；
+- 对历史 Topic 内容无限递归压缩或拆分的策略；
 - 两个已有 Topic identities 的自动合并；
 - 跨 Scope Topic 检索；
 - 用户手动管理 Topic 的 create/update/delete/retire API；
