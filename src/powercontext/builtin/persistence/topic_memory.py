@@ -157,24 +157,52 @@ class TopicMemoryRepository:
         if orphan_chunk is not None:
             raise TopicMemoryStorageInvariantError("active-chunk-not-head", tuple(orphan_chunk))
 
-        active_rows = (
-            await connection.execute(
-                select(
-                    ARTIFACT_HEADS_TABLE.c.scope_id,
-                    ARTIFACT_HEADS_TABLE.c.artifact_id,
-                    ARTIFACT_HEADS_TABLE.c.revision,
-                    TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.revision.label("active_revision"),
-                )
-                .outerjoin(
-                    TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
-                    (TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.scope_id == ARTIFACT_HEADS_TABLE.c.scope_id)
-                    & (TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.family == ARTIFACT_HEADS_TABLE.c.family)
-                    & (TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.artifact_id == ARTIFACT_HEADS_TABLE.c.artifact_id),
-                )
-                .where(ARTIFACT_HEADS_TABLE.c.family == TopicMemory.family)
+        # Check each Head and its chunks in the same statement snapshot. A
+        # Worker may use READ COMMITTED (or SQLite legacy SELECT mode), where a
+        # later query could otherwise see an already-replaced active Revision.
+        chunk_count = (
+            select(func.count())
+            .select_from(TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE)
+            .where(
+                TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.scope_id == ARTIFACT_HEADS_TABLE.c.scope_id,
+                TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.family == ARTIFACT_HEADS_TABLE.c.family,
+                TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.artifact_id == ARTIFACT_HEADS_TABLE.c.artifact_id,
+                TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.revision == ARTIFACT_HEADS_TABLE.c.revision,
             )
-        ).mappings()
-        for row in active_rows:
+            .correlate(ARTIFACT_HEADS_TABLE)
+            .scalar_subquery()
+        )
+        invalid_head = (
+            (
+                await connection.execute(
+                    select(
+                        ARTIFACT_HEADS_TABLE.c.scope_id,
+                        ARTIFACT_HEADS_TABLE.c.artifact_id,
+                        ARTIFACT_HEADS_TABLE.c.revision,
+                        TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.revision.label("active_revision"),
+                    )
+                    .outerjoin(
+                        TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
+                        (TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.scope_id == ARTIFACT_HEADS_TABLE.c.scope_id)
+                        & (TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.family == ARTIFACT_HEADS_TABLE.c.family)
+                        & (TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.artifact_id == ARTIFACT_HEADS_TABLE.c.artifact_id),
+                    )
+                    .where(
+                        ARTIFACT_HEADS_TABLE.c.family == TopicMemory.family,
+                        or_(
+                            TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.revision.is_(None),
+                            TOPIC_MEMORY_ACTIVE_TOPICS_TABLE.c.revision != ARTIFACT_HEADS_TABLE.c.revision,
+                            chunk_count == 0,
+                        ),
+                    )
+                    .limit(1)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if invalid_head is not None:
+            row = invalid_head
             ref = ArtifactRef(
                 family=TopicMemory.family,
                 artifact_id=str(row["artifact_id"]),
@@ -182,25 +210,9 @@ class TopicMemoryRepository:
             )
             if row["active_revision"] is None or int(row["active_revision"]) != ref.revision:
                 raise TopicMemoryStorageInvariantError("head-not-active", (str(row["scope_id"]), ref))
-            chunk_count = int(
-                await connection.scalar(
-                    select(func.count())
-                    .select_from(TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE)
-                    .where(
-                        TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.scope_id == row["scope_id"],
-                        TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.family == TopicMemory.family,
-                        TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.artifact_id == ref.artifact_id,
-                        TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE.c.revision == ref.revision,
-                    )
-                )
-                or 0
-            )
-            if chunk_count == 0:
-                raise TopicMemoryStorageInvariantError("missing-active-chunks", (str(row["scope_id"]), ref))
-            if self.index.capabilities.vector and not await self.index.vector_complete(
-                connection, str(row["scope_id"]), ref
-            ):
-                raise TopicMemoryStorageInvariantError("incomplete-vector", (str(row["scope_id"]), ref))
+            raise TopicMemoryStorageInvariantError("missing-active-chunks", (str(row["scope_id"]), ref))
+
+        await self.index.validate_current(connection)
 
         if not configure_retrieval_shape:
             await self._check_retrieval_shape(connection)
