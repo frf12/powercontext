@@ -21,9 +21,10 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
-from dataclasses import dataclass, field
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Generic, TypeVar, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -80,6 +81,7 @@ from powercontext.builtin.artifacts.topic_memory.relatedness import (
 )
 from powercontext.builtin.inference import (
     EmbeddingModel,
+    GenerationResult,
     StructuredGenerator,
     TokenEstimator,
     character_token_estimator,
@@ -92,12 +94,18 @@ from powercontext.builtin.persistence.sources import SourceRepository, StoredSou
 from powercontext.builtin.persistence.supervision import ArtifactProcessingLeaseRepository
 from powercontext.builtin.persistence.tables import SOURCE_JOURNAL_HEADS_TABLE
 from powercontext.builtin.persistence.topic_memory import TopicMemoryRepository
+from powercontext.builtin.persistence.topic_memory_budget import (
+    MAX_TOPIC_MEMORY_WORK_REQUESTS,
+    MAX_TOPIC_MEMORY_WORK_TOKENS,
+    TopicMemoryWorkBudget,
+    require_topic_memory_work_available,
+)
 from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingWorkAssignment,
     ArtifactProcessingWorkerCompletion,
     ArtifactProcessingWorkerOutcome,
 )
-from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.runtime.config import BuiltinConfig, InferenceConfig
 from powercontext.builtin.source_eligibility import is_generation_eligible
 from powercontext.builtin.sources import (
     CONTENT_SOURCE_NAME,
@@ -116,6 +124,30 @@ from powercontext.errors import RevisionConflictError
 logger = logging.getLogger(__name__)
 
 _PLANNER_TEXT_PREVIEW_LENGTH = 512
+MAX_TOPIC_MEMORY_SOURCE_CHARACTERS = 4 * 1024 * 1024
+MAX_TOPIC_MEMORY_SOURCE_NODES = 65_536
+MAX_TOPIC_MEMORY_SOURCE_DEPTH = 32
+MAX_TOPIC_MEMORY_WINDOW_SOURCES = 100
+
+InputT = TypeVar("InputT", bound=BaseModel)
+OutputT = TypeVar("OutputT")
+
+
+class _ReservedTopicMemoryGenerator(Generic[InputT, OutputT]):
+    def __init__(
+        self,
+        delegate: StructuredGenerator[InputT, OutputT],
+        reserve: Callable[[BaseModel, str], Awaitable[None]],
+        stage: str,
+    ) -> None:
+        self.delegate = delegate
+        self.reserve = reserve
+        self.stage = stage
+
+    async def generate(self, value: InputT, /) -> GenerationResult[OutputT]:
+        await self.reserve(value, self.stage)
+        return await self.delegate.generate(value)
+
 
 UsageReporter = Callable[[ModelUsagePurpose, ModelUsageOperation, Any], Awaitable[None]]
 
@@ -134,9 +166,15 @@ class TopicMemoryStageSet:
     input_tokens_limit: int
     fixed_prompts: Mapping[str, str] = field(default_factory=dict)
     reducer: StructuredGenerator[TopicMemoryReductionInput, TopicMemoryReductionOutput] | None = None
+    max_requests: int = 2
+    transcript_reserve: int | None = None
 
     def __post_init__(self) -> None:
-        if self.input_tokens_limit < 1:
+        if (
+            self.input_tokens_limit < 1
+            or self.max_requests < 1
+            or (self.transcript_reserve is not None and self.transcript_reserve < 1)
+        ):
             raise ValueError("Topic Memory input token limit must be positive")  # noqa: TRY003
 
     def fits(self, value: BaseModel, stage: str = "") -> bool:
@@ -194,14 +232,23 @@ class TopicMemoryWindowSelector:
         )
 
     async def select(self, scope_id: str, source_after: int, source_ceiling: int, /) -> int:
+        source_ceiling = min(source_ceiling, source_after + MAX_TOPIC_MEMORY_WINDOW_SOURCES)
         limit = source_ceiling - source_after
         async with self._database.transaction() as connection:
+            await require_topic_memory_work_available(
+                connection, scope_id, TOPIC_MEMORY_SOURCE_WINDOW_BINDING, source_after
+            )
             stored = await self._sources.list(connection, scope_id, after=source_after, limit=limit)
         if len(stored) != limit or tuple(item.journal_position for item in stored) != tuple(
             range(source_after + 1, source_ceiling + 1)
         ):
             raise TopicMemoryGenerationError("source_window_changed")
-        evidence = await _project_window(stored, self._sources)
+        try:
+            evidence = await _project_window(stored, self._sources)
+        except TopicMemoryGenerationError:
+            # Let a singleton Worker persist rejection at the current frontier.
+            # Earlier healthy Sources still make progress before a bad suffix.
+            return source_after + 1
         return await asyncio.to_thread(self._largest_prefix, evidence, source_after, source_ceiling)
 
     def _largest_prefix(self, evidence: tuple[TopicMemoryEvidence, ...], source_after: int, source_ceiling: int) -> int:
@@ -232,12 +279,14 @@ class TopicMemoryAtomicPublisher:
         self._cursors = SourceCursorRepository() if cursors is None else cursors
         self._leases = ArtifactProcessingLeaseRepository() if leases is None else leases
 
-    async def publish(
+    async def publish(  # noqa: C901
         self,
         assignment: ArtifactProcessingWorkAssignment,
         evidence: Mapping[str, StoredSource],
         operations: Sequence[PreparedTopicMemoryOperation],
         /,
+        *,
+        work_budget: TopicMemoryWorkBudget | None = None,
     ) -> None:
         if (
             assignment.binding_name != TOPIC_MEMORY_SOURCE_WINDOW_BINDING
@@ -308,6 +357,8 @@ class TopicMemoryAtomicPublisher:
                 cited_sources = {(item.source_type, item.source_id) for item in operation.draft.sources}
                 if not cited_sources or not cited_sources <= allowed_sources:
                     raise TopicMemoryGenerationError("invalid_evidence")
+            if work_budget is not None:
+                await work_budget.complete(connection)
             await self._cursors.save(
                 connection,
                 assignment.scope_id,
@@ -356,7 +407,23 @@ class TopicMemoryProcessor:
         self._database = database
         self._sources = sources
         self._topics = topics
-        self._stages = stages
+        self._work_budget: ContextVar[TopicMemoryWorkBudget | None] = ContextVar(
+            "topic_memory_work_budget", default=None
+        )
+        self._local_requests = 0
+        self._local_tokens = 0
+        self._stages = replace(
+            stages,
+            probe=_ReservedTopicMemoryGenerator(stages.probe, self._reserve_stage, "probe"),
+            global_evolver=_ReservedTopicMemoryGenerator(stages.global_evolver, self._reserve_stage, "global"),
+            planner=_ReservedTopicMemoryGenerator(stages.planner, self._reserve_stage, "planner"),
+            evolver=_ReservedTopicMemoryGenerator(stages.evolver, self._reserve_stage, "evolve"),
+            temporary=_ReservedTopicMemoryGenerator(stages.temporary, self._reserve_stage, "temporary"),
+            reconciler=_ReservedTopicMemoryGenerator(stages.reconciler, self._reserve_stage, "reconcile"),
+            reducer=None
+            if stages.reducer is None
+            else _ReservedTopicMemoryGenerator(stages.reducer, self._reserve_stage, "reduce"),
+        )
         self._publisher = publisher
         self._embedding_model = embedding_model
         self._usage_reporter = usage_reporter
@@ -371,22 +438,77 @@ class TopicMemoryProcessor:
             or not 0 <= assignment.source_after < assignment.source_through <= assignment.wave_target
         ):
             raise TopicMemoryGenerationError("invalid_window")
+        budget = TopicMemoryWorkBudget(
+            self._database,
+            scope_id=assignment.scope_id,
+            binding_name=assignment.binding_name,
+            source_after=assignment.source_after,
+            source_through=assignment.source_through,
+            cursor_generation=assignment.cursor_generation,
+            fence=assignment.fence,
+        )
+        token = self._work_budget.set(budget)
         try:
-            stored = await self._read_window(assignment)
-            evidence = {_evidence_id(index): item for index, item in enumerate(stored, start=1)}
-            projected = await _project_window(stored, self._sources)
-            proposals, candidates = await self._generate(assignment.scope_id, projected) if projected else ((), {})
-            operations = await self._prepare_operations(assignment.scope_id, proposals, candidates, evidence)
-            await self._publisher.publish(assignment, evidence, operations)
+            await budget.begin()
+            try:
+                stored = await self._read_window(assignment)
+                evidence = {_evidence_id(index): item for index, item in enumerate(stored, start=1)}
+                projected = await _project_window(stored, self._sources)
+                proposals, candidates = await self._generate(assignment.scope_id, projected) if projected else ((), {})
+                operations = await self._prepare_operations(assignment.scope_id, proposals, candidates, evidence)
+                await self._publisher.publish(assignment, evidence, operations, work_budget=budget)
+            except TopicMemoryGenerationError as error:
+                if error.code == "source_complexity_limit":
+                    await budget.fail(error.code)
+                raise
         except ArtifactProcessingLeadershipLostError:
             return ArtifactProcessingWorkerCompletion(ArtifactProcessingWorkerOutcome.LEADERSHIP_LOST)
         except GenerationConflictError:
             return ArtifactProcessingWorkerCompletion(ArtifactProcessingWorkerOutcome.CURSOR_CONFLICT)
         except RevisionConflictError:
             return ArtifactProcessingWorkerCompletion(ArtifactProcessingWorkerOutcome.HEAD_CONFLICT)
+        finally:
+            self._work_budget.reset(token)
         return ArtifactProcessingWorkerCompletion()
 
+    async def _reserve_stage(self, value: BaseModel, stage: str) -> None:
+        if not self._stages.fits(value, stage):
+            raise TopicMemoryGenerationError("input_budget_exceeded")
+        # Reserve every structured retry's entire input + output/transcript
+        # capacity, even if the provider returns no usage or fails mid-call.
+        reserve = self._stages.transcript_reserve
+        capacity = self._stages.input_tokens_limit + (
+            max(1, self._stages.input_tokens_limit // 4) if reserve is None else reserve
+        )
+        await self._reserve(requests=self._stages.max_requests, tokens=self._stages.max_requests * capacity)
+
+    async def _reserve(self, *, requests: int, tokens: int) -> None:
+        budget = self._work_budget.get()
+        if budget is not None:
+            await budget.reserve(requests=requests, tokens=tokens)
+            return
+        # Private stage helpers also have a finite allowance when used alone.
+        # The public process entrypoint ALWAYS uses the durable reservation.
+        if (
+            self._local_requests + requests > MAX_TOPIC_MEMORY_WORK_REQUESTS
+            or self._local_tokens + tokens > MAX_TOPIC_MEMORY_WORK_TOKENS
+        ):
+            raise TopicMemoryGenerationError("window_provider_budget_exceeded")
+        self._local_requests += requests
+        self._local_tokens += tokens
+
+    async def _embed(self, texts: tuple[str, ...]):
+        if self._embedding_model is None:
+            raise TopicMemoryGenerationError("embedding_unavailable")
+        # At most one provider request per text (the adapter may batch them).
+        await self._reserve(
+            requests=max(1, len(texts)), tokens=max(1, sum(self._stages.estimator.estimate(text) for text in texts))
+        )
+        return await self._embedding_model.embed(texts)
+
     async def _read_window(self, assignment: ArtifactProcessingWorkAssignment) -> tuple[StoredSource, ...]:
+        if assignment.source_through - assignment.source_after > MAX_TOPIC_MEMORY_WINDOW_SOURCES:
+            raise TopicMemoryGenerationError("source_complexity_limit")
         count = assignment.source_through - assignment.source_after
         async with self._database.transaction() as connection:
             stored = await self._sources.list(
@@ -648,7 +770,7 @@ class TopicMemoryProcessor:
         profile = None
         if self._embedding_model is not None:
             with self._usage(ModelUsagePurpose.TOPIC_MEMORY_RECALL, embedding=True):
-                embedded = await self._embedding_model.embed((query if semantic_query is None else semantic_query,))
+                embedded = await self._embed((query if semantic_query is None else semantic_query,))
             query_vector = embedded.vectors[0]
             profile = self._embedding_model.profile
         async with self._database.transaction() as connection:
@@ -858,7 +980,7 @@ class TopicMemoryProcessor:
         chunks = chunk_topic_memory_detail(content.detail)
         texts = (f"{content.title}\n{content.summary}", *(chunk.text for chunk in chunks))
         with self._usage(ModelUsagePurpose.TOPIC_MEMORY_RECALL, embedding=True):
-            vectors = (await self._embedding_model.embed(tuple(texts))).vectors
+            vectors = (await self._embed(tuple(texts))).vectors
         return topic_memory_vector_centroid(
             vectors[0],
             tuple((len(chunk.text), vector) for chunk, vector in zip(chunks, vectors[1:], strict=True)),
@@ -916,7 +1038,7 @@ class TopicMemoryProcessor:
         chunks = chunk_topic_memory_detail(content.detail)
         texts = (f"{content.title}\n{content.summary}", *(chunk.text for chunk in chunks))
         with self._usage(ModelUsagePurpose.TOPIC_MEMORY_INDEXING, embedding=True):
-            vectors = (await self._embedding_model.embed(tuple(texts))).vectors
+            vectors = (await self._embed(tuple(texts))).vectors
         return prepare_topic_memory_projection(
             content,
             topic_embedding=vectors[0],
@@ -1030,9 +1152,14 @@ async def _project_window(
     sources: SourceRepository,
 ) -> tuple[TopicMemoryEvidence, ...]:
     result: list[TopicMemoryEvidence] = []
+    characters = 0
     for index, item in enumerate(stored, start=1):
         if is_generation_eligible(item.value):
-            result.append(await _project_evidence(index, item, sources))
+            projected = await _project_evidence(index, item, sources)
+            characters += len(projected.content)
+            if characters > MAX_TOPIC_MEMORY_SOURCE_CHARACTERS:
+                raise TopicMemoryGenerationError("source_complexity_limit")
+            result.append(projected)
     return tuple(result)
 
 
@@ -1056,6 +1183,8 @@ async def _project_evidence(
 
 def _canonical_source_content(source_type: str, materialized: object) -> str:
     if isinstance(materialized, str):
+        if len(materialized) > MAX_TOPIC_MEMORY_SOURCE_CHARACTERS:
+            raise TopicMemoryGenerationError("source_complexity_limit")
         if not materialized.strip():
             raise TopicMemoryGenerationError("unsupported_evidence")
         return materialized
@@ -1085,10 +1214,39 @@ def _canonical_source_content(source_type: str, materialized: object) -> str:
         payload = {"name": materialized.name, "description": materialized.description}
     else:
         raise TopicMemoryGenerationError("unsupported_evidence")
+    _require_bounded_source_payload(payload)
     content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(content) > MAX_TOPIC_MEMORY_SOURCE_CHARACTERS:
+        raise TopicMemoryGenerationError("source_complexity_limit")
     if not content.strip():
         raise TopicMemoryGenerationError("unsupported_evidence")
     return content
+
+
+def _require_bounded_source_payload(payload: object) -> None:
+    # Traverse lazily: do not copy a huge container or serialize deep metadata
+    # before enforcing node/depth/text limits. Cycles hit the depth bound.
+    pending = [(iter((payload,)), 0)]
+    nodes = characters = 0
+    while pending:
+        values, depth = pending[-1]
+        try:
+            value = next(values)
+        except StopIteration:
+            pending.pop()
+            continue
+        nodes += 1
+        if nodes > MAX_TOPIC_MEMORY_SOURCE_NODES or depth > MAX_TOPIC_MEMORY_SOURCE_DEPTH:
+            raise TopicMemoryGenerationError("source_complexity_limit")
+        if isinstance(value, str):
+            characters += len(value)
+        elif isinstance(value, dict):
+            pending.append((iter(value), depth + 1))
+            pending.append((iter(value.values()), depth + 1))
+        elif isinstance(value, (list, tuple)):
+            pending.append((iter(value), depth + 1))
+        if characters > MAX_TOPIC_MEMORY_SOURCE_CHARACTERS:
+            raise TopicMemoryGenerationError("source_complexity_limit")
 
 
 def _evidence_id(index: int) -> str:
@@ -1217,6 +1375,51 @@ def _operation_order(operation: PreparedTopicMemoryOperation) -> tuple[bytes, by
     return operation.artifact_id.encode(), operation.proposal_id.encode()
 
 
+def validate_topic_memory_provider_settings(inference: InferenceConfig) -> None:
+    """Keep worker requests stateless and limited to known bounded SDK paths."""
+    from powercontext.builtin.runtime.composition import BuiltinConfigurationError
+
+    generation = {
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "timeout",
+        "openai_reasoning_effort",
+        "openai_text_verbosity",
+        "service_tier",
+        "openai_service_tier",
+        "anthropic_service_tier",
+        "anthropic_effort",
+    }
+    providers = {
+        "openai",
+        "openai-chat",
+        "openai-responses",
+        "anthropic",
+        "azure",
+        "azure-responses",
+        "deepseek",
+        "openrouter",
+    }
+    for name, settings, allowed in (
+        (inference.generation_model, inference.generation_model_settings, generation),
+        (inference.embedding_model, inference.embedding_model_settings, {"dimensions", "truncate"}),
+    ):
+        # The built-in test model has no external I/O; retain hermetic workers.
+        if name is not None and name != "test" and name.split(":", 1)[0] not in providers:
+            raise BuiltinConfigurationError("topic-memory-provider-budget")
+        if set(settings) - allowed or any(
+            value is not None
+            and (not isinstance(value, (str, int, float, bool)) or (isinstance(value, str) and len(value) > 128))
+            for value in settings.values()
+        ):
+            raise BuiltinConfigurationError("topic-memory-provider-budget")
+
+
 def run_topic_memory_worker(
     spec: TopicMemoryWorkerSpec,
     assignment: ArtifactProcessingWorkAssignment,
@@ -1267,6 +1470,7 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
     inference = config.inference
     if inference.generation_model is None:
         raise BuiltinConfigurationError("topic-memory-generation")
+    validate_topic_memory_provider_settings(inference)
     budget = topic_memory_stage_budget(
         context_window_tokens=inference.generation_model_context_window_tokens,
         max_requests=inference.generation_max_requests,
@@ -1278,6 +1482,7 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
         max_requests=inference.generation_max_requests,
         max_output_tokens_per_request=budget.max_output_tokens_per_request,
         output_tokens_limit=budget.output_tokens_limit,
+        allow_continuations=False,
     )
     settings = cast(ModelSettings, dict(inference.generation_model_settings))
     async with AsyncExitStack() as resources:
@@ -1287,8 +1492,9 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
             headers=inference.generation_headers,
             resources=resources,
             instrumentation=None,
+            disable_provider_retries=True,
         )
-        raw_embedding, _ = await _embedding_models(inference, resources, None)
+        raw_embedding, _ = await _embedding_models(inference, resources, None, disable_provider_retries=True)
         embedding = None if raw_embedding is None else UsageReportingEmbeddingModel(raw_embedding)
         contexts = await resources.enter_async_context(
             open_builtin_contexts(config, embedding_model=embedding, _topic_memory_worker=True)
@@ -1375,6 +1581,8 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
             estimator=contexts.token_estimator,
             input_tokens_limit=budget.input_tokens_limit,
             fixed_prompts=fixed_prompts,
+            max_requests=budget.max_requests,
+            transcript_reserve=budget.transcript_reserve,
         )
 
         async def report(purpose: ModelUsagePurpose, operation: ModelUsageOperation, usage: Any) -> None:

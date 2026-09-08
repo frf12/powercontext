@@ -81,7 +81,11 @@ from powercontext.builtin.persistence.sources import SourceRepository
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.sqlite.topic_memory_index import SQLiteTopicMemoryFTSIndex
 from powercontext.builtin.persistence.supervision import ArtifactProcessingLeaseRepository
-from powercontext.builtin.persistence.tables import BUILTIN_TABLES, TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE
+from powercontext.builtin.persistence.tables import (
+    BUILTIN_TABLES,
+    TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE,
+    TOPIC_MEMORY_WORK_BUDGETS_TABLE,
+)
 from powercontext.builtin.persistence.topic_memory import TopicMemoryRepository
 from powercontext.builtin.persistence.topic_memory_index import (
     CompositeTopicMemoryIndex,
@@ -750,6 +754,10 @@ def test_tail_fence_recheck_rolls_back_topic_and_cursor() -> None:
                     await SourceCursorRepository().load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
                     is None
                 )
+                # Tail-fence rollback restores the debit row deleted earlier
+                # in the same publication transaction; costs cannot be reset.
+                budget = (await connection.execute(select(TOPIC_MEMORY_WORK_BUDGETS_TABLE))).mappings().one()
+                assert budget["attempts"] == 1 and budget["requests"] == 4
         finally:
             await manager.__aexit__(None, None, None)
 
