@@ -67,6 +67,8 @@ from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryProposal,
     TopicMemoryReconcileInput,
     TopicMemoryReconcileOutput,
+    TopicMemoryReductionInput,
+    TopicMemoryReductionOutput,
     TopicMemoryTemporaryInput,
     TopicMemoryTemporaryOutput,
     topic_memory_stage_fixed_prompt,
@@ -131,6 +133,7 @@ class TopicMemoryStageSet:
     estimator: TokenEstimator
     input_tokens_limit: int
     fixed_prompts: Mapping[str, str] = field(default_factory=dict)
+    reducer: StructuredGenerator[TopicMemoryReductionInput, TopicMemoryReductionOutput] | None = None
 
     def __post_init__(self) -> None:
         if self.input_tokens_limit < 1:
@@ -427,12 +430,79 @@ class TopicMemoryProcessor:
         for batch in batches:
             with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
                 output = (await self._stages.probe.generate(TopicMemoryProbeInput(evidence=batch))).output
-            probes.extend(output.probes)
-            if len(probes) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
-                raise TopicMemoryGenerationError("probe_limit")
+            self._validate_probes(output.probes, batch)
+            for probe in output.probes:
+                if probe in probes:
+                    continue
+                probes = list(cast(tuple[TopicMemoryProbe, ...], await self._compact_intermediates((*probes, probe))))
         result = tuple(probes)
         self._validate_probes(result, evidence)
         return result
+
+    def _reduction_input(
+        self, items: Sequence[TopicMemoryProbe | TopicMemoryProposal], *, temporary: bool
+    ) -> TopicMemoryReductionInput:
+        return TopicMemoryReductionInput(
+            probes=() if temporary else cast(tuple[TopicMemoryProbe, ...], tuple(items)),
+            temporary=cast(tuple[TopicMemoryProposal, ...], tuple(items)) if temporary else (),
+            max_result_tokens=max(1, self._stages.input_tokens_limit // 8),
+        )
+
+    async def _compact_intermediates(
+        self,
+        values: Sequence[TopicMemoryProbe | TopicMemoryProposal],
+        *,
+        temporary: bool = False,
+        historical: TopicMemoryHistoricalSlot | None = None,
+    ) -> tuple[TopicMemoryProbe | TopicMemoryProposal, ...]:
+        """Bound live results by count AND tokens without dropping an input.
+
+        Each reduction consumes a prefix and returns one summary. A singleton
+        must shrink; every other reduction decreases cardinality. The fixed
+        attempt bound prevents model output from causing a compression loop.
+        """
+
+        items = list(values)
+        for _ in range(2 * len(items) + 1):
+            if len(items) <= MAX_TOPIC_MEMORY_STAGE_ITEMS:
+                fits = self._stages.fits(self._reduction_input(items, temporary=temporary), "reduce")
+                if temporary:
+                    fits = fits and self._stages.fits(
+                        TopicMemoryEvolveInput(
+                            work_id="work-0001",
+                            temporary=cast(tuple[TopicMemoryProposal, ...], tuple(items)),
+                            historical=historical,
+                        ),
+                        "evolve",
+                    )
+                if fits:
+                    return tuple(items)
+            size = min(len(items), MAX_TOPIC_MEMORY_STAGE_ITEMS)
+            while size and not self._stages.fits(self._reduction_input(items[:size], temporary=temporary), "reduce"):
+                size -= 1
+            if not size or self._stages.reducer is None:
+                raise TopicMemoryGenerationError("reduction_input_budget_exceeded")
+            request = self._reduction_input(items[:size], temporary=temporary)
+            with self._usage(ModelUsagePurpose.TOPIC_MEMORY_GENERATION):
+                output = (await self._stages.reducer.generate(request)).output
+            result = output.temporary if temporary else output.probe
+            other = output.probe if temporary else output.temporary
+            expected_evidence = {eid for item in items[:size] for eid in item.evidence_ids}
+            if (
+                result is None
+                or other is not None
+                or sorted(output.covered_indices) != list(range(size))
+                or set(result.evidence_ids) != expected_evidence
+                or (isinstance(result, TopicMemoryProposal) and (result.candidate_id or result.proposal_id))
+            ):
+                raise TopicMemoryGenerationError("invalid_reduction")
+            result_tokens = self._stages.estimator.estimate(result.model_dump_json())
+            if result_tokens > request.max_result_tokens:
+                raise TopicMemoryGenerationError("reduction_output_budget_exceeded")
+            if size == 1 and result_tokens >= self._stages.estimator.estimate(items[0].model_dump_json()):
+                raise TopicMemoryGenerationError("reduction_did_not_progress")
+            items[:size] = [result]
+        raise TopicMemoryGenerationError("reduction_did_not_progress")
 
     def _evidence_batches(
         self,
@@ -669,8 +739,18 @@ class TopicMemoryProcessor:
                                 update={"proposal_id": (f"temp-{index:04d}-{batch_index:04d}-{len(temporary):04d}")}
                             )
                         )
-                        if len(temporary) > MAX_TOPIC_MEMORY_STAGE_ITEMS:
-                            raise TopicMemoryGenerationError("temporary_limit")
+                        temporary = list(
+                            cast(
+                                tuple[TopicMemoryProposal, ...],
+                                await self._compact_intermediates(temporary, temporary=True),
+                            )
+                        )
+                temporary = list(
+                    cast(
+                        tuple[TopicMemoryProposal, ...],
+                        await self._compact_intermediates(temporary, temporary=True, historical=historical),
+                    )
+                )
                 flattened = TopicMemoryEvolveInput(
                     work_id=evolve_input.work_id,
                     temporary=tuple(temporary),
@@ -1167,6 +1247,7 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
         TOPIC_MEMORY_PLANNER_INSTRUCTIONS,
         TOPIC_MEMORY_PROBE_INSTRUCTIONS,
         TOPIC_MEMORY_RECONCILE_INSTRUCTIONS,
+        TOPIC_MEMORY_REDUCTION_INSTRUCTIONS,
         TOPIC_MEMORY_TEMPORARY_INSTRUCTIONS,
         BudgetedTopicMemoryGenerator,
         topic_memory_stage_budget,
@@ -1283,6 +1364,13 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
                 TOPIC_MEMORY_RECONCILE_INSTRUCTIONS,
                 "topic_reconciler",
                 "reconcile",
+            ),
+            reducer=stage(
+                TopicMemoryReductionInput,
+                TopicMemoryReductionOutput,
+                TOPIC_MEMORY_REDUCTION_INSTRUCTIONS,
+                "topic_reducer",
+                "reduce",
             ),
             estimator=contexts.token_estimator,
             input_tokens_limit=budget.input_tokens_limit,

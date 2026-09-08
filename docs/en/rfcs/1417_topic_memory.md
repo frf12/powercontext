@@ -213,6 +213,14 @@ original evidence ID and its character offsets; it does not become a new Source 
 fragments must complete before the Window publishes and advances its Cursor. A failed fragment leaves the original
 Source and Cursor unchanged for retry.
 
+Fragment results use a streaming accumulator bounded by both 20 live items and the stage input token budget, not a
+20-item limit over the entire Source. Exact duplicate Probes are coalesced. Before the accumulator overflows, a private
+reduction stage consolidates a fitting prefix into one intermediate result. It must account for every input position,
+retain the exact union of evidence IDs, and cannot select a historical identity or return NOOP. The result is limited
+to one eighth of the stage input budget. A singleton reduction must decrease estimated size; other reductions must
+decrease item count. Each compaction has a fixed attempt bound of twice its input item count plus one, so a model cannot
+create an unbounded compression loop. All model calls use the existing stage request/output limits and Worker timeout.
+
 ## Probe and historical Topic selection
 
 The Worker first reads the current Source Window. Server-owned `lineage_only` Sources are excluded before token
@@ -291,7 +299,8 @@ Item uses the temporary Topic path:
 Work Item Sources
   -> split into bounded Source Batches, fragmenting an oversized Source when necessary
   -> generate temporary Topics for each Batch without loading the historical Topic
-  -> all relevant temporary Topics + one historical Topic or an empty target
+  -> bounded intermediate reduction of all contributed temporary Topics
+  -> reduced temporary Topics + one historical Topic or an empty target
   -> final CREATE / UPDATE / NOOP
 ~~~
 
@@ -300,10 +309,12 @@ its evidence IDs. Final lineage is the union of SourceRefs referenced by the tem
 to the result. A temporary Topic has no identity, is not written to the database, does not participate in retrieval,
 and is discarded when the Worker ends.
 
-If all temporary Topics plus one historical Topic still exceed the model context, the first release does not perform
-recursive compression, split the historical Topic, or split the topic automatically. This is a known but explicitly
-excluded extreme input. Source fragmentation does not remove the separate bounds on temporary Topic count,
-provider requests, or final historical context.
+Temporary results are reduced incrementally before count or token overflow, and again if needed before adding the
+historical Topic. Reduction never publishes intermediate state. Missing input coverage, invented evidence or targets,
+an oversized result, or failure to make progress aborts the Window with its Cursor unchanged. If even a reduced result
+plus the historical Topic cannot fit, the Worker fails closed; it does not split or truncate historical content or
+start an unlimited reduction loop. This does not guarantee semantic summary quality or successful processing of
+arbitrarily large input within the Worker timeout.
 
 ## Second retrieval and related-group reconciliation
 
@@ -823,8 +834,8 @@ should use consistent settings and record effective values in startup logs.
   whole Window and the progress of an individual task cannot be queried.
 - The `global` Supervisor centralizes resource control, but it may become a bottleneck if several heavyweight Families
   share the Worker pool in the future.
-- Source fragmentation adds generation calls. Temporary Topics plus a historical Topic may still exceed context;
-  recursive compression of that material remains outside the first release.
+- Source fragmentation and intermediate reduction add generation calls. Reduction coverage is checked structurally,
+  but information-preserving wording still depends on the model. Oversized historical context can still fail closed.
 
 # Rationale and alternatives
 
@@ -890,7 +901,7 @@ The current scope has no unresolved design questions that block acceptance of th
 
 The following boundaries are explicitly excluded rather than left as open choices for implementers:
 
-- recursive compression or splitting when temporary Topic content plus one historical Topic still exceeds context;
+- unbounded recursive compression or splitting of historical Topic content;
 - automatic merging of two existing Topic identities;
 - cross-Scope Topic retrieval;
 - user-facing APIs to create, update, delete, or retire Topics manually;
