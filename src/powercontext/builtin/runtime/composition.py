@@ -604,7 +604,9 @@ async def open_builtin_contexts(
                 if not _topic_memory_worker:
                     await index.initialize(connection)
                     await experience_index.initialize(connection)
-                await TopicMemoryRepository(index=topic_index).initialize(connection)
+                await TopicMemoryRepository(index=topic_index).initialize(
+                    connection, configure_retrieval_shape=not _topic_memory_worker
+                )
             contexts = RelationalContexts(
                 database=profile.database,
                 index=index,
@@ -651,7 +653,9 @@ async def open_builtin_contexts(
             if not _topic_memory_worker:
                 await index.initialize(connection)
                 await experience_index.initialize(connection)
-            await TopicMemoryRepository(index=topic_index).initialize(connection)
+            await TopicMemoryRepository(index=topic_index).initialize(
+                connection, configure_retrieval_shape=not _topic_memory_worker
+            )
         contexts = RelationalContexts(
             database=profile.database,
             index=index,

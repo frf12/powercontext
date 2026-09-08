@@ -779,6 +779,32 @@ def test_retrieval_shape_is_persistent_and_rejects_bidirectional_downgrades(tmp_
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("initialized", [False, True])
+def test_worker_initialization_requires_an_existing_shape_without_writing_it(initialized: bool) -> None:
+    async def scenario() -> None:
+        index = _fts_index()
+        repository = TopicMemoryRepository(index=index)
+        async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES + index.tables) as profile:
+            if initialized:
+                async with profile.database.transaction() as connection:
+                    await repository.initialize(connection)
+            async with profile.database.transaction() as connection:
+                await connection.exec_driver_sql("PRAGMA query_only = ON")
+                try:
+                    if initialized:
+                        await repository.initialize(connection, configure_retrieval_shape=False)
+                    else:
+                        with pytest.raises(TopicMemoryStorageInvariantError, match="missing-retrieval-shape"):
+                            await repository.initialize(connection, configure_retrieval_shape=False)
+                    assert (
+                        await connection.scalar(select(func.count()).select_from(TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE))
+                    ) == int(initialized)
+                finally:
+                    await connection.exec_driver_sql("PRAGMA query_only = OFF")
+
+    asyncio.run(scenario())
+
+
 def test_empty_shape_change_rejects_publication_from_an_already_open_runtime(tmp_path: Path) -> None:
     async def scenario() -> None:
         embedding_profile = EmbeddingProfile(

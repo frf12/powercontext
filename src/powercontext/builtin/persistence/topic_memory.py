@@ -77,8 +77,12 @@ class TopicMemoryRepository:
         self.artifacts = ArtifactRepository((TopicMemory,)) if artifacts is None else artifacts
         self.index = NoTopicMemoryIndex() if index is None else index
 
-    async def initialize(self, connection: AsyncConnection, /) -> None:
-        """Initialize indexes and reject incomplete historical Topic projections."""
+    async def initialize(self, connection: AsyncConnection, /, *, configure_retrieval_shape: bool = True) -> None:
+        """Initialize indexes and reject incomplete historical Topic projections.
+
+        Only deployment startup may configure an empty store. Workers must
+        reuse an existing shape and fail closed if it is absent or mismatched.
+        """
 
         missing_publication = (
             await connection.execute(
@@ -104,7 +108,10 @@ class TopicMemoryRepository:
         if missing_publication is not None:
             raise TopicMemoryStorageInvariantError("missing-publication", tuple(missing_publication))
 
-        await self._ensure_retrieval_shape(connection, allow_empty_change=True)
+        if configure_retrieval_shape:
+            await self._ensure_retrieval_shape(connection, allow_empty_change=True)
+        else:
+            await self._check_retrieval_shape(connection)
         await self.index.initialize(connection)
 
         orphan_active = (
@@ -194,6 +201,9 @@ class TopicMemoryRepository:
                 connection, str(row["scope_id"]), ref
             ):
                 raise TopicMemoryStorageInvariantError("incomplete-vector", (str(row["scope_id"]), ref))
+
+        if not configure_retrieval_shape:
+            await self._check_retrieval_shape(connection)
 
     async def publish_create(
         self,
