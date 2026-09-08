@@ -26,6 +26,8 @@ from typing import Any, Generic, TypeVar, cast
 
 import pytest
 from pydantic import BaseModel, SecretStr
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.search import analyze_text
@@ -2139,6 +2141,24 @@ def test_worker_spec_pickle_and_repr_do_not_expose_secret() -> None:
     assert secret not in repr(restored)
 
 
+def _run_worker_without_general_fts_writes(spec, assignment):
+    # Install inside the real spawned child: an event hook in the parent would
+    # not observe the independent engine. This protects a per-Window I/O budget,
+    # not a particular sequence of private bootstrap calls.
+    def reject_general_fts_writes(_connection, _cursor, statement, _parameters, _context, _executemany):
+        sql = statement.lstrip().lower()
+        if sql.startswith(("insert", "delete", "update", "replace", "create virtual")) and any(
+            table in sql for table in ("pc_memory_entry_fts", "pc_memory_entry_vec", "pc_artifact_fts")
+        ):
+            raise AssertionError("Topic Worker must not rebuild unrelated search indexes")  # noqa: TRY003
+
+    event.listen(Engine, "before_cursor_execute", reject_general_fts_writes)
+    try:
+        return run_topic_memory_worker(spec, assignment)
+    finally:
+        event.remove(Engine, "before_cursor_execute", reject_general_fts_writes)
+
+
 def test_topic_worker_entrypoint_runs_and_sanitizes_failure_in_real_spawn_child(tmp_path) -> None:
     async def scenario() -> None:
         config = BuiltinConfig(
@@ -2153,7 +2173,7 @@ def test_topic_worker_entrypoint_runs_and_sanitizes_failure_in_real_spawn_child(
                 term = await contexts.repositories.processing_leases.start_single_process_term(connection, "holder")
             assignment = _assignment(term.fence("single-process"), through=1)
             launcher = SpawnArtifactProcessingWorkerLauncher(
-                partial(run_topic_memory_worker, TopicMemoryWorkerSpec(config=config))
+                partial(_run_worker_without_general_fts_writes, TopicMemoryWorkerSpec(config=config))
             )
 
             handle = await launcher.start(assignment)

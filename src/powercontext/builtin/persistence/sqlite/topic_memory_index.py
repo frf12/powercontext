@@ -189,6 +189,10 @@ _TOPIC_VECTOR_SEARCH_SQL = text(
     WITH nearest AS (
         SELECT rowid, distance FROM pc_topic_memory_topic_vec
         WHERE scope_id = :scope_id AND embedding MATCH :query_vector AND k = :neighbor_limit
+          AND rowid IN (
+              SELECT vector_id FROM pc_topic_memory_vector_topics
+              WHERE scope_id = :scope_id AND profile_fingerprint = :profile_fingerprint
+          )
     )
     SELECT a.artifact_id, a.revision, a.title, a.summary, nearest.distance
     FROM nearest
@@ -205,6 +209,10 @@ _CHUNK_VECTOR_SEARCH_SQL = text(
     WITH nearest AS (
         SELECT rowid, distance FROM pc_topic_memory_chunk_vec
         WHERE scope_id = :scope_id AND embedding MATCH :query_vector AND k = :neighbor_limit
+          AND rowid IN (
+              SELECT vector_id FROM pc_topic_memory_vector_chunks
+              WHERE scope_id = :scope_id AND profile_fingerprint = :profile_fingerprint
+          )
     ), ranked AS (
         SELECT a.artifact_id, a.revision, a.title, a.summary,
                c.chunk_ordinal, c.start_offset, c.chunk_text, nearest.distance,
@@ -508,6 +516,7 @@ class SQLiteTopicMemoryVectorIndex:
         parameters = {
             "query_vector": query_vector,
             "scope_id": scope_id,
+            "profile_fingerprint": self._fingerprint,
             "candidate_limit": request.candidate_limit,
         }
         topic_rows = (

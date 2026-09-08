@@ -574,6 +574,7 @@ async def open_builtin_contexts(
     prompt_registry: PromptRegistry | None = None,
     prompt_demonstrators: dict[str, DemonstrationGenerator] | None = None,
     handoff_verification_keys: tuple[bytes, ...] = (),
+    _topic_memory_worker: bool = False,
 ) -> AsyncIterator[RelationalContexts]:
     """Open the selected database and expose scope-bound PowerContext providers."""
 
@@ -596,8 +597,13 @@ async def open_builtin_contexts(
         ) as profile:
             async with profile.database.transaction() as connection:
                 await ensure_skill_distribution_schema(connection)
-                await index.initialize(connection)
-                await experience_index.initialize(connection)
+                # A Topic child reuses its parent's schema. It never reads or
+                # writes Memory/Experience projections; rebuilding their FTS
+                # indexes here would take the shared SQLite write lock once
+                # per Window. Normal runtime startup retains index recovery.
+                if not _topic_memory_worker:
+                    await index.initialize(connection)
+                    await experience_index.initialize(connection)
                 await TopicMemoryRepository(index=topic_index).initialize(connection)
             contexts = RelationalContexts(
                 database=profile.database,
@@ -642,8 +648,9 @@ async def open_builtin_contexts(
     async with profile_context as profile:
         async with profile.database.transaction() as connection:
             await ensure_skill_distribution_schema(connection)
-            await index.initialize(connection)
-            await experience_index.initialize(connection)
+            if not _topic_memory_worker:
+                await index.initialize(connection)
+                await experience_index.initialize(connection)
             await TopicMemoryRepository(index=topic_index).initialize(connection)
         contexts = RelationalContexts(
             database=profile.database,
