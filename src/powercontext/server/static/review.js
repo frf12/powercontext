@@ -49,7 +49,7 @@ const translations = {
     authIntro: "Enter the bearer token configured for this PowerContext Server. The token stays in this browser tab.",
     tokenLabel: "Server token",
     continue: "Continue",
-    reviewInboxTitle: "Experience and Skill review",
+    reviewInboxTitle: "Artifact review",
     reviewIntro: "Inspect evidence, revise proposals, and make explicit decisions.",
     selectScope: "Scope",
     searchScopesPlaceholder: "Search by scope name or ID",
@@ -62,6 +62,7 @@ const translations = {
     allFamilies: "All families",
     experience: "Experience",
     skill: "Skill",
+    profile: "Profile",
     status: "Status",
     pending: "Pending",
     approved: "Approved",
@@ -141,6 +142,7 @@ const translations = {
     name: "Name",
     description: "Description",
     instructions: "Instructions",
+    content: "Markdown content",
     validation: "Validation",
     packageContents: "Package contents",
     packageFiles: "Package files",
@@ -212,7 +214,7 @@ const translations = {
     authIntro: "请输入 PowerContext 服务器配置的访问令牌。令牌仅保留在当前浏览器标签页。",
     tokenLabel: "服务器访问令牌",
     continue: "继续",
-    reviewInboxTitle: "经验与技能审核",
+    reviewInboxTitle: "制品审核",
     reviewIntro: "检查证据、修订提案，并作出明确决策。",
     selectScope: "作用域",
     searchScopesPlaceholder: "按作用域名称或标识符搜索",
@@ -225,6 +227,7 @@ const translations = {
     allFamilies: "全部类型",
     experience: "经验",
     skill: "技能",
+    profile: "画像",
     status: "状态",
     pending: "待审核",
     approved: "已批准",
@@ -304,6 +307,7 @@ const translations = {
     name: "名称",
     description: "说明",
     instructions: "使用指引",
+    content: "Markdown 内容",
     validation: "验证条件",
     packageContents: "技能包内容",
     packageFiles: "技能包文件",
@@ -667,7 +671,7 @@ async function authenticate(token, preferredScopeId = "") {
     currentScopeId = selectedScopeId;
     showReview();
     renderScopeCombobox();
-    if (reviewDeepLink.family === "experience" || reviewDeepLink.family === "skill") {
+    if (["experience", "skill", "profile"].includes(reviewDeepLink.family)) {
       familyFilter.value = reviewDeepLink.family;
     }
     if (["pending", "approved", "rejected"].includes(reviewDeepLink.status)) {
@@ -1506,7 +1510,9 @@ function renderProposal(candidate) {
   }
   const keys = candidate.family === "experience"
     ? ["situation", "action", "outcome", "lesson"]
-    : ["name", "description", "instructions", "validation"];
+    : candidate.family === "profile"
+      ? ["content"]
+      : ["name", "description", "instructions", "validation"];
   for (const key of keys) {
     const value = candidate.proposal[key];
     appendDefinition(proposalFields, key, Array.isArray(value) ? value.join("\n") : value);
@@ -1826,6 +1832,10 @@ function renderRevisionFields(family, proposal, mode = "revise-candidate", chang
     }
     return;
   }
+  if (family === "profile") {
+    addTextareaField("content", proposal.content, 262144, "review-tall-textarea");
+    return;
+  }
   if (mode === "create-skill-revision") {
     addTextareaField("changeEvidence", changeEvidence, 2000, "review-short-textarea");
   }
@@ -1945,6 +1955,10 @@ function collectProposal() {
     };
     return proposal.name && proposal.description && proposal.instructions && validation.every(Boolean) ? proposal : null;
   }
+  if (selectedCandidate.family === "profile") {
+    const content = readField("content");
+    return content ? {content} : null;
+  }
   return null;
 }
 
@@ -2007,6 +2021,9 @@ function candidateDisplayTitle(candidate) {
   if (candidate.family === "experience" && typeof candidate.proposal?.situation === "string") {
     return compactText(candidate.proposal.situation, 88);
   }
+  if (candidate.family === "profile" && typeof candidate.proposal?.content === "string") {
+    return compactText(candidate.proposal.content, 88);
+  }
   return candidate.candidate_id;
 }
 
@@ -2016,6 +2033,9 @@ function candidateSummary(candidate) {
   }
   if (candidate.family === "experience") {
     return compactText(candidate.proposal?.lesson || candidate.proposal?.outcome || "", 132);
+  }
+  if (candidate.family === "profile") {
+    return compactText(candidate.proposal?.content || "", 132);
   }
   return "";
 }
@@ -2066,6 +2086,9 @@ function isSupportedCandidate(candidate) {
     ) && Array.isArray(candidate.proposal.validation) && candidate.proposal.validation.every(
       (item) => typeof item === "string"
     );
+  }
+  if (candidate.family === "profile") {
+    return typeof candidate.proposal.content === "string" && candidate.proposal.content.trim().length > 0;
   }
   return false;
 }

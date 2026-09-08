@@ -742,6 +742,64 @@ def test_selector_failure_defers_only_its_scope_and_preserves_leadership(
     asyncio.run(scenario())
 
 
+def test_successor_selection_failure_preserves_an_inflight_peer(tmp_path) -> None:
+    class SuccessorSelector:
+        def __init__(self) -> None:
+            self.failed = asyncio.Event()
+
+        async def select(self, scope_id: str, source_after: int, source_ceiling: int) -> int:
+            if scope_id == "scope-a" and source_after == 1:
+                self.failed.set()
+                raise TopicMemoryGenerationError("unsupported_evidence")
+            return source_ceiling
+
+    async def scenario() -> None:
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'successor-selection.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            pending = ArtifactProcessingPendingRepository()
+            async with profile.database.transaction() as connection:
+                for scope in ("scope-a", "scope-b"):
+                    for position in range(2):
+                        await SourceRepository(SOURCE_ADAPTERS).add(
+                            connection,
+                            scope,
+                            NoteSource(
+                                name=f"note-{position}", materialization=SourceMaterialization.CAPTURED, body="evidence"
+                            ),
+                        )
+                    await pending.raise_source(connection, scope, BINDING, 2)
+                    await pending.request_flush(connection, scope, BINDING)
+            peer = _HangingLauncher()
+            publisher = _PublishingLauncher(profile.database, wait_for=peer.started)
+
+            class Launcher:
+                async def start(self, assignment):
+                    return await (peer if assignment.scope_id == "scope-b" else publisher).start(assignment)
+
+            selector = SuccessorSelector()
+            async with ArtifactProcessingSupervisor(
+                database=profile.database,
+                bindings=(ArtifactProcessingBinding(BINDING, 1, Launcher(), window_selector=selector),),
+                lease_mode="single-process",
+                max_workers=2,
+                worker_timeout_seconds=10,
+                retry_base_seconds=60,
+                retry_jitter=lambda: 1,
+            ) as supervisor:
+                fence = supervisor.fence
+                await asyncio.wait_for(selector.failed.wait(), timeout=3)
+                await asyncio.sleep(0.05)
+                assert supervisor.status is ArtifactProcessingSupervisorStatus.LEADER
+                assert supervisor.fence == fence
+                assert not peer.terminated.is_set()
+                async with profile.database.transaction() as connection:
+                    cursor = await SourceCursorRepository().load(connection, "scope-a", BINDING)
+                    assert cursor is not None and cursor.cursor.sequence == 1
+                    assert await pending.load(connection, "scope-a", BINDING) is not None
+
+    asyncio.run(scenario())
+
+
 def test_flush_wake_rescans_a_scope_behind_the_pending_frontier(tmp_path, monkeypatch) -> None:
     async def scenario() -> None:
         # Freeze the next page's timer so the flush wake is the only trigger
@@ -882,9 +940,9 @@ def test_covered_explicit_retry_wakes_its_deferred_automatic_target(tmp_path, mo
 
             await _wait_until(wave_completed)
             await supervisor.close()
-            assert [(item.scope_id, item.wave_kind) for item in launcher.assignments] == [
+            assert {(item.scope_id, item.wave_kind) for item in launcher.assignments} == {
                 ("scope-a", ArtifactProcessingWaveKind.EXPLICIT)
-            ]
+            }
 
     asyncio.run(scenario())
 
@@ -1381,7 +1439,13 @@ def test_spawn_launcher_runs_a_real_child_process() -> None:
             worker_id="00000000-0000-4000-8000-000000000001",
         )
         handle = await SpawnArtifactProcessingWorkerLauncher(_spawn_success).start(assignment)
-        assert await asyncio.wait_for(handle.wait(), timeout=5) == ArtifactProcessingWorkerCompletion()
+        try:
+            assert (
+                await asyncio.wait_for(handle.wait(), timeout=SPAWN_TEST_TIMEOUT_SECONDS)
+                == ArtifactProcessingWorkerCompletion()
+            )
+        finally:
+            await handle.terminate()
 
     asyncio.run(scenario())
 

@@ -40,6 +40,12 @@ from powercontext.builtin.artifacts.memory import (
     MemoryRerankDecision,
     MemoryReranker,
 )
+from powercontext.builtin.artifacts.profile.generation import PROFILE_INSTRUCTIONS, LLMProfileGenerator
+from powercontext.builtin.artifacts.profile.service import (
+    ProfileGenerationInput,
+    ProfileGenerationOutput,
+    ProfileGenerator,
+)
 from powercontext.builtin.artifacts.prompt import PromptRegistry
 from powercontext.builtin.artifacts.prompt.builtin import builtin_prompt_definitions
 from powercontext.builtin.artifacts.prompt.service import DemonstrationGenerator
@@ -142,6 +148,7 @@ class BuiltinConfigurationError(RuntimeError):
             ),
             "topic-memory-generation-budget": "Topic Memory generation budget is not executable",
             "topic-memory-generation": "Topic Memory processing requires a configured generation model",
+            "topic-memory-database": "Topic Memory workers require file-backed SQLite; an in-memory database cannot be shared with spawned workers",
             "database": "unsupported built-in database",
         }
         super().__init__(messages[issue])
@@ -205,13 +212,14 @@ class _TracingMemoryReranker:
 
 
 @asynccontextmanager
-async def open_builtin_runtime(
+async def open_builtin_runtime(  # noqa: C901
     config: BuiltinConfig,
     *,
     scheduler_path: str | Path = "powercontext.scheduler.db",
     candidate_pipeline: CandidatePipeline | None = None,
     experience_pipeline: ExperienceCandidatePipeline | None = None,
     experience_generator: ExperienceGenerator | None = None,
+    profile_generator: ProfileGenerator | None = None,
     skill_generator: SkillGenerator | None = None,
     external_skill_provider: ExternalSkillProvider | None = None,
     handoff_pipeline: HandoffGenerationPipeline | None = None,
@@ -225,6 +233,7 @@ async def open_builtin_runtime(
     artifact_processing_bindings: Sequence[ArtifactProcessingBinding] = (),
     scheduled_source_runner: ScheduledSourceRunner | None = None,
     scheduled_experience_runner: ScheduledExperienceRunner | None = None,
+    scheduled_profile_runner: Any = None,
     source_registry: SourceDefinitionRegistry | None = None,
     cursor_secret: bytes | None = None,
     handoff_verification_keys: tuple[bytes, ...] = (),
@@ -235,6 +244,7 @@ async def open_builtin_runtime(
         configured_source_registry = source_registry or BUILTIN_SOURCE_REGISTRY
         prompt_demonstrators: dict[str, DemonstrationGenerator] = {}
         (
+            generated_profile,
             generated_memory,
             generated_incubation,
             generated_experience,
@@ -253,14 +263,15 @@ async def open_builtin_runtime(
                 prompt_demonstrators=prompt_demonstrators,
             )
             if (
-                candidate_pipeline is None
+                profile_generator is None
+                or candidate_pipeline is None
                 or experience_pipeline is None
                 or experience_generator is None
                 or skill_generator is None
                 or handoff_pipeline is None
                 or (config.runtime.memory_rerank_enabled and memory_reranker is None)
             )
-            else (None, None, None, None, None, None, None, None)
+            else (None, None, None, None, None, None, None, None, None)
         )
         configured_pipeline = generated_memory if candidate_pipeline is None else candidate_pipeline
         configured_incubation = generated_incubation if experience_pipeline is None else experience_pipeline
@@ -330,6 +341,14 @@ async def open_builtin_runtime(
                 handoff_verification_keys=handoff_verification_keys,
             )
         )
+        contexts.profiles.generator = generated_profile if profile_generator is None else profile_generator
+        contexts.profiles.max_sources = config.runtime.profile_max_sources_per_window
+        if scheduled_profile_runner is not None:
+
+            async def run_profile(scope_id, high):
+                return await scheduled_profile_runner(scope_id, high, contexts.profiles)
+
+            contexts.profiles.scheduled_runner = run_profile
         readiness_probes: dict[str, ReadinessProbeDefinition] = {
             "database": ReadinessProbeDefinition(
                 probe=dependency_readiness_probe(contexts.database.ping),
@@ -373,6 +392,8 @@ async def open_builtin_runtime(
                 scope_cache_observer=scope_cache_observer,
                 scope_ids=contexts.scope_ids,
                 review_service=contexts.review,
+                profiles=contexts.profiles,
+                subject_sources=contexts.subject_sources,
                 generation_service=contexts.generation,
                 experience_recall=contexts.search_experience,
                 skill_recall=contexts.search_skills,
@@ -412,6 +433,7 @@ async def open_builtin_runtime(
         runtime.artifact_processing_supervisor = await resources.enter_async_context(
             _open_artifact_processing_supervisor(config, contexts, processing_bindings)
         )
+        contexts.profiles.operation_context = runtime._operation
         if config.handoff_report.enabled:
             runtime.handoff_report = HandoffReportApplication(
                 contexts.scopes,
@@ -432,12 +454,19 @@ async def open_builtin_runtime(
         if config.runtime.memory_rerank_enabled and configured_reranker is None:
             raise BuiltinConfigurationError("memory-reranker")
         if config.runtime.artifact_processing_role == "all" and (
-            config.runtime.schedule_seconds is not None or config.runtime.experience_schedule_seconds is not None
+            config.runtime.schedule_seconds is not None
+            or config.runtime.experience_schedule_seconds is not None
+            or (config.runtime.profile_schedule_enabled and contexts.profiles.generator is not None)
         ):
             runtime.start_scheduler(
                 scheduler_path,
                 config.runtime.schedule_seconds,
                 experience_schedule_seconds=config.runtime.experience_schedule_seconds,
+                profile_cron=config.runtime.profile_cron
+                if config.runtime.profile_schedule_enabled and contexts.profiles.generator is not None
+                else None,
+                profile_timezone=config.runtime.profile_timezone,
+                profile_max_concurrency=config.runtime.profile_max_concurrency,
             )
         yield runtime
 
@@ -461,6 +490,8 @@ def _topic_memory_processing_bindings(
         return configured
     if injected_embedding_model is not None or injected_token_estimator is not None:
         raise BuiltinConfigurationError("topic-memory-child-resources")
+    if isinstance(config.database, SQLiteConfig) and config.database.is_in_memory:
+        raise BuiltinConfigurationError("topic-memory-database")
     try:
         budget = topic_memory_stage_budget(
             context_window_tokens=config.inference.generation_model_context_window_tokens,
@@ -663,6 +694,7 @@ async def _generation_pipelines(
     *,
     prompt_demonstrators: dict[str, DemonstrationGenerator] | None = None,
 ) -> tuple[
+    ProfileGenerator | None,
     CandidatePipeline | None,
     ExperienceCandidatePipeline | None,
     ExperienceGenerator | None,
@@ -673,7 +705,7 @@ async def _generation_pipelines(
     ReadinessProbe | None,
 ]:
     if settings.generation_model is None and (not runtime.memory_rerank_enabled or settings.rerank_model is None):
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     from pydantic_ai.settings import ModelSettings, merge_model_settings
 
@@ -714,6 +746,7 @@ async def _generation_pipelines(
         probe_pydantic_ai_model,
     )
 
+    generated_profile: ProfileGenerator | None = None
     generated_memory: CandidatePipeline | None = None
     generated_incubation: ExperienceCandidatePipeline | None = None
     generated_experience: ExperienceGenerator | None = None
@@ -745,6 +778,19 @@ async def _generation_pipelines(
             generation_model,
             generation_limits,
             generation_request_settings,
+        )
+        generated_profile = LLMProfileGenerator(
+            UsageReportingStructuredGenerator(
+                PydanticAIStructuredGenerator(
+                    model=generation_model,
+                    instructions=PROFILE_INSTRUCTIONS,
+                    input_type=ProfileGenerationInput,
+                    output_type=ProfileGenerationOutput,
+                    limits=generation_limits,
+                    model_settings=generation_request_settings,
+                    name="profile_generation",
+                )
+            )
         )
         memory_generator = PydanticAIStructuredGenerator(
             model=generation_model,
@@ -897,6 +943,7 @@ async def _generation_pipelines(
                 )
 
     return (
+        generated_profile,
         generated_memory,
         generated_incubation,
         generated_experience,

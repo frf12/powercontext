@@ -186,12 +186,16 @@ tokens。一次实际 generation 请求仍必须满足：
 ~~~
 
 如果加入下一条 Source 会超预算，它留到下一 Window。如果 Cursor 后的第一条 Source 单独就超过 Window token
-预算，为保证 Cursor 能前进，仍选择它形成单 Source Window，并按原文尝试处理。首版不对单个超长 Source 做
-内部切片、截断或拒绝；如果它超过模型实际能力，处理失败并保留 Cursor，等待后续专门设计。
+预算，仍选择它形成单 Source Window。Probe 与临时 Topic 请求将其规范化原文分成连续片段，每段连同 JSON
+转义、阶段指令和输出 schema 一起满足阶段预算。所有字符完整保留，每段携带原 evidence ID 和字符偏移，不创建
+新 Source，也不占用新的 Journal 位置。全部片段处理成功后，Window 才统一发布并推进 Cursor；任一片段失败时，
+原 Source 与 Cursor 保持不变，供后续重试。
 
 ## Probe 与历史 Topic 选择
 
-Worker 首先读取当前 Source Window，生成零到多个轻量 Probe。Probe 是语义查询句或关键词及其 evidence IDs，
+Worker 首先读取当前 Source Window。服务端标记为 `lineage_only` 的 Source 在 token 估算与生成之前排除，其
+Journal 位置仍计入原子 Cursor 推进。全部由这类 Source 构成的 Window 无需调用模型即可完成。允许用于生成的
+Source 生成零到多个轻量 Probe。Probe 是语义查询句或关键词及其 evidence IDs，
 不包含 Topic 正文，也不决定 CREATE、UPDATE 或 NOOP。
 
 每个 Probe 在当前 Scope 和当前部署启用的 Topic 检索通道中召回当前可检索 Revisions。通道结果先按 Topic 合并，再通过
@@ -255,7 +259,7 @@ Evolver 直接生成最终 Topic 内容。
 
 ~~~text
 Work Item Source
-  -> 按 Source 边界拆成多个 Source Batch
+  -> 拆成有界 Source Batch，必要时将单个超长 Source 分段
   -> 每个 Batch 在不加载历史 Topic 的情况下生成临时 Topics
   -> 全部相关临时 Topics + 一个历史 Topic或空白目标
   -> 最终 CREATE / UPDATE / NOOP
@@ -266,7 +270,7 @@ Work Item Source
 后即丢弃。
 
 如果“全部临时 Topic + 单个历史 Topic”仍超过模型上下文，首版不做递归压缩、历史 Topic 分片或自动拆分。这是
-已知但明确排除的极端输入，与单个 Source 超过模型能力的处理边界一致。
+已知但明确排除的极端输入。Source 分段不取消临时 Topic 数量、模型请求次数和最终历史上下文的独立上限。
 
 ## 二次检索与相关组协调
 
@@ -711,7 +715,8 @@ Topic Memory 复用现有 generation model、generation timeout 和 generation m
 Embedding model、Embedding profile、dimension、normalization、timeout 和 batch size。Probe、Planner、Evolver
 与 Reconciler 使用同一个 generation model；分阶段模型选择留给后续 RFC。
 
-检索形态在部署初始化时固定。新部署可以选择 FTS-only，或在启动时配置完整且匹配的 Embedding/vector
+检索形态在首个 Topic 发布后固定。尚无 Topic 数据时，初始化允许在 FTS-only 与 hybrid 之间切换，或选择其他兼容的
+Embedding profile。新部署可以选择 FTS-only，或在启动时配置完整且匹配的 Embedding/vector
 infrastructure
 以启用 FTS、vector 和 hybrid。首版不支持把已有 Topic Heads 的 FTS-only 部署原地切换为向量部署，也不因后来增加
 Embedding 配置而自动回填历史 Heads 或声明 vector/hybrid。该切换需要后续单独定义停写、投影创建、全量回填、完整性
@@ -732,7 +737,7 @@ configuration error 失败；Runtime 不创建或回填这些历史向量，也�
 - Pending dirty set 增加 Source 写事务的写放大。
 - 不持久化 Job、checkpoint 和 retry state 简化了系统，但失败后需要重算整个 Window，且无法查询单次任务进度。
 - `global` Supervisor 统一资源控制，但未来多个重型 Family 共用 Worker pool 时可能成为瓶颈。
-- 单个超长 Source 和“临时 Topic + 历史 Topic”仍超上下文是首版明确接受的未覆盖极端输入。
+- Source 分段增加模型调用次数；“临时 Topic + 历史 Topic”仍可能超过上下文，对这部分材料的递归压缩不在首版范围。
 
 # Rationale and alternatives
 
@@ -787,7 +792,6 @@ Revision 拥有不同通道数，融合排名不可比较，因此保留旧 acti
 
 以下边界已明确排除，不作为实现者自行选择的开放问题：
 
-- 单个 Source 自身超过生成模型实际上下文时的切片、截断或拒绝策略；
 - 临时 Topic 总内容加单个历史 Topic 仍超过上下文时的递归压缩或拆分策略；
 - 两个已有 Topic identities 的自动合并；
 - 跨 Scope Topic 检索；
@@ -802,7 +806,7 @@ Revision 拥有不同通道数，融合排名不可比较，因此保留旧 acti
 - 多模型 RFC，允许 Probe、Planner、Evolver、Reconciler、Embedding 和 rerank 使用不同模型。
 - 将 Experience incubation 与 Skill usage evolution 迁入 Artifact Processing Supervisor。
 - global 出现瓶颈后增加 `topic`、`experience` 或 `skill` group；只有要求在线无停机迁移时再增加持久路由。
-- 为超长单 Source、超长历史 Topic 和递归协调设计专门的有损或无损降级策略。
+- 为超长历史 Topic 和递归协调设计专门的降级策略。
 - 增加 Topic 人工纠正、回滚、retire、历史可视化和评估标注能力。
 - 为已有 FTS-only Topic Heads 增加停写、向量投影回填、完整性校验和能力恢复的离线迁移流程。
 - Topic Memory 开发完成并通过功能验收后，再设计并执行 LoCoMo 对比评测与调参，不把该评测作为本 RFC 实现验收条件。

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, insert, or_, select
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -207,6 +207,7 @@ class TopicMemoryRepository:
         """Create Revision 1 and activate every configured channel atomically."""
 
         projection = self._validate_projection(draft, projection)
+        await self._ensure_retrieval_shape(connection)
         topic = await self.artifacts.create(connection, scope_id, artifact_id, draft)
         if not isinstance(topic, TopicMemory):
             raise TopicMemoryStorageInvariantError("artifact-type", topic.as_ref())
@@ -230,6 +231,7 @@ class TopicMemoryRepository:
         """CAS the current Head and atomically replace its complete active projection."""
 
         projection = self._validate_projection(draft, projection)
+        await self._ensure_retrieval_shape(connection)
         previous = current.as_ref()
         if previous not in draft.artifacts:
             draft = draft.model_copy(update={"artifacts": (previous, *draft.artifacts)})
@@ -548,7 +550,9 @@ class TopicMemoryRepository:
                 select(
                     TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE.c.shape,
                     TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE.c.profile_fingerprint,
-                ).where(TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE.c.singleton == 1)
+                )
+                .where(TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE.c.singleton == 1)
+                .with_for_update()
             )
         ).one_or_none()
         if stored is None:
@@ -587,6 +591,19 @@ class TopicMemoryRepository:
         stored_shape = str(stored[0])
         stored_fingerprint = None if stored[1] is None else str(stored[1])
         if (stored_shape, stored_fingerprint) != (shape, fingerprint):
+            # A configuration becomes binding only once Topic evidence has been published.
+            changed = await connection.execute(
+                update(TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE)
+                .where(
+                    TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE.c.singleton == 1,
+                    ~select(ARTIFACTS_TABLE.c.artifact_id)
+                    .where(ARTIFACTS_TABLE.c.family == TopicMemory.family)
+                    .exists(),
+                )
+                .values(shape=shape, profile_fingerprint=fingerprint)
+            )
+            if changed.rowcount == 1:
+                return
             stored_label = stored_shape if stored_fingerprint is None else f"{stored_shape}:{stored_fingerprint[:12]}"
             configured_label = shape if fingerprint is None else f"{shape}:{fingerprint[:12]}"
             raise TopicMemoryCapabilityError(

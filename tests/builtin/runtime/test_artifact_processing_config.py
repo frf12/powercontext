@@ -94,6 +94,14 @@ def test_artifact_processing_configuration_rejects_invalid_bounds() -> None:
             {"artifact_processing_role": "background", "experience_schedule_seconds": 30},
             id="background-experience",
         ),
+        pytest.param(
+            {"artifact_processing_role": "api", "profile_schedule_enabled": True},
+            id="api-profile",
+        ),
+        pytest.param(
+            {"artifact_processing_role": "background", "profile_schedule_enabled": True},
+            id="background-profile",
+        ),
     ],
 )
 def test_split_roles_reject_legacy_scheduler_intervals(runtime_values: dict[str, object]) -> None:

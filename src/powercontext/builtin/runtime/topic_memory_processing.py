@@ -96,6 +96,7 @@ from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingWorkerOutcome,
 )
 from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.source_eligibility import is_generation_eligible
 from powercontext.builtin.sources import (
     CONTENT_SOURCE_NAME,
     EXTERNAL_SKILL_SNAPSHOT_SOURCE_NAME,
@@ -198,19 +199,16 @@ class TopicMemoryWindowSelector:
         ):
             raise TopicMemoryGenerationError("source_window_changed")
         evidence = await _project_window(stored, self._sources)
-        return await asyncio.to_thread(self._largest_prefix, evidence, source_after)
+        return await asyncio.to_thread(self._largest_prefix, evidence, source_after, source_ceiling)
 
-    def _largest_prefix(self, evidence: tuple[TopicMemoryEvidence, ...], source_after: int) -> int:
-        selected = 0
+    def _largest_prefix(self, evidence: tuple[TopicMemoryEvidence, ...], source_after: int, source_ceiling: int) -> int:
         for size in range(1, len(evidence) + 1):
             request = f"{self._probe_fixed_prompt}\n{TopicMemoryProbeInput(evidence=evidence[:size]).model_dump_json()}"
             tokens = self._estimator.estimate(request)
             if tokens > self._input_limit and size > 1:
-                break
-            selected = size
-        if selected == 0:
-            selected = 1
-        return source_after + selected
+                return source_after + _opaque_ordinal(evidence[size - 1].evidence_id) - 1
+        # Lineage-only entries still belong to the contiguous Journal window.
+        return source_ceiling
 
 
 class TopicMemoryAtomicPublisher:
@@ -374,7 +372,7 @@ class TopicMemoryProcessor:
             stored = await self._read_window(assignment)
             evidence = {_evidence_id(index): item for index, item in enumerate(stored, start=1)}
             projected = await _project_window(stored, self._sources)
-            proposals, candidates = await self._generate(assignment.scope_id, projected)
+            proposals, candidates = await self._generate(assignment.scope_id, projected) if projected else ((), {})
             operations = await self._prepare_operations(assignment.scope_id, proposals, candidates, evidence)
             await self._publisher.publish(assignment, evidence, operations)
         except ArtifactProcessingLeadershipLostError:
@@ -447,14 +445,44 @@ class TopicMemoryProcessor:
             if self._evidence_batch_fits(candidate, stage):
                 batch.append(item)
                 continue
-            if not batch:
-                raise TopicMemoryGenerationError("input_budget_exceeded")
-            yield tuple(batch)
-            batch = [item]
-            if not self._evidence_batch_fits(tuple(batch), stage):
-                raise TopicMemoryGenerationError("input_budget_exceeded")
+            if batch:
+                yield tuple(batch)
+                batch = []
+            if self._evidence_batch_fits((item,), stage):
+                batch.append(item)
+            else:
+                for fragment in self._evidence_fragments(item, stage):
+                    yield (fragment,)
         if batch:
             yield tuple(batch)
+
+    def _evidence_fragments(self, item: TopicMemoryEvidence, stage: str) -> Iterable[TopicMemoryEvidence]:
+        """Keep every character and the original evidence identity across bounded requests."""
+
+        offset = 0
+        fragment_size = len(item.content)
+        while offset < len(item.content):
+            size = min(fragment_size, len(item.content) - offset)
+            while size:
+                fragment = item.model_copy(
+                    update={
+                        "content": item.content[offset : offset + size],
+                        "metadata": {
+                            **item.metadata,
+                            "fragment_start": offset,
+                            "fragment_end": offset + size,
+                            "source_content_length": len(item.content),
+                        },
+                    }
+                )
+                if self._evidence_batch_fits((fragment,), stage):
+                    yield fragment
+                    offset += size
+                    fragment_size = size
+                    break
+                size //= 2
+            else:
+                raise TopicMemoryGenerationError("input_budget_exceeded")
 
     def _evidence_batch_fits(
         self,
@@ -923,7 +951,8 @@ async def _project_window(
 ) -> tuple[TopicMemoryEvidence, ...]:
     result: list[TopicMemoryEvidence] = []
     for index, item in enumerate(stored, start=1):
-        result.append(await _project_evidence(index, item, sources))
+        if is_generation_eligible(item.value):
+            result.append(await _project_evidence(index, item, sources))
     return tuple(result)
 
 

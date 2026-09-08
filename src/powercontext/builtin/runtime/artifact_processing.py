@@ -1139,12 +1139,19 @@ class ArtifactProcessingSupervisor:
             }:
                 self._defer_control_conflict(running.work)
                 continue
-            self._retries.pop(key, None)
-            assignment = await self._prepare_assignment(running.work)
-            if assignment is None:
-                await self._finish_completed_work(running.work)
-            else:
-                self._enqueue(key)
+            await self._complete_window(running.work)
+
+    async def _complete_window(self, work: _WaveWork) -> None:
+        self._retries.pop(work.key, None)
+        try:
+            assignment = await self._prepare_assignment(work)
+        except _WindowSelectionError as error:
+            self._record_failure(work, None, error.failure)
+            return
+        if assignment is None:
+            await self._finish_completed_work(work)
+        else:
+            self._enqueue(work.key)
 
     async def _finish_covered_work(self, work: _WaveWork) -> None:
         if work.wave_kind is ArtifactProcessingWaveKind.EXPLICIT:

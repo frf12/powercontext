@@ -625,6 +625,64 @@ def test_publish_rejects_noncanonical_chunks_and_lexical_text_before_writes() ->
     asyncio.run(scenario())
 
 
+def test_empty_topic_database_allows_embedding_configuration_changes(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'empty-topics.db'}")
+        embedding_profile = EmbeddingProfile(
+            profile_id="topic-test-v1", model="test", dimension=2, distance="l2", normalization="unit"
+        )
+        indexes = (
+            _fts_index(),
+            CompositeTopicMemoryIndex(SQLiteTopicMemoryFTSIndex(), SQLiteTopicMemoryVectorIndex(embedding_profile)),
+            CompositeTopicMemoryIndex(
+                SQLiteTopicMemoryFTSIndex(),
+                SQLiteTopicMemoryVectorIndex(embedding_profile.model_copy(update={"profile_id": "topic-test-v2"})),
+            ),
+            _fts_index(),
+        )
+        for index in indexes:
+            async with (
+                SQLiteProfile.open(config, tables=BUILTIN_TABLES + index.tables, load_vector_extension=True) as profile,
+                profile.database.transaction() as connection,
+            ):
+                await TopicMemoryRepository(index=index).initialize(connection)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "missing_table", [None, "pc_topic_memory_topic_fts", "pc_topic_memory_chunk_fts", "pc_topic_memory_fts_index"]
+)
+def test_sqlite_fts_reopen_preserves_search_without_reindexing(tmp_path: Path, missing_table: str | None) -> None:
+    async def scenario() -> None:
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'fts-reopen.db'}")
+        index = _fts_index()
+        repository = TopicMemoryRepository(index=index)
+        async with (
+            SQLiteProfile.open(config, tables=BUILTIN_TABLES + index.tables) as profile,
+            profile.database.transaction() as connection,
+        ):
+            await repository.initialize(connection)
+            content = _content("Peer", "survives")
+            await repository.publish_create(
+                connection, "scope-b", "peer-topic", _draft(content), prepare_topic_memory_projection(content)
+            )
+            if missing_table is not None:
+                await connection.exec_driver_sql(f"DROP TABLE {missing_table}")
+        async with (
+            SQLiteProfile.open(config, tables=BUILTIN_TABLES + index.tables) as profile,
+            profile.database.transaction() as connection,
+        ):
+            before = await connection.scalar(text("SELECT total_changes()"))
+            await repository.initialize(connection)
+            if missing_table is None:
+                assert await connection.scalar(text("SELECT total_changes()")) == before
+            result = await repository.search(connection, "scope-b", "survives", limit=10)
+            assert [hit.artifact_ref.artifact_id for hit in result.hits] == ["peer-topic"]
+
+    asyncio.run(scenario())
+
+
 def test_retrieval_shape_is_persistent_and_rejects_bidirectional_downgrades(tmp_path: Path) -> None:
     async def scenario() -> None:
         embedding_profile = EmbeddingProfile(
@@ -689,6 +747,10 @@ def test_retrieval_shape_is_persistent_and_rejects_bidirectional_downgrades(tmp_
             await TopicMemoryRepository(index=fts_index).initialize(connection)
             shape = await connection.scalar(select(TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE.c.shape))
             assert shape == "fts"
+            content = _content("Lexical", "durable")
+            await TopicMemoryRepository(index=fts_index).publish_create(
+                connection, "scope-a", "fts-topic", _draft(content), prepare_topic_memory_projection(content)
+            )
 
         async with SQLiteProfile.open(
             fts_config,

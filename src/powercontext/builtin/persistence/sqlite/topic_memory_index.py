@@ -240,11 +240,19 @@ class SQLiteTopicMemoryFTSIndex:
     async def initialize(self, connection: AsyncConnection, /) -> None:
         if connection.dialect.name != "sqlite":
             raise TopicMemoryCapabilityError("sqlite-fts")
+        existing = await connection.scalar(
+            text(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN "
+                "('pc_topic_memory_topic_fts', 'pc_topic_memory_chunk_fts')"
+            )
+        )
+        marker = await connection.scalar(select(SQLITE_TOPIC_MEMORY_FTS_MARKER_TABLE.c.schema_version))
+        if marker == 1 and existing == 2:
+            return
+        if marker is not None and marker != 1:
+            raise TopicMemoryCapabilityError("sqlite-fts", "unsupported Topic FTS schema version")
         await connection.exec_driver_sql(_CREATE_TOPIC_FTS_SQL)
         await connection.exec_driver_sql(_CREATE_CHUNK_FTS_SQL)
-        marker = await connection.scalar(select(SQLITE_TOPIC_MEMORY_FTS_MARKER_TABLE.c.singleton))
-        if marker is None:
-            await connection.execute(insert(SQLITE_TOPIC_MEMORY_FTS_MARKER_TABLE).values(singleton=1, schema_version=1))
         await connection.exec_driver_sql("DELETE FROM pc_topic_memory_topic_fts")
         await connection.exec_driver_sql("DELETE FROM pc_topic_memory_chunk_fts")
         topics = (await connection.execute(select(TOPIC_MEMORY_ACTIVE_TOPICS_TABLE))).mappings()
@@ -269,6 +277,8 @@ class SQLiteTopicMemoryFTSIndex:
         await connection.exec_driver_sql(
             "SELECT rowid FROM pc_topic_memory_topic_fts WHERE pc_topic_memory_topic_fts MATCH 'powercontext'"
         )
+        if marker is None:
+            await connection.execute(insert(SQLITE_TOPIC_MEMORY_FTS_MARKER_TABLE).values(singleton=1, schema_version=1))
 
     async def replace(
         self,

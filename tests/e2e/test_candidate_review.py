@@ -236,6 +236,7 @@ def test_http_sdk_experience_review_vertical_slice(database_kind: str, tmp_path:
                 "experience",
                 "skill",
                 "handoff",
+                "profile",
                 "prompt",
             ]
             assert inbox.candidates == [candidate]

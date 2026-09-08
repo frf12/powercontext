@@ -205,14 +205,18 @@ system prompt
 ~~~
 
 If adding the next Source would exceed the budget, that Source remains for the next Window. If the first Source after
-the Cursor exceeds the Window token budget by itself, the policy still selects it as a single-Source Window so the
-Cursor can make progress, and attempts to process its original content. The first release does not internally chunk,
-truncate, or reject one oversized Source. If it exceeds the model's actual capability, processing fails and retains the
-Cursor until a dedicated design addresses the case.
+the Cursor exceeds the Window token budget by itself, the policy selects it as a single-Source Window. Probe and
+temporary-Topic requests divide its canonical content into contiguous fragments that each fit the stage budget,
+including JSON escaping, instructions, and the output schema. Every character is retained. Each fragment carries the
+original evidence ID and its character offsets; it does not become a new Source or a separate Journal position. All
+fragments must complete before the Window publishes and advances its Cursor. A failed fragment leaves the original
+Source and Cursor unchanged for retry.
 
 ## Probe and historical Topic selection
 
-The Worker first reads the current Source Window and generates zero or more lightweight Probes. A Probe is a semantic
+The Worker first reads the current Source Window. Server-owned `lineage_only` Sources are excluded before token
+estimation and generation, while their Journal positions remain part of the atomic Cursor advance. A Window containing
+only these Sources completes without a model call. Eligible Sources generate zero or more lightweight Probes. A Probe is a semantic
 query sentence or set of keywords with evidence IDs. It contains no Topic body and does not decide CREATE, UPDATE, or
 NOOP.
 
@@ -284,7 +288,7 @@ Item uses the temporary Topic path:
 
 ~~~text
 Work Item Sources
-  -> split into Source Batches at Source boundaries
+  -> split into bounded Source Batches, fragmenting an oversized Source when necessary
   -> generate temporary Topics for each Batch without loading the historical Topic
   -> all relevant temporary Topics + one historical Topic or an empty target
   -> final CREATE / UPDATE / NOOP
@@ -297,7 +301,8 @@ and is discarded when the Worker ends.
 
 If all temporary Topics plus one historical Topic still exceed the model context, the first release does not perform
 recursive compression, split the historical Topic, or split the topic automatically. This is a known but explicitly
-excluded extreme input, consistent with the boundary for a single Source that exceeds model capacity.
+excluded extreme input. Source fragmentation does not remove the separate bounds on temporary Topic count,
+provider requests, or final historical context.
 
 ## Second retrieval and related-group reconciliation
 
@@ -785,7 +790,8 @@ deployment also reuses the existing Embedding model, Embedding profile, dimensio
 size. Probe, Planner, Evolver, and Reconciler use the same generation model. Per-stage model selection is deferred to a
 later RFC.
 
-The retrieval shape is fixed when a deployment is initialized. A new deployment may select FTS-only, or it may enable
+The retrieval shape becomes fixed when the first Topic is published. While no Topic data exists, initialization
+may change between FTS-only and hybrid or select a different compatible Embedding profile. A new deployment may select FTS-only, or it may enable
 FTS, vector, and hybrid by starting with complete and matching Embedding and vector infrastructure. The first release
 does not support converting an existing FTS-only deployment with Topic Heads in place. Adding Embedding configuration
 later neither backfills existing Heads nor permits the deployment to advertise vector or hybrid. That conversion
@@ -816,8 +822,8 @@ should use consistent settings and record effective values in startup logs.
   whole Window and the progress of an individual task cannot be queried.
 - The `global` Supervisor centralizes resource control, but it may become a bottleneck if several heavyweight Families
   share the Worker pool in the future.
-- A single oversized Source and the case where temporary Topics plus a historical Topic still exceed context are
-  explicitly accepted, uncovered extreme inputs in the first release.
+- Source fragmentation adds generation calls. Temporary Topics plus a historical Topic may still exceed context;
+  recursive compression of that material remains outside the first release.
 
 # Rationale and alternatives
 
@@ -883,7 +889,6 @@ The current scope has no unresolved design questions that block acceptance of th
 
 The following boundaries are explicitly excluded rather than left as open choices for implementers:
 
-- chunking, truncation, or rejection when a single Source exceeds the generation model's actual context;
 - recursive compression or splitting when temporary Topic content plus one historical Topic still exceeds context;
 - automatic merging of two existing Topic identities;
 - cross-Scope Topic retrieval;
@@ -901,8 +906,7 @@ The following boundaries are explicitly excluded rather than left as open choice
 - Migrate Experience incubation and Skill usage evolution to the Artifact Processing Supervisor.
 - Add `topic`, `experience`, or `skill` groups after `global` becomes a bottleneck; add persistent routing only when
   online migration without downtime is required.
-- Design dedicated lossy or lossless fallbacks for one oversized Source, an oversized historical Topic, and recursive
-  reconciliation.
+- Design dedicated fallbacks for an oversized historical Topic and recursive reconciliation.
 - Add manual Topic correction, rollback, retire, history visualization, and evaluation annotation.
 - Add an offline migration procedure that quiesces writes, backfills vector projections for existing FTS-only Topic
   Heads, validates completeness, and restores capabilities.

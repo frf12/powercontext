@@ -204,9 +204,12 @@ Handoff Report 独立默认启用，路径为 `/handoff-reports`。没有任何 
 默认 `all` 角色会启动 Artifact Processing Supervisor。OceanBase 部署可以拆分 `api` 和 `background`；
 `powercontext server run --role background` 不启动 HTTP、MCP 或 Dashboard listener，多个后台候选者通过数据库 Lease
 自动选出一个 active Leader。SQLite 与嵌入式 seekDB 只支持单进程 `all`。未设置正数间隔时，Topic Memory 自动波次
-保持关闭；显式 flush 工作的恢复不依赖该间隔。既有 Memory 与 Experience APScheduler 作业仍只由 `all` 角色运行：
-任一 split role 与 `POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS` 或
-`POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` 同时配置时，进程会在启动阶段明确拒绝。需要这些旧作业时应继续
+保持关闭；显式 flush 工作的恢复不依赖该间隔。Topic Worker 要求使用文件 SQLite；内存 SQLite 配合 generation
+model 的配置会在声明处理能力之前被拒绝。请通过 `POWERCONTEXT_SERVER_DATABASE_URL` 指定持久数据库路径，例如
+`sqlite+aiosqlite:////srv/powercontext/runtime.db`。Memory、Experience 与 Profile APScheduler 作业只由 `all` 角色运行：
+任一 split role 与 `POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS`、
+`POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` 或启用的
+`POWERCONTEXT_SERVER_RUNTIME_PROFILE_SCHEDULE_ENABLED` 同时配置时，进程会在启动阶段明确拒绝。需要这些旧作业时应继续
 使用 `all`；把旧作业分配到独立进程不属于当前 split-role 合同。
 
 指定 SQLite 路径并启用定时提取的示例：

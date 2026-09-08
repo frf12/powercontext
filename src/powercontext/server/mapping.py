@@ -27,6 +27,8 @@ from powercontext.builtin.artifacts.handoff.generation_metadata import (
     HandoffGenerationEnvelope,
     HandoffGenerationMetadata,
 )
+from powercontext.builtin.artifacts.profile.models import ProfileCandidateProposal as RuntimeProfileCandidateProposal
+from powercontext.builtin.artifacts.profile.models import ProfileWriteContent as RuntimeProfileWriteContent
 from powercontext.builtin.artifacts.skill import (
     ExternalSkillProviderScan,
     Skill,
@@ -234,6 +236,8 @@ from powercontext.http import (
     PreparedHandoffSchema,
     PreparedWorkHandoff,
     PrepareHandoffRequest,
+    ProfileCandidateProposal,
+    ProfileWriteContent,
     ProposeExperienceRequest,
     ProposeSkillRequest,
     RecordTaskOutcomeRequest,
@@ -1004,13 +1008,19 @@ def skill_proposal(value: SkillContent) -> SkillProposal:
     )
 
 
-def reviewed_content(value: ExperienceProposal | SkillProposal) -> ExperienceContent | SkillContent:
+def reviewed_content(
+    value: ExperienceProposal | SkillProposal | ProfileWriteContent,
+) -> ExperienceContent | SkillContent | RuntimeProfileWriteContent:
+    if isinstance(value, ProfileWriteContent):
+        return RuntimeProfileWriteContent.model_validate(value.model_dump(mode="json"))
     if isinstance(value, ExperienceProposal):
         return experience_content(value)
     return skill_content(value)
 
 
-def reviewed_proposal(value: object) -> ExperienceProposal | SkillProposal:
+def reviewed_proposal(value: object) -> ExperienceProposal | SkillProposal | ProfileCandidateProposal:
+    if isinstance(value, RuntimeProfileCandidateProposal):
+        return ProfileCandidateProposal.model_validate(value.model_dump(mode="json", by_alias=True))
     if isinstance(value, ExperienceContent):
         return experience_proposal(value)
     if isinstance(value, SkillContent):

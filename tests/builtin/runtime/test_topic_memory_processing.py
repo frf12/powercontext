@@ -59,6 +59,7 @@ from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryProbeInput,
     TopicMemoryProbeOutput,
     TopicMemoryProposal,
+    TopicMemoryTemporaryInput,
     TopicMemoryTemporaryOutput,
     topic_memory_stage_fixed_prompt,
 )
@@ -93,6 +94,7 @@ from powercontext.builtin.runtime.composition import (
     BuiltinConfigurationError,
     _topic_memory_processing_bindings,
     open_builtin_contexts,
+    open_builtin_runtime,
 )
 from powercontext.builtin.runtime.config import BuiltinConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.topic_memory_processing import (
@@ -110,6 +112,9 @@ from powercontext.builtin.sources import (
     SKILL_PACKAGE_UPLOAD_SOURCE_ADAPTER,
     SKILL_USAGE_SOURCE_ADAPTER,
     ContentCapture,
+    ContentSource,
+    ContentSourceInternal,
+    ContentSourceTarget,
     ExternalSkillImportMode,
     ExternalSkillSnapshotCapture,
     SkillPackageUploadCapture,
@@ -1607,6 +1612,71 @@ def test_selector_closes_read_transaction_and_runs_estimator_off_loop() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("only_lineage", [False, True])
+def test_topic_windows_exclude_lineage_only_sources_and_advance_the_full_journal(only_lineage: bool) -> None:
+    async def scenario() -> None:
+        manager, profile, _, topics = await _repositories()
+        sources = SourceRepository((CONTENT_SOURCE_ADAPTER,))
+        estimates: list[str] = []
+
+        def estimate(value: str) -> int:
+            estimates.append(value)
+            return 1
+
+        try:
+            async with profile.database.transaction() as connection:
+                for position in range(3):
+                    lineage_only = only_lineage or position != 1
+                    await sources.add(
+                        connection,
+                        "scope-a",
+                        ContentSource(
+                            name=f"source-{position}",
+                            materialization=SourceMaterialization.CAPTURED,
+                            content="private-lineage-sentinel" if lineage_only else "eligible source",
+                            internal=ContentSourceInternal(
+                                role="lineage_only",
+                                operation="artifact_create",
+                                target=ContentSourceTarget(
+                                    scope_id="scope-a", family="profile", artifact_id="profile", revision=1
+                                ),
+                            )
+                            if lineage_only
+                            else None,
+                        ),
+                    )
+                term = await ArtifactProcessingLeaseRepository().start_single_process_term(connection, "holder")
+            estimator = TokenEstimator(character_token_estimator().profile, estimate)
+            selector = TopicMemoryWindowSelector(profile.database, sources, estimator, context_window_tokens=125_000)
+            assert await selector.select("scope-a", 0, 3) == 3
+            stages = _stages(probe=TopicMemoryProbeOutput(), global_output=None, estimator=estimator)
+            processor = TopicMemoryProcessor(
+                database=profile.database,
+                sources=sources,
+                topics=topics,
+                stages=stages,
+                publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics),
+            )
+            assert (
+                await processor.process(_assignment(term.fence("single-process"), through=3))
+            ).outcome.value == "succeeded"
+            assert all("private-lineage-sentinel" not in value for value in estimates)
+            if only_lineage:
+                assert stages.probe.inputs == []
+            else:
+                assert len(stages.probe.inputs) == 1
+                request = cast(TopicMemoryProbeInput, stages.probe.inputs[0])
+                assert [item.evidence_id for item in request.evidence] == ["evidence-0002"]
+                assert "private-lineage-sentinel" not in request.model_dump_json()
+            async with profile.database.transaction() as connection:
+                cursor = await SourceCursorRepository().load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                assert cursor is not None and cursor.cursor.sequence == 3
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
 def test_selector_keeps_one_oversized_source_without_skipping_or_truncating() -> None:
     async def scenario() -> None:
         manager, profile, sources, _ = await _repositories()
@@ -1774,7 +1844,7 @@ def test_selector_and_worker_share_adapter_canonical_skill_evidence(source_kind:
     asyncio.run(scenario())
 
 
-def test_oversized_source_is_not_split_and_retries_before_contiguous_tail() -> None:
+def test_oversized_source_preserves_all_evidence_and_reaches_tail_at_the_same_budget() -> None:
     async def scenario() -> None:
         manager, profile, _, topics = await _repositories()
         sources = SourceRepository((*SOURCE_ADAPTERS, CONTENT_SOURCE_ADAPTER))
@@ -1833,56 +1903,20 @@ def test_oversized_source_is_not_split_and_retries_before_contiguous_tail() -> N
                 },
             )
             leases = ArtifactProcessingLeaseRepository()
-            small_processor = TopicMemoryProcessor(
+            processor = TopicMemoryProcessor(
                 database=profile.database,
                 sources=sources,
                 topics=topics,
                 stages=small_stages,
                 publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics, leases=leases),
             )
-
-            with pytest.raises(TopicMemoryGenerationError, match="input_budget_exceeded"):
-                await small_processor.process(
-                    _assignment(
-                        term.fence("single-process"),
-                        through=first.journal_position,
-                    )
-                )
-            assert small_probe.inputs == []
-
-            async with profile.database.transaction() as connection:
-                cursor = await SourceCursorRepository().load(
-                    connection,
-                    "scope-a",
-                    TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
-                )
-            assert cursor is None
-
-            large_probe = _RepeatingGenerator(TopicMemoryProbeOutput())
-            large_stages = TopicMemoryStageSet(
-                probe=large_probe,
-                global_evolver=unexpected,
-                planner=unexpected,
-                evolver=unexpected,
-                temporary=unexpected,
-                reconciler=unexpected,
-                estimator=character_token_estimator(),
-                input_tokens_limit=300_000,
-                fixed_prompts=small_stages.fixed_prompts,
-            )
-            processor = TopicMemoryProcessor(
-                database=profile.database,
-                sources=sources,
-                topics=topics,
-                stages=large_stages,
-                publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics, leases=leases),
-            )
             first_completion = await processor.process(
                 _assignment(term.fence("single-process"), through=first.journal_position)
             )
             assert first_completion.outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
-            assert len(large_probe.inputs) == 1
-            projected = cast(TopicMemoryProbeInput, large_probe.inputs[0]).evidence[0].content
+            assert len(small_probe.inputs) > 1
+            assert all(small_stages.fits(cast(TopicMemoryProbeInput, value), "probe") for value in small_probe.inputs)
+            projected = "".join(cast(TopicMemoryProbeInput, value).evidence[0].content for value in small_probe.inputs)
             assert json.loads(projected) == {
                 "content": "body",
                 "metadata": {"unbounded": oversized_metadata},
@@ -1911,7 +1945,7 @@ def test_oversized_source_is_not_split_and_retries_before_contiguous_tail() -> N
             tail_completion = await processor.process(tail_assignment)
 
             assert tail_completion.outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
-            tail_input = cast(TopicMemoryProbeInput, large_probe.inputs[1])
+            tail_input = cast(TopicMemoryProbeInput, small_probe.inputs[-1])
             assert tail_input.evidence[0].content == "tail remains reachable"
             async with profile.database.transaction() as connection:
                 cursor = await SourceCursorRepository().load(
@@ -1920,6 +1954,93 @@ def test_oversized_source_is_not_split_and_retries_before_contiguous_tail() -> N
                     TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
                 )
             assert cursor is not None and cursor.cursor.sequence == second.journal_position
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_oversized_source_temporary_fragments_publish_atomically_with_original_lineage() -> None:
+    class Planner:
+        async def generate(self, value: TopicMemoryPlannerInput, /):
+            return GenerationResult(
+                output=TopicMemoryPlannerOutput(
+                    items=(TopicMemoryPlanItem(probe_ids=tuple(probe.probe_id for probe in value.probes)),)
+                )
+            )
+
+    class TemporaryGenerator:
+        def __init__(self, proposal: TopicMemoryProposal) -> None:
+            self.proposal = proposal
+            self.fail_tail = True
+            self.inputs: list[TopicMemoryTemporaryInput] = []
+
+        async def generate(self, value: TopicMemoryTemporaryInput, /):
+            self.inputs.append(value)
+            fragment = value.evidence[0].metadata
+            if self.fail_tail and fragment["fragment_end"] == fragment["source_content_length"]:
+                raise RuntimeError("temporary generation unavailable")  # noqa: TRY003
+            return GenerationResult(output=TopicMemoryTemporaryOutput(proposals=(self.proposal,)))
+
+    async def scenario() -> None:
+        manager, profile, sources, topics = await _repositories()
+        try:
+            original = '界\\"\n' * 50_000 + "END-OF-EVIDENCE"
+            async with profile.database.transaction() as connection:
+                source = await sources.add(
+                    connection,
+                    "scope-a",
+                    NoteSource(name="oversized", materialization=SourceMaterialization.CAPTURED, body=original),
+                )
+                term = await ArtifactProcessingLeaseRepository().start_single_process_term(connection, "holder")
+            proposal = TopicMemoryProposal(content=_content("segmented"), evidence_ids=("evidence-0001",))
+            probe = _RepeatingGenerator(
+                TopicMemoryProbeOutput(probes=(TopicMemoryProbe(query="segmented", evidence_ids=("evidence-0001",)),))
+            )
+            temporary = TemporaryGenerator(proposal)
+            stages = TopicMemoryStageSet(
+                probe=probe,
+                planner=Planner(),
+                temporary=temporary,
+                evolver=_RepeatingGenerator(TopicMemoryEvolveOutput(proposal=proposal)),
+                global_evolver=_QueueGenerator(),
+                reconciler=_QueueGenerator(),
+                estimator=character_token_estimator(),
+                input_tokens_limit=100_000,
+            )
+            processor = TopicMemoryProcessor(
+                database=profile.database,
+                sources=sources,
+                topics=topics,
+                stages=stages,
+                publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics),
+            )
+            assignment = _assignment(term.fence("single-process"))
+            with pytest.raises(RuntimeError, match="temporary generation unavailable"):
+                await processor.process(assignment)
+            async with profile.database.transaction() as connection:
+                assert (
+                    await SourceCursorRepository().load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                    is None
+                )
+                assert await topics.browse_current(connection, "scope-a", limit=10) == ()
+            temporary.fail_tail = False
+            temporary.inputs.clear()
+            probe.inputs.clear()
+            assert (await processor.process(assignment)).outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
+            for inputs, stage in ((probe.inputs, "probe"), (temporary.inputs, "temporary")):
+                assert len(inputs) > 1
+                requests = cast(list[TopicMemoryProbeInput | TopicMemoryTemporaryInput], inputs)
+                assert all(stages.fits(value, stage) for value in requests)
+                assert "".join(value.evidence[0].content for value in requests) == original
+                assert {value.evidence[0].evidence_id for value in requests} == {"evidence-0001"}
+            async with profile.database.transaction() as connection:
+                items = await topics.browse_current(connection, "scope-a", limit=10)
+                assert len(items) == 1
+                published = await topics.get_exact(connection, "scope-a", items[0].artifact_ref)
+                assert published.topic.lineage.sources == (source.ref,)
+                cursor = await SourceCursorRepository().load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                assert cursor is not None and cursor.cursor.sequence == source.journal_position
         finally:
             await manager.__aexit__(None, None, None)
 
@@ -2038,7 +2159,8 @@ def test_topic_worker_entrypoint_runs_and_sanitizes_failure_in_real_spawn_child(
             handle = await launcher.start(assignment)
             try:
                 with pytest.raises(RuntimeError) as error:
-                    await asyncio.wait_for(handle.wait(), timeout=10)
+                    # Includes interpreter startup, database initialization, and inference validation.
+                    await asyncio.wait_for(handle.wait(), timeout=30)
             finally:
                 await handle.terminate()
 
@@ -2094,9 +2216,20 @@ def test_topic_usage_purposes_are_fail_open_and_secret_safe(caplog: pytest.LogCa
     assert "usage-secret-sentinel" not in caplog.text
 
 
-def test_composition_registers_complete_binding_only_with_generation_model() -> None:
+def test_composition_rejects_spawn_processing_for_in_memory_sqlite() -> None:
+    async def scenario() -> None:
+        config = BuiltinConfig(inference=InferenceConfig(generation_model="test"))
+        with pytest.raises(BuiltinConfigurationError, match="file-backed SQLite"):
+            async with open_builtin_runtime(config):
+                pytest.fail("in-memory SQLite must not advertise spawned Topic processing")
+
+    asyncio.run(scenario())
+
+
+def test_composition_registers_complete_binding_only_with_generation_model(tmp_path) -> None:
     async def scenario() -> None:
         config = BuiltinConfig(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'composition.db'}"),
             inference=InferenceConfig(generation_model="test"),
         )
         async with open_builtin_contexts(config) as contexts:
