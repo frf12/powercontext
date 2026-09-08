@@ -19,6 +19,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from sqlalchemy import select
 
 from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WINDOW_BINDING, TopicMemoryContent
 from powercontext.builtin.artifacts.topic_memory.generation import (
@@ -46,6 +47,7 @@ from powercontext.builtin.inference import GenerationResult, character_token_est
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.sources import SourceRepository
 from powercontext.builtin.persistence.supervision import ArtifactProcessingLeaseRepository
+from powercontext.builtin.persistence.tables import TOPIC_MEMORY_WORK_BUDGETS_TABLE
 from powercontext.builtin.runtime.artifact_processing import ArtifactProcessingWorkerOutcome
 from powercontext.builtin.runtime.topic_memory_processing import (
     TopicMemoryAtomicPublisher,
@@ -226,10 +228,23 @@ async def _scenario(*, repeated=False, input_limit=100_000, characters=2_100_000
                     is None
                 )
                 assert await topics.browse_current(connection, "scope-a", limit=10) == ()
+                budget = (await connection.execute(select(TOPIC_MEMORY_WORK_BUDGETS_TABLE))).mappings().one()
+                # Every stage, including the failed reduction and Planner, is
+                # precharged. A new processor must retain those reservations.
+                assert budget["attempts"] == 1
+                assert budget["requests"] == 2 * (len(fake.probes) + len(fake.temporaries) + len(fake.reductions) + 1)
+                assert budget["tokens"] == budget["requests"] * (input_limit * 5 // 4)
             fake.failure = None
             fake.probes.clear()
             fake.temporaries.clear()
             fake.reductions.clear()
+            processor = TopicMemoryProcessor(
+                database=profile.database,
+                sources=sources,
+                topics=topics,
+                stages=stages,
+                publisher=TopicMemoryAtomicPublisher(profile.database, sources, topics),
+            )
         assert (await processor.process(assignment)).outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
         for requests, stage in ((fake.probes, "probe"), (fake.temporaries, "temporary")):
             assert len(requests) > 20
