@@ -1209,7 +1209,9 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
         )
         raw_embedding, _ = await _embedding_models(inference, resources, None)
         embedding = None if raw_embedding is None else UsageReportingEmbeddingModel(raw_embedding)
-        contexts = await resources.enter_async_context(open_builtin_contexts(config, embedding_model=embedding))
+        contexts = await resources.enter_async_context(
+            open_builtin_contexts(config, embedding_model=embedding, _topic_memory_worker=True)
+        )
 
         fixed_prompts: dict[str, str] = {}
 

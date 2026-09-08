@@ -212,6 +212,11 @@ model 的配置会在声明处理能力之前被拒绝。请通过 `POWERCONTEXT
 `POWERCONTEXT_SERVER_RUNTIME_PROFILE_SCHEDULE_ENABLED` 同时配置时，进程会在启动阶段明确拒绝。需要这些旧作业时应继续
 使用 `all`；把旧作业分配到独立进程不属于当前 split-role 合同。
 
+普通 Runtime 启动会初始化并恢复所配置的检索索引。Topic Worker 复用该数据库，不再为每个 Window 重建无关的
+Memory/Experience 检索投影；Topic 索引校验与发布守卫仍然执行。如果空库切换了 Topic 检索形态或 Embedding
+profile，应使用相同配置重新打开已有 Runtime；旧 Runtime 会以 retrieval-shape 错误拒绝 Topic 搜索、精确读取和
+当前 Head 浏览，而不是读取另一个向量空间。
+
 指定 SQLite 路径并启用定时提取的示例：
 
 ```bash

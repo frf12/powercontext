@@ -89,6 +89,7 @@ WITH candidates AS (
            l2_distance(v.embedding, :query_vector) AS distance
     FROM pc_topic_memory_vector_topics AS v
     WHERE v.scope_id = :scope_id
+      AND v.profile_fingerprint = :profile_fingerprint
     ORDER BY l2_distance(v.embedding, :query_vector) APPROXIMATE
     LIMIT :candidate_limit
 )
@@ -104,6 +105,7 @@ WITH neighbors AS (
            l2_distance(v.embedding, :query_vector) AS distance
     FROM pc_topic_memory_vector_chunks AS v
     WHERE v.scope_id = :scope_id
+      AND v.profile_fingerprint = :profile_fingerprint
     ORDER BY l2_distance(v.embedding, :query_vector) APPROXIMATE
     LIMIT :neighbor_limit
 ), ranked AS (
@@ -417,6 +419,7 @@ class OceanBaseTopicMemoryVectorIndex:
             raise TopicMemoryCapabilityError("embedding-profile")
         parameters = {
             "scope_id": scope_id,
+            "profile_fingerprint": self._fingerprint,
             "query_vector": canonical_embedding(
                 request.query_vector,
                 dimension=self.profile.dimension,

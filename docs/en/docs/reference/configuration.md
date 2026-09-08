@@ -236,6 +236,12 @@ Memory, Experience, and Profile APScheduler jobs belong exclusively to `all`: co
 `POWERCONTEXT_SERVER_RUNTIME_PROFILE_SCHEDULE_ENABLED` with either split role is rejected at startup. Keep `all`
 when those jobs are required; assigning them to a separate process is outside the current split-role contract.
 
+Normal Runtime startup initializes and recovers the configured search indexes. Topic Workers reuse that database
+without rebuilding the unrelated Memory/Experience search projections for each Window; Topic index validation and
+publication guards still apply. If an empty database is reconfigured to another Topic retrieval shape or embedding
+profile, reopen existing Runtimes with the same configuration: stale Runtimes reject Topic search, exact get, and
+current-head browsing with a retrieval-shape error instead of reading another vector space.
+
 Provider credentials, such as `OPENAI_API_KEY`, are read by the configured inference provider. Do not place secrets in
 command-line arguments, documentation, or Memory. Replace `provider:model-name` with a model identifier supported by
 Pydantic AI. Scheduled extraction requires both a generation model and
