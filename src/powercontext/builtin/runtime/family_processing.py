@@ -72,7 +72,13 @@ def run_family_worker(
 async def _run_family_worker(
     spec: FamilyWorkerSpec, assignment: ArtifactProcessingWorkAssignment
 ) -> ArtifactProcessingWorkerCompletion:
-    from powercontext.builtin.runtime.composition import _embedding_models, _generation_pipelines, open_builtin_contexts
+    from powercontext.builtin.runtime.composition import (
+        _embedding_models,
+        _generation_pipelines,
+        _prompt_registry,
+        _usage_reporting_embedding_model,
+        open_builtin_contexts,
+    )
 
     config = spec.config
     async with AsyncExitStack() as resources:
@@ -85,7 +91,14 @@ async def _run_family_worker(
                 config,
                 candidate_pipeline=pipelines[1],
                 experience_pipeline=pipelines[2],
-                embedding_model=embedding,
+                embedding_model=_usage_reporting_embedding_model(embedding),
+                prompt_registry=_prompt_registry(
+                    config.runtime,
+                    (
+                        ("memory.extract", None, pipelines[1]),
+                        ("experience.incubate", None, pipelines[2]),
+                    ),
+                ),
                 _topic_memory_worker=True,
             )
         )

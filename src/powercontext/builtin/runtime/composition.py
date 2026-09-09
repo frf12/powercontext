@@ -306,16 +306,7 @@ async def open_builtin_runtime(
             ("skill.generate", skill_generator, generated_skill),
             ("handoff.generate", handoff_pipeline, generated_handoff),
         )
-        prompt_registry = PromptRegistry(
-            builtin_prompt_definitions(config.runtime.memory_extraction_profile),
-            supported=frozenset(
-                key for key, injected, generated in components if injected is None and generated is not None
-            ),
-            injected=frozenset(key for key, injected, _ in components if injected is not None),
-            disabled=frozenset({"memory.rerank"})
-            if not config.runtime.memory_rerank_enabled and memory_reranker is None
-            else frozenset(),
-        )
+        prompt_registry = _prompt_registry(config.runtime, components)
         if configured_reranker is not None and tracing is not None:
             configured_reranker = _TracingMemoryReranker(configured_reranker, tracing)
         if embedding_model is None:
@@ -333,9 +324,7 @@ async def open_builtin_runtime(
                 if isinstance(embedding_model, PydanticAIEmbeddingModel)
                 else embedding_model
             )
-        configured_embedding = (
-            None if configured_embedding_source is None else UsageReportingEmbeddingModel(configured_embedding_source)
-        )
+        configured_embedding = _usage_reporting_embedding_model(configured_embedding_source)
         configured_external_skills = (
             _external_skill_provider(config.external_skills)
             if external_skill_provider is None
@@ -1211,6 +1200,33 @@ def _merge_headers(*values: Mapping[str, SecretStr]) -> dict[str, SecretStr]:
             merged[name] = value
             names[normalized_name] = name
     return merged
+
+
+def _prompt_registry(
+    runtime: RuntimeConfig,
+    components: tuple[tuple[str, object | None, object | None], ...],
+) -> PromptRegistry:
+    """Infer Prompt support from executable generated components in either process."""
+
+    injected = frozenset(key for key, supplied, _ in components if supplied is not None)
+    return PromptRegistry(
+        builtin_prompt_definitions(runtime.memory_extraction_profile),
+        supported=frozenset(
+            key for key, supplied, generated in components if supplied is None and generated is not None
+        ),
+        injected=injected,
+        disabled=frozenset({"memory.rerank"})
+        if not runtime.memory_rerank_enabled and "memory.rerank" not in injected
+        else frozenset(),
+    )
+
+
+def _usage_reporting_embedding_model(model: EmbeddingModel | None) -> EmbeddingModel | None:
+    """Attribute operational embeddings once, leaving readiness adapters unwrapped."""
+
+    if model is None or isinstance(model, UsageReportingEmbeddingModel):
+        return model
+    return UsageReportingEmbeddingModel(model)
 
 
 async def _embedding_models(

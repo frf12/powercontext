@@ -35,6 +35,8 @@ from pydantic import SecretStr
 from sqlalchemy import func, select, text
 
 from powercontext.builtin.artifacts.profile.models import PROFILE_SOURCE_WINDOW_BINDING
+from powercontext.builtin.artifacts.prompt import PromptKey
+from powercontext.builtin.artifacts.prompt.builtin import builtin_prompt_definitions
 from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WINDOW_BINDING
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
@@ -44,11 +46,15 @@ from powercontext.builtin.persistence.seekdb import SeekDBConfig, SeekDBProfile
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import (
     ARTIFACT_CANDIDATE_HEADS_TABLE,
+    ARTIFACT_CANDIDATE_VERSIONS_TABLE,
     ARTIFACT_HEADS_TABLE,
     BUILTIN_TABLES,
+    MEMORY_ENTRY_VERSIONS_TABLE,
     MODEL_USAGE_DAILY_TABLE,
     SCOPES_TABLE,
+    SOURCE_JOURNAL_HEADS_TABLE,
 )
+from powercontext.builtin.records import ArtifactWrite
 from powercontext.builtin.runtime.composition import open_builtin_runtime
 from powercontext.builtin.runtime.config import BuiltinConfig, RuntimeConfig
 from powercontext.builtin.runtime.family_processing import FAMILY_BINDINGS
@@ -63,6 +69,10 @@ from powercontext.server.processing_security import WorkerSecuritySpec
 from powercontext.server.settings import ServerSettings
 
 BINDINGS = {**FAMILY_BINDINGS, "topic-memory": TOPIC_MEMORY_SOURCE_WINDOW_BINDING}
+CUSTOM_PROMPT_MARKERS: dict[PromptKey, str] = {
+    "memory.extract": "ScopePromptMemoryAccepted",
+    "experience.incubate": "ScopePromptExperienceAccepted",
+}
 
 
 class AcceptanceFailure(RuntimeError):
@@ -128,6 +138,12 @@ async def _case_state(connection, database, scope: str) -> dict[str, Any]:
     return {
         "backend_version": version,
         "model_requests": {f"{row[0]}/{row[1]}": int(row[2]) for row in rows},
+        "source_journal_position": int(
+            await connection.scalar(
+                select(SOURCE_JOURNAL_HEADS_TABLE.c.position).where(SOURCE_JOURNAL_HEADS_TABLE.c.scope_id == scope)
+            )
+            or 0
+        ),
         "all_requests_handled": all(
             row is not None and row.requested_generation > 0 and row.handled_generation >= row.requested_generation
             for row in intents
@@ -135,30 +151,35 @@ async def _case_state(connection, database, scope: str) -> dict[str, Any]:
     }
 
 
-async def _prepare_scope(database, config: BuiltinConfig, *, resume: bool) -> tuple[str, dict[str, Any]]:
-    async with _database(database) as profile:
-        async with profile.database.transaction() as connection:
-            count = await connection.scalar(select(func.count()).select_from(SCOPES_TABLE))
-            if count and not resume:
-                raise AcceptanceFailure("acceptance-requires-empty-database")
-            if resume:
-                scopes = (
-                    (
-                        await connection.execute(
-                            select(SCOPES_TABLE.c.scope_id).where(
-                                SCOPES_TABLE.c.title == "Supervisor acceptance",
-                                SCOPES_TABLE.c.summary == "Synthetic acceptance work",
-                            )
+async def _prepare_scope(
+    database, config: BuiltinConfig, *, resume: bool, custom_prompts: bool
+) -> tuple[str, dict[str, Any]]:
+    async with _database(database) as profile, profile.database.transaction() as connection:
+        count = await connection.scalar(select(func.count()).select_from(SCOPES_TABLE))
+        if count and not resume:
+            raise AcceptanceFailure("acceptance-requires-empty-database")
+        if resume:
+            scopes = (
+                (
+                    await connection.execute(
+                        select(SCOPES_TABLE.c.scope_id).where(
+                            SCOPES_TABLE.c.title == "Supervisor acceptance",
+                            SCOPES_TABLE.c.summary == "Synthetic acceptance work",
                         )
                     )
-                    .scalars()
-                    .all()
                 )
-                if len(scopes) != 1:
-                    raise AcceptanceFailure("resume-requires-one-acceptance-scope")
-                return scopes[0], await _case_state(connection, database, scopes[0])
-            await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
-        contexts = RelationalContexts(database=profile.database)
+                .scalars()
+                .all()
+            )
+            if len(scopes) != 1:
+                raise AcceptanceFailure("resume-requires-one-acceptance-scope")
+            return scopes[0], await _case_state(connection, database, scopes[0])
+        await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
+    # Compose the public Runtime so Prompt capabilities follow the same real
+    # adapters as production. Automatic admission is disabled in this fixture;
+    # accepted work is published only after this setup Runtime has closed.
+    async with open_builtin_runtime(config) as setup_runtime:
+        contexts = cast(RelationalContexts, setup_runtime._provider)
         scope = (
             await contexts.scopes.create(
                 ScopeDraft(
@@ -168,6 +189,27 @@ async def _prepare_scope(database, config: BuiltinConfig, *, resume: bool) -> tu
                 )
             )
         ).scope_id
+        if custom_prompts:
+            definitions = {
+                item.key: item for item in builtin_prompt_definitions(config.runtime.memory_extraction_profile)
+            }
+            for key, marker in CUSTOM_PROMPT_MARKERS.items():
+                field = "text" if key == "memory.extract" else "lesson"
+                await contexts.records.create_artifact(
+                    scope,
+                    "prompt",
+                    ArtifactWrite(
+                        prompt_key=key,
+                        content={
+                            "schema_version": "powercontext.prompt.v1",
+                            "mode": "custom",
+                            "instructions": definitions[key].default_instructions
+                            + f"\nFor this Scope, prefix every candidate {field} with [{marker}] "
+                            "as a formatting label, then include the supported factual content.",
+                            "demonstrations": [],
+                        },
+                    ),
+                )
         await contexts.profiles.put_policy(
             scope, generation_enabled=True, activation_mode="review_required", expected_version=0
         )
@@ -177,18 +219,70 @@ async def _prepare_scope(database, config: BuiltinConfig, *, resume: bool) -> tu
             "supervisor-real-task-outcome",
             "Completed engineering task: a release failed because configuration changes bypassed validation. "
             "I added a strict configuration check before deployment; the check then passed and the release succeeded. "
-            "Reusable lesson: always run the strict configuration test after changing configuration. "
-            "Long-lived user profile, explicitly confirmed across many sessions: I am a Python backend engineer. "
-            "I have consistently preferred Simplified Chinese explanations for the past two years. "
-            "For all future work, I want executable test evidence and narrowly scoped changes. "
-            "The user has repeatedly confirmed these as permanent preferences, independent of this release task. "
-            "This record is both a confirmed task outcome and explicit evidence of lasting user preferences.",
+            "Reusable lesson: always run the strict configuration test after changing configuration.",
             {"kind": "task-outcome", "synthetic": True},
         )
-        async with profile.database.transaction() as connection:
-            for binding in BINDINGS.values():
-                await ArtifactProcessingIntentRepository().request(connection, scope, binding)
-            return scope, await _case_state(connection, database, scope)
+        await contexts.records.capture_source(
+            scope,
+            "content",
+            "supervisor-real-user-profile",
+            "I am the single user of this Scope. I have worked as a Python backend engineer since 2020. "
+            "Simplified Chinese has been my preferred language for engineering discussions since 2024. "
+            "I use pytest for Python regression tests and require executable test evidence before accepting changes. "
+            "I prefer narrowly scoped code changes. These are my enduring personal work preferences, "
+            "consistently confirmed across multiple years and projects, independent of the current release task.",
+            {"kind": "profile-evidence", "role": "user", "synthetic": True},
+        )
+    async with (
+        _database(database) as profile,
+        profile.database.transaction() as connection,
+    ):
+        for binding in BINDINGS.values():
+            await ArtifactProcessingIntentRepository().request(connection, scope, binding)
+        return scope, await _case_state(connection, database, scope)
+
+
+async def _custom_prompt_evidence(contexts: RelationalContexts, scope: str) -> dict[str, Any]:
+    async with contexts.database.transaction() as connection:
+        memory_texts = (
+            (
+                await connection.execute(
+                    select(MEMORY_ENTRY_VERSIONS_TABLE.c.text).where(MEMORY_ENTRY_VERSIONS_TABLE.c.scope_id == scope)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        experience_proposals = (
+            (
+                await connection.execute(
+                    select(ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.proposal).where(
+                        ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.scope_id == scope,
+                        ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.family == "experience",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    observed = {
+        "memory.extract": any(CUSTOM_PROMPT_MARKERS["memory.extract"] in str(value) for value in memory_texts),
+        "experience.incubate": any(
+            CUSTOM_PROMPT_MARKERS["experience.incubate"] in str(value) for value in experience_proposals
+        ),
+    }
+    evidence = {}
+    for key in CUSTOM_PROMPT_MARKERS:
+        selected = await contexts.prompts.resolve(scope, key)
+        if selected is None or selected.selection != "artifact" or not observed[key]:
+            raise AcceptanceFailure("custom-prompt-not-executed-by-worker")
+        evidence[key] = {
+            "selection": selected.selection,
+            "revision": selected.selected_version,
+            "compiled_digest": selected.compiled_digest,
+            "persisted_output_contains_custom_formatting_label": observed[key],
+        }
+    return evidence
 
 
 async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance lifecycle
@@ -198,6 +292,7 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
     directory: Path,
     mode: Literal["global", "dedicated"],
     resume: bool = False,
+    custom_prompts: bool = False,
 ) -> dict[str, Any]:
     """Recover accepted work after reopening, then acknowledge a fresh NOOP."""
 
@@ -231,7 +326,7 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
         deployment_id="supervisor-real-acceptance",
         static_preset=True,
     ).model_dump(mode="json")
-    scope, initial_state = await _prepare_scope(database, config, resume=resume)
+    scope, initial_state = await _prepare_scope(database, config, resume=resume, custom_prompts=custom_prompts)
     captured = FailureCapture()
     logger = logging.getLogger("powercontext.builtin.runtime.artifact_processing")
     logger.addHandler(captured)
@@ -311,7 +406,8 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
             if any(ownership.get(family, 0) < 1 for family in BINDINGS):
                 raise failed("atomic-owner-attestation-contract-failed")
             if cursors["profile"] != 0 or any(
-                cursors[family] != 1 for family in ("memory", "experience", "topic-memory")
+                cursors[family] != initial_state["source_journal_position"]
+                for family in ("memory", "experience", "topic-memory")
             ):
                 raise failed("domain-cursor-contract-failed")
             # Already pending Profile review is a successful invocation without
@@ -359,12 +455,14 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
                 raise failed("completed-request-replay-made-model-calls")
             for usage_key in (
                 "memory_extraction/generation",
+                "memory_indexing/embedding",
                 "experience_generation/generation",
                 "topic_memory_generation/generation",
                 "topic_memory_indexing/embedding",
             ):
                 if final_state["model_requests"].get(usage_key, 0) < 1:
                     raise failed("real-model-usage-evidence-missing")
+            prompt_evidence = await _custom_prompt_evidence(contexts, scope) if custom_prompts else {}
             search = await runtime.topic_memory.for_scope(scope).search(
                 SearchTopicMemoryRequest(query="strict configuration validation release engineering", limit=10)
             )
@@ -383,6 +481,9 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
                 "generation_model": config.inference.generation_model,
                 "embedding_model": config.inference.embedding_model,
                 "model_requests": final_state["model_requests"],
+                "custom_prompts": prompt_evidence,
+                "source_journal_position": initial_state["source_journal_position"],
+                "all_requests_handled": final_state["all_requests_handled"],
                 "resume_without_processing_model_calls": replay_without_model_calls,
                 "retrieval": {
                     "mode": search.mode,
@@ -419,6 +520,9 @@ def main() -> int:
     )
     parser.add_argument("--mode", choices=("global", "dedicated"), default="global")
     parser.add_argument("--resume", action="store_true", help="Recover the existing synthetic acceptance database.")
+    parser.add_argument(
+        "--custom-prompts", action="store_true", help="Verify Scope-owned Memory and Experience custom Prompts."
+    )
     parser.add_argument("--generation-timeout-seconds", type=float)
     parser.add_argument("--oceanbase-url-env", default="POWERCONTEXT_TEST_OCEANBASE_URL")
     args = parser.parse_args()
@@ -440,7 +544,12 @@ def main() -> int:
                 settings = settings.model_copy(update={"database": OceanBaseConfig(url=SecretStr(url))})
             report = asyncio.run(
                 run_acceptance(
-                    settings, backend=args.backend, directory=args.output, mode=args.mode, resume=args.resume
+                    settings,
+                    backend=args.backend,
+                    directory=args.output,
+                    mode=args.mode,
+                    resume=args.resume,
+                    custom_prompts=args.custom_prompts,
                 )
             )
     except Exception as error:

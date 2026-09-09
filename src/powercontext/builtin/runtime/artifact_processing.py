@@ -682,6 +682,15 @@ class ArtifactProcessingSupervisor:
         capacity = self._fresh_capacity(state)
         if capacity <= 0:
             return
+        # Publish RAM progress only after the transaction commits. Advancing a
+        # page cursor before admit/finish/commit succeeds would skip rolled-back
+        # rows on the next discovery pass of this same persisted generation.
+        scan_after = state.scan_after
+        scan_generation = state.scan_generation
+        scan_in_progress = False
+        next_schedule_at = state.next_schedule_at
+        next_discovery_at = state.next_discovery_at
+        admitted: list[str] = []
         async with self._database.transaction() as connection:
             await self._leases.require_fence(connection, self._require_current_fence())
             persisted = await self._binding_states.load(connection, binding.binding_name, for_update=True)
@@ -689,52 +698,61 @@ class ArtifactProcessingSupervisor:
             if not enabled:
                 if persisted is not None and persisted.scan_in_progress:
                     await self._binding_states.finish_scan(connection, binding.binding_name)
-                state.next_schedule_at = None
-                state.scan_in_progress = False
-                return
-            now = await database_utc_now(connection)
-            if persisted is None or not persisted.scan_in_progress:
-                checkpoint = None if persisted is None else persisted.last_schedule_checkpoint_at
-                due, next_time = _schedule_deadline(binding, checkpoint, now)
-                state.next_schedule_at = asyncio.get_running_loop().time() + max(0, (next_time - now).total_seconds())
-                if due is None:
-                    return
-                persisted = await self._binding_states.start_scan(connection, binding.binding_name, due)
-                state.scan_after = 0
-            state.scan_in_progress = True
-            if state.scan_generation != persisted.scan_generation:
-                state.scan_generation = persisted.scan_generation
-                state.scan_after = 0
-            rows = await self._intents.scan(
-                connection,
-                binding.binding_name,
-                after_sequence=state.scan_after,
-                limit=min(capacity, _DISCOVERY_PAGE_SIZE),
-                dirty_only=True,
-                upper_sequence=persisted.scan_upper_pending_sequence,
-            )
-            admitted: list[str] = []
-            for row in rows:
-                state.scan_after = row.pending_sequence
-                if row.scope_id in state.queued or row.scope_id in state.running or row.scope_id in state.retries:
-                    continue
-                if row.last_auto_scan_generation == persisted.scan_generation:
-                    continue
-                await self._intents.admit(connection, row.scope_id, binding.binding_name, persisted.scan_generation)
-                admitted.append(row.scope_id)
-            complete = len(rows) < min(capacity, _DISCOVERY_PAGE_SIZE)
-            if complete:
-                await self._binding_states.finish_scan(connection, binding.binding_name)
-                state.scan_after = 0
-                state.scan_in_progress = False
+                next_schedule_at = None
+                scan_after = 0
             else:
-                state.next_discovery_at = asyncio.get_running_loop().time() + _DISCOVERY_PAGE_DELAY_SECONDS
+                now = await database_utc_now(connection)
+                if persisted is None or not persisted.scan_in_progress:
+                    checkpoint = None if persisted is None else persisted.last_schedule_checkpoint_at
+                    due, next_time = _schedule_deadline(binding, checkpoint, now)
+                    next_schedule_at = asyncio.get_running_loop().time() + max(0, (next_time - now).total_seconds())
+                    if due is not None:
+                        persisted = await self._binding_states.start_scan(connection, binding.binding_name, due)
+                        scan_after = 0
+                if persisted is not None and persisted.scan_in_progress:
+                    scan_in_progress = True
+                    if scan_generation != persisted.scan_generation:
+                        scan_generation = persisted.scan_generation
+                        scan_after = 0
+                    rows = await self._intents.scan(
+                        connection,
+                        binding.binding_name,
+                        after_sequence=scan_after,
+                        limit=min(capacity, _DISCOVERY_PAGE_SIZE),
+                        dirty_only=True,
+                        upper_sequence=persisted.scan_upper_pending_sequence,
+                    )
+                    for row in rows:
+                        scan_after = row.pending_sequence
+                        if (
+                            row.scope_id in state.queued
+                            or row.scope_id in state.running
+                            or row.scope_id in state.retries
+                        ):
+                            continue
+                        if row.last_auto_scan_generation == persisted.scan_generation:
+                            continue
+                        await self._intents.admit(
+                            connection, row.scope_id, binding.binding_name, persisted.scan_generation
+                        )
+                        admitted.append(row.scope_id)
+                    scan_in_progress = len(rows) == min(capacity, _DISCOVERY_PAGE_SIZE)
+                    if not scan_in_progress:
+                        await self._binding_states.finish_scan(connection, binding.binding_name)
+                        scan_after = 0
+                        # Starting a scan established its checkpoint, so a
+                        # completed page must not restart the interval here.
+                        _, next_time = _schedule_deadline(binding, persisted.last_schedule_checkpoint_at, now)
+                        next_schedule_at = asyncio.get_running_loop().time() + max(0, (next_time - now).total_seconds())
+                    else:
+                        next_discovery_at = asyncio.get_running_loop().time() + _DISCOVERY_PAGE_DELAY_SECONDS
+        state.scan_after = scan_after
+        state.scan_generation = scan_generation
+        state.scan_in_progress = scan_in_progress
+        state.next_schedule_at = next_schedule_at
+        state.next_discovery_at = next_discovery_at
         for scope in admitted:
             self._enqueue(state, scope)
-        if complete:
-            # Starting, rather than finishing, a scan established its checkpoint.
-            _, next_time = _schedule_deadline(binding, persisted.last_schedule_checkpoint_at, now)
-            state.next_schedule_at = asyncio.get_running_loop().time() + max(0, (next_time - now).total_seconds())
 
     @staticmethod
     def _fresh_capacity(state: _FamilyState) -> int:
