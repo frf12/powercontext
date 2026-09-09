@@ -1,0 +1,133 @@
+# Copyright (c) 2026 OceanBase.
+#
+# Licensed under the Apache License, Version 2.0.
+
+"""Agent integration contracts used by the guided configuration wizard."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from powercontext.cli.hosts import FIRST_CLASS_HOSTS
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSpec:
+    """One installable Agent and the configuration names it actually consumes."""
+
+    identifier: str
+    en: str
+    zh: str
+    environment_prefix: str | None
+    server_setting: str | None
+    authorization_setting: str | None
+    capture_setting: str
+    scope_setting: str
+    context_assembly_setting: str
+    setup_server_url: bool = False
+
+    def environment_name(self, setting: str | None) -> str | None:
+        """Return the full environment name for an environment-backed setting."""
+        if self.environment_prefix is None or setting is None:
+            return None
+        return f"{self.environment_prefix}_{setting}"
+
+
+_HOST_METADATA = {
+    "codex": AgentSpec(
+        "codex",
+        "Codex",
+        "Codex",
+        "POWERCONTEXT_CODEX",
+        None,
+        "AUTHORIZATION",
+        "CAPTURE_PROMPTS",
+        "SCOPE_ID",
+        "CONTEXT_ASSEMBLY",
+    ),
+    "claude-code": AgentSpec(
+        "claude-code",
+        "Claude Code",
+        "Claude Code",
+        "POWERCONTEXT_CLAUDE",
+        "SERVER_URL",
+        "AUTHORIZATION",
+        "CAPTURE_PROMPTS",
+        "SCOPE_ID",
+        "CONTEXT_ASSEMBLY",
+        True,
+    ),
+    "dsh": AgentSpec(
+        "dsh",
+        "DeepSeek Harness",
+        "DeepSeek Harness",
+        "POWERCONTEXT_DSH",
+        "BASE_URL",
+        "AUTHORIZATION",
+        "CAPTURE_PROMPTS",
+        "SCOPE_ID",
+        "CONTEXT_ASSEMBLY",
+    ),
+    "openclaw": AgentSpec(
+        "openclaw",
+        "OpenClaw",
+        "OpenClaw",
+        None,
+        "endpoint",
+        None,
+        "autoCapture",
+        "scopeId",
+        "contextAssembly",
+        True,
+    ),
+    "opencode": AgentSpec(
+        "opencode",
+        "OpenCode",
+        "OpenCode",
+        "POWERCONTEXT_OPENCODE",
+        "BASE_URL",
+        "AUTHORIZATION",
+        "CAPTURE_PROMPTS",
+        "SCOPE_ID",
+        "CONTEXT_ASSEMBLY",
+    ),
+    "pi": AgentSpec(
+        "pi",
+        "Pi",
+        "Pi",
+        "POWERCONTEXT_PI",
+        "BASE_URL",
+        "AUTHORIZATION",
+        "CAPTURE_PROMPTS",
+        "SCOPE_ID",
+        "CONTEXT_ASSEMBLY",
+    ),
+    "hermes": AgentSpec(
+        "hermes",
+        "Hermes",
+        "Hermes",
+        "POWERCONTEXT_HERMES",
+        "BASE_URL",
+        "AUTHORIZATION",
+        "CAPTURE_TURNS",
+        "SCOPE_ID",
+        "CONTEXT_ASSEMBLY",
+    ),
+}
+
+WORKBUDDY = AgentSpec(
+    "workbuddy",
+    "WorkBuddy",
+    "WorkBuddy",
+    "POWERCONTEXT_WORKBUDDY",
+    "SERVER_URL",
+    "AUTHORIZATION",
+    "CAPTURE_PROMPTS",
+    "SCOPE_ID",
+    "CONTEXT_ASSEMBLY",
+)
+
+AGENT_SPECS: tuple[AgentSpec, ...] = (*(_HOST_METADATA[host.name] for host in FIRST_CLASS_HOSTS), WORKBUDDY)
+AGENT_SPEC_BY_ID = {spec.identifier: spec for spec in AGENT_SPECS}
+
+__all__ = ["AGENT_SPECS", "AGENT_SPEC_BY_ID", "AgentSpec"]
