@@ -43,6 +43,17 @@ async def _wait(predicate, timeout_seconds=5):
             await asyncio.sleep(0.005)
 
 
+async def _wait_scan_finished(database, binding):
+    # Workers can finish before discovery commits its final empty page.
+    async with asyncio.timeout(5):
+        while True:
+            async with database.transaction() as connection:
+                state = await ArtifactProcessingBindingStateRepository().load(connection, binding)
+            if state is not None and not state.scan_in_progress:
+                return state
+            await asyncio.sleep(0.005)
+
+
 async def _request(database, binding, scope, *, dirty=True, requested=True):
     intents = ArtifactProcessingIntentRepository()
     async with database.transaction() as connection:
@@ -445,8 +456,7 @@ def test_automatic_scan_restart_reuses_frozen_members_without_double_admission(t
                 lease_mode="single-process",
             ) as supervisor:
                 await _wait(lambda: supervisor.family_status["memory"]["completed"] == 5)
-                async with profile.database.transaction() as connection:
-                    after = await ArtifactProcessingBindingStateRepository().load(connection, "memory-binding")
+                after = await _wait_scan_finished(profile.database, "memory-binding")
                 assert after is not None
                 assert after.scan_generation == before.scan_generation and not after.scan_in_progress
                 assert after.last_schedule_checkpoint_at == before.last_schedule_checkpoint_at

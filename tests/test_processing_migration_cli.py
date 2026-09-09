@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
@@ -47,7 +48,7 @@ def test_processing_maintenance_plan_apply_verify_require_maintenance_and_reuse_
     assert json.loads(plan.output)["required"] is True
     denied = runner.invoke(cli, [*command, "--action", "apply"])
     assert denied.exit_code == 2
-    assert "maintenance-confirmed" in denied.output
+    assert "maintenance-confirmed" in unstyle(denied.output)
     applied = runner.invoke(cli, [*command, "--action", "apply", "--maintenance-confirmed", "--batch-size", "1"])
     assert applied.exit_code == 0, applied.output
     assert json.loads(applied.output)["ready"] is True

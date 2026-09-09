@@ -172,7 +172,7 @@ def test_automatic_page_rollback_retains_frontier_and_resumes_same_scan(tmp_path
 
 
 def test_failed_admission_recovers_in_running_supervisor_without_waiting_for_next_interval(tmp_path, monkeypatch):
-    from tests.builtin.runtime.test_processing_scheduler import _wait
+    from tests.builtin.runtime.test_processing_scheduler import _wait, _wait_scan_finished
 
     monkeypatch.setattr(processing, "_DISCOVERY_PAGE_SIZE", 2)
 
@@ -203,8 +203,7 @@ def test_failed_admission_recovers_in_running_supervisor_without_waiting_for_nex
             ) as supervisor:
                 await _wait(lambda: supervisor.family_status["memory"]["completed"] == 5)
                 assert [work.scope_id for work in launcher.assignments] == ["a", "b", "c", "d", "e"]
-                async with profile.database.transaction() as connection:
-                    completed = await states.load(connection, "memory-binding")
+                completed = await _wait_scan_finished(profile.database, "memory-binding")
                 assert completed is not None and not completed.scan_in_progress
                 assert completed.scan_generation == started.scan_generation
                 assert completed.last_schedule_checkpoint_at == started.last_schedule_checkpoint_at
