@@ -16,7 +16,8 @@ In an interactive terminal:
 - short finite choices use an `InquirerPy` selection list with arrow-key navigation and Enter to accept;
 - searchable provider lists use `InquirerPy` fuzzy selection, retaining the earlier `(type to search)` behavior;
 - yes/no decisions use `InquirerPy` confirmation prompts;
-- ordinary values use `InquirerPy` text prompts with visible defaults;
+- ordinary values show the default in the prompt but keep the input buffer empty, so Enter accepts the default and
+  typing replaces it rather than appending to it;
 - credentials use `InquirerPy` secret prompts and never display their value or retained default;
 - integer inputs use text prompts with the current localized validation and retry messages;
 - Ctrl-C or EOF aborts without writing any output file.
@@ -27,6 +28,34 @@ language fallback remain unchanged. All questions and choices use the selected l
 The existing flow remains storage, deployment scenario, memory capabilities, Dashboard/access, required model
 connections, processing schedules, and one-at-a-time Agent configuration. The wizard still previews changes before
 the final save.
+
+## Agent integration configuration
+
+The Agent step presents every installable Agent integration, not every directory under `integrations/`. Its catalog is
+Codex, Claude Code, DeepSeek Harness, OpenClaw, OpenCode, Pi, Hermes, and WorkBuddy. LangChain, LangGraph, Pydantic AI,
+OpenDAL, and other library or infrastructure integrations are outside this step because they do not share the Agent
+plugin installation contract.
+
+The wizard must reuse a shared catalog or shared metadata derived from the existing setup commands instead of keeping
+an independent Codex/Claude-only list. Each catalog entry describes its display label, setup command, environment
+prefix, Source-capture setting, Server URL/authentication mechanism, and Scope mechanism. Agent-specific differences
+remain explicit: for example, OpenClaw stores an explicit Scope in plugin configuration rather than pretending that it
+supports another host's environment variable.
+
+Configuration is one Agent at a time. After one Agent is configured, the wizard returns directly to the menu with that
+Agent removed. It asks no intermediate "configure another" confirmation. The user advances only by choosing the
+explicit Finish item or after configuring the last available Agent.
+
+For the standard guided flow, selecting an Agent enables that integration's ordinary prompt or turn capture whenever
+the integration supports it. The wizard explains that capture creates Source evidence and does not capture unsupported
+content such as Codex or Claude final replies. It does not ask a redundant yes/no question. In advanced mode, the user
+may disable capture; when automatic Memory or Topic Memory is enabled, the preview warns that ordinary conversations
+from that Agent will not drive those processors. Explicit Memory writes and workflow-specific Sources such as Work
+Contracts and Handoff boundaries remain available and are not misrepresented as substitutes for ordinary prompt
+capture.
+
+The generated client environment and next-steps document use the selected integration's real configuration contract.
+The wizard continues to generate files and commands only; it does not install plugins or start an Agent.
 
 ## Interaction adapter
 
@@ -79,3 +108,8 @@ selection, confirmation, hidden input, final preview, and cancel-without-write b
 4. Redirected input and the existing automated tests continue to work without TUI escape sequences.
 5. All generated configuration values and validation results are identical for equivalent TUI and text-backend answers.
 6. Cancelling at any point writes no environment, client, backup, or next-step file.
+7. All eight installable Agent integrations are selectable, and a configured Agent disappears before the menu repeats.
+8. Standard full-memory setup enables supported Source capture without asking; advanced opt-out produces a clear
+   automatic-memory coverage warning.
+9. Generated fields and installation steps follow each integration's actual contract instead of synthesizing
+   Codex/Claude-shaped variables for other hosts.
