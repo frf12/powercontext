@@ -50,7 +50,7 @@ PUT /v1/scopes/S_GROUP/profile-policy
 export POWERCONTEXT_SERVER_RUNTIME_PROFILE_SCHEDULE_ENABLED=true
 export POWERCONTEXT_SERVER_RUNTIME_PROFILE_CRON="0 2 * * *"
 export POWERCONTEXT_SERVER_RUNTIME_PROFILE_TIMEZONE="Asia/Shanghai"
-export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_CONCURRENCY=4
+export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_WORKERS=4
 export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_SOURCES_PER_WINDOW=32
 ```
 
@@ -62,7 +62,7 @@ export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_SOURCES_PER_WINDOW=32
 返回 updated、noop、review_pending、disabled 或 conflict。模型请求遵守现有 generation timeout 和请求上限。
 失败不消费窗口；lineage_only Source 被过滤；正文没变化只推进 Cursor，不新增自动 Revision。
 
-每窗口最多 32 条原始 journal 记录；引用旧画像时最多 31 条。每 Scope 每轮最多 100 窗口。
+每窗口最多 32 条原始 journal 记录；引用旧画像时最多 31 条。每次准入的 Scope 调用处理一个有限窗口，剩余普通工作保留 dirty，等待后续 cron 准入。
 多实例可能重复调用模型，但 Policy/Cursor/Head 校验只允许一个结果提交。没有新 Source 就不重新生成。
 
 ## 审核、修改与回退

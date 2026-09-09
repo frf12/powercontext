@@ -126,7 +126,7 @@ evidence. Scheduled processing handles new Sources within the configured interva
 
 ## Data and restart behavior
 
-With no database override, SQLite stores `powercontext.db` and `scheduler.db` under the user data directory:
+With no database override, SQLite stores `powercontext.db` under the user data directory:
 
 - Linux: `$XDG_DATA_HOME/powercontext`, or `~/.local/share/powercontext`;
 - macOS: `~/Library/Application Support/powercontext`.
