@@ -218,6 +218,9 @@ def test_existing_environment_can_be_reused_without_retyping_models(tmp_path: Pa
     assert "CUSTOM_FLAG=untouched" in output.read_text()
     assert "# Keep my comments" in output.read_text()
     assert "Model service" not in result.output
+    assert "Keep other existing settings and review" in result.output
+    assert "Edit selected modules" in result.output
+    assert "Confirm every setting" in result.output
     assert len(list(tmp_path.glob("server.env.bak-*"))) == 1
 
 
@@ -373,6 +376,51 @@ def test_generation_only_existing_configuration_can_edit_model_connection(tmp_pa
     )
     assert result.exit_code == 0, result.output
     assert "Keep the existing Generation configuration?" in result.output
+
+
+def test_capability_edit_does_not_unconditionally_reopen_models_or_processing(
+    monkeypatch,
+) -> None:
+    state, _ = _agent_state("capabilities", "base", "done")
+    calls: list[str] = []
+    monkeypatch.setattr(config_wizard, "_models", lambda state, required_features=None: calls.append("models"))
+    monkeypatch.setattr(config_wizard, "_processing", lambda state: calls.append("processing"))
+
+    config_wizard._edit_modules(state)
+
+    assert calls == []
+
+
+def test_capability_edit_collects_only_new_missing_model_roles(monkeypatch) -> None:
+    state, _ = _agent_state("capabilities", "done")
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(config_wizard, "_capabilities", lambda state: state.features.add("vector"))
+    monkeypatch.setattr(
+        config_wizard,
+        "_models",
+        lambda state, required_features=None: calls.append(required_features),
+    )
+
+    config_wizard._edit_modules(state)
+
+    assert calls == [{"vector"}]
+
+
+def test_capability_edit_does_not_reask_for_configured_generation(monkeypatch) -> None:
+    values = {"POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL": "openai-chat:qwen-plus"}
+    ui = AgentAnswers("capabilities", "done")
+    state = Wizard(ui, dict(values), dict(values))
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(config_wizard, "_capabilities", lambda state: state.features.add("topic-memory"))
+    monkeypatch.setattr(
+        config_wizard,
+        "_models",
+        lambda state, required_features=None: calls.append(required_features),
+    )
+
+    config_wizard._edit_modules(state)
+
+    assert calls == []
 
 
 def test_processing_choice_says_selected_automatic_capabilities_are_already_enabled(tmp_path: Path) -> None:

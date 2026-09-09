@@ -112,9 +112,13 @@ def run_wizard(output: Path, *, language: str | None = None, advanced: bool = Fa
                     "Existing configuration: how would you like to continue?",
                     "发现已有配置：接下来怎么做？",
                     [
-                        ("reuse", "Keep existing settings", "沿用已有设置"),
-                        ("edit", "Edit selected modules", "修改部分模块"),
-                        ("configure", "Walk through the configuration", "重新逐项配置（保留原值作为默认）"),
+                        ("reuse", "Keep other existing settings and review", "保留其余已有配置，直接检查并保存"),
+                        ("edit", "Edit selected modules", "只修改指定模块"),
+                        (
+                            "configure",
+                            "Confirm every setting (existing values are defaults)",
+                            "逐项重新确认（现有值作为默认）",
+                        ),
                     ],
                     default="reuse",
                 )
@@ -518,18 +522,35 @@ def _infer_features(state: Wizard) -> None:
         state.features.add("skill")
 
 
-def _models(state: Wizard) -> None:
-    generation = bool(state.features & {"memory", "topic-memory", "experience", "profile", "skill"})
-    if generation or "vector" in state.features or "rerank" in state.features:
+def _models(state: Wizard, required_features: set[str] | None = None) -> None:
+    selected = state.features if required_features is None else required_features
+    generation = bool(selected & {"memory", "topic-memory", "experience", "profile", "skill"})
+    embedding = "vector" in selected
+    rerank = "rerank" in selected
+    if generation or embedding or rerank:
         state.patch(
             collect_models(
                 state.ui,
                 state.values,
                 generation=generation,
-                embedding="vector" in state.features,
-                rerank="rerank" in state.features,
+                embedding=embedding,
+                rerank=rerank,
             )
         )
+
+
+def _missing_model_features(state: Wizard, newly_enabled: set[str]) -> set[str]:
+    """Return only newly enabled features whose model connection is incomplete."""
+    missing: set[str] = set()
+    generation_features = newly_enabled & {"memory", "topic-memory", "experience", "profile", "skill"}
+    if generation_features and not state.values.get(f"{INFERENCE}GENERATION_MODEL"):
+        missing.update(generation_features)
+    embedding_fields = ("EMBEDDING_MODEL", "EMBEDDING_PROFILE_ID", "EMBEDDING_DIMENSION")
+    if "vector" in newly_enabled and not all(state.values.get(f"{INFERENCE}{suffix}") for suffix in embedding_fields):
+        missing.add("vector")
+    if "rerank" in newly_enabled:
+        missing.add("rerank")
+    return missing
 
 
 def _processing(state: Wizard) -> None:
@@ -798,11 +819,11 @@ def _edit_modules(state: Wizard) -> None:
             "Choose a module to edit",
             "选择要修改的模块",
             [
-                ("network", "Dashboard and network", "Dashboard 与网络"),
-                ("capabilities", "Memory capabilities and models", "记忆能力及模型"),
+                ("network", "Dashboard and access", "Dashboard 与访问"),
+                ("capabilities", "Memory capabilities", "记忆能力"),
                 ("models", "Model connections", "模型连接"),
-                ("processing", "Background schedules", "后台调度"),
-                ("agent", "Agent connection", "Agent 连接"),
+                ("processing", "Background processing schedules", "后台处理周期"),
+                ("agent", "Agent connections", "Agent 连接"),
                 ("advanced", "Advanced limits and logging", "高级限制与日志"),
                 ("done", "Review and save", "查看并保存"),
             ],
@@ -814,9 +835,10 @@ def _edit_modules(state: Wizard) -> None:
             _scenario(state)
             _network(state)
         elif module == "capabilities":
+            old_features = set(state.features)
             _capabilities(state)
-            _models(state)
-            _processing(state)
+            if missing := _missing_model_features(state, state.features - old_features):
+                _models(state, missing)
         elif module == "models":
             _models(state)
         elif module == "processing":
