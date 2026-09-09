@@ -167,6 +167,10 @@ class BuiltinConfigurationError(RuntimeError):
                 "Background processing requires a reconstructible Authorization Provider with transactional ownership and audit"
             ),
             "artifact-processing-child-resources": "Background processing requires child-reconstructible inference resources",
+            "artifact-processing-source-registry": (
+                "Built-in background workers require the built-in Source definitions; "
+                "provide custom processing bindings or disable built-in background families for a custom Source registry"
+            ),
             "artifact-processing-families": "Declared background families must have one matching registration and reconstructible models",
             "database": "unsupported built-in database",
         }
@@ -387,6 +391,7 @@ async def open_builtin_runtime(
                 "profile": profile_generator,
             },
             worker_security=worker_security,
+            source_registry=configured_source_registry,
         )
         log_safely(
             logger,
@@ -493,6 +498,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
     injected_token_estimator: TokenEstimator | None = None,
     injected_pipelines: Mapping[str, object | None] | None = None,
     worker_security: dict[str, Any] | None = None,
+    source_registry: SourceDefinitionRegistry = BUILTIN_SOURCE_REGISTRY,
 ) -> tuple[ArtifactProcessingBinding, ...]:
     configured = list(bindings)
     _validate_processing_registrations(configured)
@@ -523,6 +529,17 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
     for family in capabilities:
         if family in registered:
             continue
+        definitions = source_registry.definitions
+        builtin_definitions = BUILTIN_SOURCE_REGISTRY.definitions
+        if (
+            type(source_registry) is not SourceDefinitionRegistry
+            or len(definitions) != len(builtin_definitions)
+            or any(
+                definition is not expected
+                for definition, expected in zip(definitions, builtin_definitions, strict=True)
+            )
+        ):
+            raise BuiltinConfigurationError("artifact-processing-source-registry")
         if config.inference.generation_model is None:
             raise BuiltinConfigurationError("artifact-processing-families")
         if (

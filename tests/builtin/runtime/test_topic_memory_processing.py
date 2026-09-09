@@ -2401,3 +2401,73 @@ def test_composition_registers_complete_binding_only_with_generation_model(tmp_p
                 _artifact_processing_bindings(invalid_budget, contexts, ())
 
     asyncio.run(scenario())
+
+
+def _run_topic_worker_without_server_imports(spec, assignment):
+    # Install inside the actual child; blocking imports in the parent does not
+    # constrain a spawned interpreter. Intercept cached modules as well.
+    import builtins
+
+    original_import = builtins.__import__
+
+    def reject_server_import(name, *args, **kwargs):
+        if name == "powercontext.server" or name.startswith("powercontext.server."):
+            raise ModuleNotFoundError("Server dependencies are unavailable in the builtin SDK", name=name)  # noqa: TRY003
+        return original_import(name, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(builtins, "__import__", reject_server_import)
+        return run_topic_memory_worker(spec, assignment)
+
+
+def test_topic_worker_without_server_dependencies_acknowledges_and_replays_in_spawn_child(tmp_path) -> None:
+    async def scenario() -> None:
+        config = BuiltinConfig(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'builtin-worker.db'}"),
+            inference=InferenceConfig(generation_model="test"),
+        )
+        async with open_builtin_contexts(config) as contexts:
+            scope = await contexts.get("scope-a")
+            intents = ArtifactProcessingIntentRepository()
+            async with contexts.database.transaction() as connection:
+                term = await contexts.repositories.processing_leases.start_single_process_term(connection, "holder")
+                accepted = await intents.request(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+            assignment = ScopeAssignment(
+                binding_name=TOPIC_MEMORY_SOURCE_WINDOW_BINDING,
+                scope_id="scope-a",
+                artifact_family="topic-memory",
+                claimed_request_generation=accepted.requested_generation,
+                fence=term.fence("single-process"),
+                worker_id="builtin-worker",
+            )
+            launcher = SpawnArtifactProcessingWorkerLauncher(
+                partial(_run_topic_worker_without_server_imports, TopicMemoryWorkerSpec(config=config))
+            )
+
+            async def invoke() -> None:
+                handle = await launcher.start(assignment)
+                try:
+                    completion = await asyncio.wait_for(handle.wait(), timeout=30)
+                finally:
+                    await handle.terminate()
+                assert completion.outcome is ArtifactProcessingWorkerOutcome.SUCCEEDED
+
+            await invoke()
+            async with contexts.database.transaction() as connection:
+                acknowledged = await intents.load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                assert acknowledged is not None
+                assert acknowledged.requested_generation == acknowledged.handled_generation == 1
+                assert acknowledged.dirty_generation == acknowledged.clean_generation == 0
+
+            # A replay of confirmed G1 must not consume newly captured input.
+            await scope.sources.capture(ContentCapture(source_id="later", content="Keep for the next request"))
+            await invoke()
+            async with contexts.database.transaction() as connection:
+                replayed = await intents.load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                cursor = await SourceCursorRepository().load(connection, "scope-a", TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
+                assert replayed is not None
+                assert replayed.requested_generation == replayed.handled_generation == 1
+                assert replayed.dirty_generation > replayed.clean_generation
+                assert cursor is None
+
+    asyncio.run(scenario())

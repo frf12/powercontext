@@ -168,6 +168,12 @@ be reconstructed in a child process, even when automatic schedules are disabled:
 The built-in provider supports this reconstruction. Injected providers and model objects remain usable by synchronous
 SDK/Server operations with background capabilities disabled (`ARTIFACT_PROCESSING_FAMILIES=[]`).
 
+SDK workers without a Server identity do not require Server authorization dependencies. Built-in background workers
+use the built-in Source definitions. A custom Source registry requires custom processing bindings for every enabled
+family, or disabling built-in background families with `ARTIFACT_PROCESSING_FAMILIES=[]`; otherwise startup fails
+before accepting work. Turning off schedules alone is insufficient because explicit requests still start workers.
+Custom Source registries remain available to synchronous SDK contexts and API-only composition.
+
 The authenticated `/metrics` endpoint exposes `powercontext_server_artifact_processing_*` observations with only a `family`
 label: Worker capacity, ready/retry queues, unacknowledged Scopes, discovery and invocation duration, completions,
 failures, and timeouts. Unacknowledged counts reflect the latest discovery; counters reset with the Supervisor instance.

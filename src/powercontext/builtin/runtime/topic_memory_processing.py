@@ -1641,9 +1641,15 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
             )
 
         from powercontext.builtin.runtime.topic_memory_scope import TopicMemoryScopeProcessor
-        from powercontext.server.processing_security import open_worker_security
 
-        security = await resources.enter_async_context(open_worker_security(spec.worker_security, contexts.database))
+        security = None
+        if spec.worker_security is not None:
+            # Runtime-only SDK workers do not require the optional Server adapter.
+            from powercontext.server.processing_security import open_worker_security
+
+            security = await resources.enter_async_context(
+                open_worker_security(spec.worker_security, contexts.database)
+            )
         if security is not None:
             await security.authorize_scope(scope_id)
         commit_authorizer = None if security is None else security.topic_commit

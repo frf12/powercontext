@@ -155,6 +155,11 @@ enforced 部署启用后台能力时，若身份或授权 provider 无法在子�
 因此不能免除此检查。内置 provider 支持重建；注入的 provider 和模型对象仍可用于关闭后台能力
 （`ARTIFACT_PROCESSING_FAMILIES=[]`）的同步 SDK/Server 操作。
 
+未配置 Server 身份的 SDK Worker 不需要 Server 授权依赖。内置后台 Worker 使用内置 Source Definition。
+自定义 Source Registry 须为每个启用的 Family 提供自定义 processing binding，或通过
+`ARTIFACT_PROCESSING_FAMILIES=[]` 关闭内置后台 Family；否则启动在接受工作前失败。
+仅关闭 schedule 不足以满足要求，因为显式请求仍会启动 Worker。同步 SDK Context 和纯 API 组合仍支持自定义 Source Registry。
+
 受鉴权保护的 `/metrics` 暴露 `powercontext_server_artifact_processing_*` 指标，只使用 `family` 标签，涵盖 Worker 额度、
 ready/retry 队列、未确认 Scope 数、发现与调用耗时，以及完成、失败、超时次数。未确认数反映最近一次发现结果；计数器随
 Supervisor 实例重建而重置。
