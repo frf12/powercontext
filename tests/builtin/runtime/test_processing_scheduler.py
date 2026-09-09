@@ -306,8 +306,7 @@ def test_automatic_scan_is_bounded_and_excludes_new_registration_until_next_sche
                 supervisor.wake("memory-binding")
                 gate.set()
                 await _wait(lambda: supervisor.family_status["memory"]["completed"] == 5)
-                async with profile.database.transaction() as connection:
-                    state = await ArtifactProcessingBindingStateRepository().load(connection, "memory-binding")
+                state = await _wait_scan_finished(profile.database, "memory-binding")
                 assert state is not None
                 assert not state.scan_in_progress and state.last_schedule_checkpoint_at == initial_checkpoint
                 assert {work.scope_id for work in launcher.assignments} == {"a", "b", "c", "d", "e"}
