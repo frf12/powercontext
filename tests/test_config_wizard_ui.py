@@ -270,23 +270,43 @@ def test_interactive_choice_uses_localized_select(fake_inquirer) -> None:
 
 
 def test_interactive_search_uses_fuzzy_with_localized_instruction(fake_inquirer) -> None:
-    fake_inquirer.answers = ["openai"]
+    fake_inquirer.answers = ["bailian"]
     ui = wizard_ui.WizardUI("zh", interactive=True)
 
-    assert ui.search("Provider", "服务商", [("openai", "OpenAI", "OpenAI")], "openai") == "openai"
+    choices = [("openai", "OpenAI", "OpenAI"), ("bailian", "Bailian", "阿里云百炼")]
+    assert ui.search("Provider", "服务商", choices, "bailian") == "bailian"
     kind, options = fake_inquirer.calls[0]
     assert kind == "fuzzy"
     assert options["message"] == "服务商"
-    assert options["default"] == "openai"
+    assert options["choices"] == [
+        {"name": "阿里云百炼", "value": "bailian"},
+        {"name": "OpenAI", "value": "openai"},
+    ]
+    assert "default" not in options
     assert options["instruction"] == "（输入可搜索）"  # noqa: RUF001
 
 
-def test_interactive_text_uses_localized_message_and_visible_default(fake_inquirer) -> None:
+def test_interactive_search_retries_when_no_choice_matches(fake_inquirer) -> None:
+    fake_inquirer.answers = [None, "bailian"]
+    ui = wizard_ui.WizardUI("en", interactive=True)
+
+    assert ui.search("Provider", "服务商", [("bailian", "Bailian", "百炼")], "bailian") == "bailian"
+    assert [kind for kind, _ in fake_inquirer.calls] == ["fuzzy", "fuzzy"]
+
+
+def test_interactive_text_shows_default_as_hint_without_prefilling_input(fake_inquirer) -> None:
     fake_inquirer.answers = ["9000"]
     ui = wizard_ui.WizardUI("zh", interactive=True)
 
     assert ui.ask("Port", "端口", default="8000") == "9000"
-    assert fake_inquirer.calls == [("text", {"message": "端口", "default": "8000"})]
+    assert fake_inquirer.calls == [("text", {"message": "端口 [8000]"})]
+
+
+def test_interactive_text_uses_default_when_input_is_empty(fake_inquirer) -> None:
+    fake_inquirer.answers = [""]
+    ui = wizard_ui.WizardUI("en", interactive=True)
+
+    assert ui.ask("Port", "端口", default="8000") == "8000"
 
 
 def test_interactive_secret_preserves_empty_retained_value_without_exposing_it(fake_inquirer) -> None:

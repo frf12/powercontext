@@ -34,6 +34,8 @@ class Answers(WizardUI):
         super().__init__("en")
         self.answers = iter(answers)
         self.prompts: list[str] = []
+        self.choose_prompts: list[str] = []
+        self.search_prompts: list[str] = []
 
     def text(self, en: str, zh: str) -> str:
         return en
@@ -45,6 +47,14 @@ class Answers(WizardUI):
 
     def choose(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
         self.prompts.append(en)
+        self.choose_prompts.append(en)
+        answer = next(self.answers)
+        assert isinstance(answer, str) and answer in {choice[0] for choice in choices}
+        return answer
+
+    def search(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
+        self.prompts.append(en)
+        self.search_prompts.append(en)
         answer = next(self.answers)
         assert isinstance(answer, str) and answer in {choice[0] for choice in choices}
         return answer
@@ -83,6 +93,15 @@ def test_generation_only_does_not_ask_for_embeddings_or_modify_shared_provider_v
     assert all("EMBEDDING" not in key and not key.startswith("OPENAI_") for key in updates)
     assert all("Embedding" not in prompt and secret not in prompt for prompt in ui.prompts)
     assert values["OPENAI_API_KEY"] == "other-workload-key"
+
+
+def test_provider_selection_uses_searchable_menu() -> None:
+    ui = Answers("bailian", "", "qwen-plus", "key")
+
+    collect_models(ui, {}, generation=True, embedding=False)
+
+    assert ui.search_prompts == ["Generation service"]
+    assert "Generation service" not in ui.choose_prompts
 
 
 def test_embedding_only_asks_for_a_profile_without_creating_a_generation_model() -> None:

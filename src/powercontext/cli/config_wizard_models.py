@@ -178,7 +178,7 @@ def _collect_role(
 def _new_connection(ui: WizardUI, role: str) -> tuple[_Connection, str]:
     en, zh = _LABELS[role]
     providers = [provider for provider in _PROVIDERS if role != "EMBEDDING" or provider.identifier != "anthropic"]
-    identifier = ui.choose(
+    identifier = ui.search(
         f"{en} service",
         f"{zh}服务商",
         [(provider.identifier, provider.en, provider.zh) for provider in providers],

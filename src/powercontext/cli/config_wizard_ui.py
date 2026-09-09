@@ -133,17 +133,19 @@ class WizardUI:
             raise ValueError(message)
         inquirer = self._inquirer()
         if inquirer is not None:
-            return str(
-                inquirer.fuzzy(
+            ordered_choices = sorted(choices, key=lambda choice: choice[0] != default)
+            while True:
+                selected = inquirer.fuzzy(
                     message=self.text(en, zh),
                     choices=[
                         {"name": self.text(en_label, zh_label), "value": identifier}
-                        for identifier, en_label, zh_label in choices
+                        for identifier, en_label, zh_label in ordered_choices
                     ],
-                    default=default,
                     instruction=self.text("(type to search)", "（输入可搜索）"),  # noqa: RUF001
                 ).execute()
-            )
+                if selected in identifiers:
+                    return str(selected)
+                self.say("Choose one of the matching options.", "请从匹配的选项中选择一项。")
         return self._text_choose(en, zh, choices, default)
 
     def _inquirer(self) -> Any | None:
@@ -194,7 +196,11 @@ class WizardUI:
                 entered = str(inquirer.secret(message=self.text(en, zh)).execute())
                 value = entered or default
             else:
-                value = str(inquirer.text(message=self.text(en, zh), default=default).execute())
+                message = self.text(en, zh)
+                if default:
+                    message += f" [{default}]"
+                entered = str(inquirer.text(message=message).execute()).strip()
+                value = entered or default
             if required and not value.strip():
                 self.say("This value cannot be empty.", "此项不能为空。")
                 continue
