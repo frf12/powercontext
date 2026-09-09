@@ -15,11 +15,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import shlex
-import subprocess
-import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -66,73 +62,15 @@ def test_hook_uses_exec_form_and_does_not_capture_stop() -> None:
     assert hook["args"] == ["${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py"]
 
 
-def test_mcp_uses_claude_top_level_server_map_and_optional_header_helper() -> None:
+def test_mcp_uses_claude_top_level_server_map_and_environment_header() -> None:
     configuration = json.loads((PLUGIN_ROOT / ".mcp.json").read_text())
 
     assert set(configuration) == {"powercontext"}
     assert configuration["powercontext"] == {
         "type": "http",
         "url": "${user_config.server_url}/mcp",
-        "headersHelper": (
-            "python3 -c 'import json, os; value = "
-            'os.environ.get("POWERCONTEXT_CLAUDE_AUTHORIZATION"); '
-            'print(json.dumps({"Authorization": value} if value else {}))\''
-        ),
+        "headers": {"Authorization": "${POWERCONTEXT_CLAUDE_AUTHORIZATION:-}"},
     }
-
-
-def test_mcp_header_helper_command_does_not_depend_on_plugin_root() -> None:
-    configuration = json.loads((PLUGIN_ROOT / ".mcp.json").read_text())
-    helper_command = configuration["powercontext"]["headersHelper"]
-    environment = {
-        **os.environ,
-        "POWERCONTEXT_CLAUDE_AUTHORIZATION": "Bearer test-token",
-    }
-
-    completed = subprocess.run(
-        shlex.split(helper_command),
-        cwd=REPOSITORY_ROOT,
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-
-    assert json.loads(completed.stdout) == {"Authorization": "Bearer test-token"}
-    assert "${CLAUDE_PLUGIN_ROOT}" not in helper_command
-
-
-def test_header_helper_omits_authorization_when_unset() -> None:
-    environment = dict(os.environ)
-    environment.pop("POWERCONTEXT_CLAUDE_AUTHORIZATION", None)
-
-    completed = subprocess.run(
-        [sys.executable, str(PLUGIN_ROOT / "scripts" / "mcp_headers.py")],
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-
-    assert json.loads(completed.stdout) == {}
-
-
-def test_header_helper_emits_configured_authorization_without_logging_it() -> None:
-    environment = {
-        **os.environ,
-        "POWERCONTEXT_CLAUDE_AUTHORIZATION": "Bearer test-token",
-    }
-
-    completed = subprocess.run(
-        [sys.executable, str(PLUGIN_ROOT / "scripts" / "mcp_headers.py")],
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-
-    assert json.loads(completed.stdout) == {"Authorization": "Bearer test-token"}
-    assert completed.stderr == ""
 
 
 def test_scope_resolver_and_workspace_binding_use_the_server(
