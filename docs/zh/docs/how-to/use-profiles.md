@@ -54,6 +54,10 @@ export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_WORKERS=4
 export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_SOURCES_PER_WINDOW=32
 ```
 
+cron 自动准入只处理 Policy 中 `generation_enabled=true` 的 Scope。没有 Policy 或 Policy 已禁用时，
+保留原有 Source，不产生自动请求，也不启动 Worker；启用 Policy 后，原有输入可在后续 cron 处理。
+已经接受的显式请求仍遵守原有授权和完成语义。
+
 启用权限的后台任务使用已有 `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` 配置；
 该服务 Principal 必须获得相关 Scope 和已有 Artifact 的写权限。静态本地管理员部署可复用原有后台身份。
 

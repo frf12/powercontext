@@ -24,7 +24,7 @@ import sys
 import time
 import traceback as traceback_module
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -39,6 +39,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncConnection
 from typing_extensions import override
 
 if sys.platform == "win32":
@@ -114,6 +115,9 @@ class ArtifactProcessingBinding:
     timezone: str = "Asia/Shanghai"
     config_prefix: str | None = None
     pending_provider: ArtifactProcessingPendingProvider | None = None
+    # Only automatic admission is filtered; already accepted requests retain
+    # their own Worker authorization and domain completion semantics.
+    automatic_scope_filter: Callable[[AsyncConnection, tuple[str, ...]], Awaitable[frozenset[str]]] | None = None
 
     def __post_init__(self) -> None:
         if not self.binding_name or self.binding_name != self.binding_name.strip():
@@ -722,15 +726,22 @@ class ArtifactProcessingSupervisor:
                         dirty_only=True,
                         upper_sequence=persisted.scan_upper_pending_sequence,
                     )
+                    candidates = tuple(
+                        row.scope_id
+                        for row in rows
+                        if row.scope_id not in state.queued
+                        and row.scope_id not in state.running
+                        and row.scope_id not in state.retries
+                        and row.last_auto_scan_generation != persisted.scan_generation
+                    )
+                    eligible = frozenset(candidates)
+                    if candidates and binding.automatic_scope_filter is not None:
+                        eligible &= await binding.automatic_scope_filter(connection, candidates)
                     for row in rows:
+                        # A full page of ineligible rows still advances discovery;
+                        # keep their dirty Source and request counters untouched.
                         scan_after = row.pending_sequence
-                        if (
-                            row.scope_id in state.queued
-                            or row.scope_id in state.running
-                            or row.scope_id in state.retries
-                        ):
-                            continue
-                        if row.last_auto_scan_generation == persisted.scan_generation:
+                        if row.scope_id not in eligible:
                             continue
                         await self._intents.admit(
                             connection, row.scope_id, binding.binding_name, persisted.scan_generation

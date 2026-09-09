@@ -57,6 +57,11 @@ export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_WORKERS=4
 export POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_SOURCES_PER_WINDOW=32
 ```
 
+Automatic cron admission requires a Scope policy with `generation_enabled=true`. Scopes with no policy or a
+disabled policy retain their Sources without creating automatic requests or starting Workers. Enabling the policy
+makes that existing input eligible for a later cron fire. Already accepted explicit requests retain their authorization
+and completion semantics.
+
 Enforced deployments use the existing `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` service identity,
 which must have contribution access and write access to existing Profile Artifacts. Local static-administrator
 deployments can reuse their existing background identity.

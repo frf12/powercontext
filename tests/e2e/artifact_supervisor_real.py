@@ -48,6 +48,7 @@ from powercontext.builtin.persistence.tables import (
     ARTIFACT_CANDIDATE_HEADS_TABLE,
     ARTIFACT_CANDIDATE_VERSIONS_TABLE,
     ARTIFACT_HEADS_TABLE,
+    ARTIFACT_PROCESSING_BINDING_STATES_TABLE,
     BUILTIN_TABLES,
     MEMORY_ENTRY_VERSIONS_TABLE,
     MODEL_USAGE_DAILY_TABLE,
@@ -69,6 +70,10 @@ from powercontext.server.processing_security import WorkerSecuritySpec
 from powercontext.server.settings import ServerSettings
 
 BINDINGS = {**FAMILY_BINDINGS, "topic-memory": TOPIC_MEMORY_SOURCE_WINDOW_BINDING}
+PROFILE_CONTROL_TITLES = {
+    "absent": "Supervisor Profile absent-policy control",
+    "disabled": "Supervisor Profile disabled-policy control",
+}
 CUSTOM_PROMPT_MARKERS: dict[PromptKey, str] = {
     "memory.extract": "ScopePromptMemoryAccepted",
     "experience.incubate": "ScopePromptExperienceAccepted",
@@ -137,6 +142,14 @@ async def _case_state(connection, database, scope: str) -> dict[str, Any]:
     ]
     return {
         "backend_version": version,
+        "profile_scan_generation": int(
+            await connection.scalar(
+                select(ARTIFACT_PROCESSING_BINDING_STATES_TABLE.c.scan_generation).where(
+                    ARTIFACT_PROCESSING_BINDING_STATES_TABLE.c.binding_name == PROFILE_SOURCE_WINDOW_BINDING
+                )
+            )
+            or 0
+        ),
         "model_requests": {f"{row[0]}/{row[1]}": int(row[2]) for row in rows},
         "source_journal_position": int(
             await connection.scalar(
@@ -152,7 +165,7 @@ async def _case_state(connection, database, scope: str) -> dict[str, Any]:
 
 
 async def _prepare_scope(
-    database, config: BuiltinConfig, *, resume: bool, custom_prompts: bool
+    database, config: BuiltinConfig, *, resume: bool, custom_prompts: bool, automatic_profile: bool
 ) -> tuple[str, dict[str, Any]]:
     async with _database(database) as profile, profile.database.transaction() as connection:
         count = await connection.scalar(select(func.count()).select_from(SCOPES_TABLE))
@@ -178,7 +191,10 @@ async def _prepare_scope(
     # Compose the public Runtime so Prompt capabilities follow the same real
     # adapters as production. Automatic admission is disabled in this fixture;
     # accepted work is published only after this setup Runtime has closed.
-    async with open_builtin_runtime(config) as setup_runtime:
+    setup_config = config.model_copy(
+        update={"runtime": config.runtime.model_copy(update={"profile_schedule_enabled": False})}
+    )
+    async with open_builtin_runtime(setup_config) as setup_runtime:
         contexts = cast(RelationalContexts, setup_runtime._provider)
         scope = (
             await contexts.scopes.create(
@@ -233,13 +249,77 @@ async def _prepare_scope(
             "consistently confirmed across multiple years and projects, independent of the current release task.",
             {"kind": "profile-evidence", "role": "user", "synthetic": True},
         )
+        if automatic_profile:
+            await _prepare_profile_controls(contexts)
     async with (
         _database(database) as profile,
         profile.database.transaction() as connection,
     ):
         for binding in BINDINGS.values():
-            await ArtifactProcessingIntentRepository().request(connection, scope, binding)
+            if not automatic_profile or binding != PROFILE_SOURCE_WINDOW_BINDING:
+                await ArtifactProcessingIntentRepository().request(connection, scope, binding)
         return scope, await _case_state(connection, database, scope)
+
+
+async def _prepare_profile_controls(contexts: RelationalContexts) -> None:
+    for policy, title in PROFILE_CONTROL_TITLES.items():
+        control = (
+            await contexts.scopes.create(
+                ScopeDraft(title=title, summary="Synthetic eligibility control", idempotency_key=uuid4().hex)
+            )
+        ).scope_id
+        if policy == "disabled":
+            await contexts.profiles.put_policy(
+                control, generation_enabled=False, activation_mode="review_required", expected_version=0
+            )
+        await contexts.records.capture_source(
+            control,
+            "content",
+            f"supervisor-profile-{policy}-policy",
+            "I prefer executable Python regression evidence before accepting engineering changes.",
+            {"kind": "profile-evidence", "role": "user", "synthetic": True},
+        )
+
+
+async def _automatic_profile_state(contexts: RelationalContexts, supervisor) -> dict[str, Any]:
+    """Observe durable cron progress and reject any admission of ineligible Scopes."""
+
+    controls = {}
+    async with contexts.database.transaction() as connection:
+        for policy, title in PROFILE_CONTROL_TITLES.items():
+            scope = await connection.scalar(select(SCOPES_TABLE.c.scope_id).where(SCOPES_TABLE.c.title == title))
+            if scope is None:
+                raise AcceptanceFailure("automatic-profile-control-scope-missing")
+            intent = await ArtifactProcessingIntentRepository().load(connection, scope, PROFILE_SOURCE_WINDOW_BINDING)
+            if intent is None or intent.dirty_generation <= intent.clean_generation:
+                raise AcceptanceFailure("automatic-profile-control-dirty-input-lost")
+            if intent.requested_generation or intent.handled_generation or intent.last_auto_scan_generation:
+                raise AcceptanceFailure("automatic-profile-ineligible-scope-admitted")
+            controllers = getattr(supervisor, "supervisors", (supervisor,))
+            for controller in controllers:
+                state = controller._families.get(PROFILE_SOURCE_WINDOW_BINDING)
+                if state is not None and any(scope in items for items in (state.running, state.queued, state.retries)):
+                    raise AcceptanceFailure("automatic-profile-ineligible-worker-or-retry")
+            controls[policy] = {
+                "requested_generation": intent.requested_generation,
+                "handled_generation": intent.handled_generation,
+                "last_auto_scan_generation": intent.last_auto_scan_generation,
+                "dirty_generation": intent.dirty_generation,
+                "clean_generation": intent.clean_generation,
+                "observed_running_queued_or_retry": False,
+            }
+        table = ARTIFACT_PROCESSING_BINDING_STATES_TABLE
+        scan = (
+            (await connection.execute(select(table).where(table.c.binding_name == PROFILE_SOURCE_WINDOW_BINDING)))
+            .mappings()
+            .one_or_none()
+        )
+    return {
+        "controls": controls,
+        "scan_generation": 0 if scan is None else int(scan["scan_generation"]),
+        "scan_in_progress": False if scan is None else bool(scan["scan_in_progress"]),
+        "checkpoint": None if scan is None else str(scan["last_schedule_checkpoint_at"]),
+    }
 
 
 async def _custom_prompt_evidence(contexts: RelationalContexts, scope: str) -> dict[str, Any]:
@@ -293,6 +373,7 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
     mode: Literal["global", "dedicated"],
     resume: bool = False,
     custom_prompts: bool = False,
+    automatic_profile: bool = False,
 ) -> dict[str, Any]:
     """Recover accepted work after reopening, then acknowledge a fresh NOOP."""
 
@@ -318,6 +399,8 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
         memory_max_workers=1,
         experience_max_workers=1,
         profile_max_workers=1,
+        profile_schedule_enabled=automatic_profile,
+        profile_cron="* * * * *",
         topic_memory_max_workers=1,
     )
     config = BuiltinConfig(database=database, runtime=runtime_config, inference=inference)
@@ -326,18 +409,24 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
         deployment_id="supervisor-real-acceptance",
         static_preset=True,
     ).model_dump(mode="json")
-    scope, initial_state = await _prepare_scope(database, config, resume=resume, custom_prompts=custom_prompts)
+    scope, initial_state = await _prepare_scope(
+        database, config, resume=resume, custom_prompts=custom_prompts, automatic_profile=automatic_profile
+    )
     captured = FailureCapture()
     logger = logging.getLogger("powercontext.builtin.runtime.artifact_processing")
     logger.addHandler(captured)
     started = time.monotonic()
     intent_states: dict[str, dict[str, int]] = {}
+    automatic_evidence: dict[str, Any] = {}
+    completed_scans: dict[int, str] = {}
+    required_scan_generation = initial_state["profile_scan_generation"] + (2 if resume else 3)
 
     def failed(code: str) -> AcceptanceFailure:
         error = AcceptanceFailure(code)
         error.details = {
             "worker_failures": captured.failures,
             "intent_generations": intent_states,
+            "automatic_profile": automatic_evidence,
             "elapsed_seconds": round(time.monotonic() - started, 2),
         }
         return error
@@ -365,7 +454,16 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
                     for family, row in zip(BINDINGS, rows, strict=True)
                     if row is not None
                 }
-                if all(row is not None and row.handled_generation >= 1 for row in rows):
+                scans_complete = True
+                if automatic_profile:
+                    automatic_evidence = await _automatic_profile_state(contexts, supervisor)
+                    if not automatic_evidence["scan_in_progress"] and automatic_evidence["scan_generation"]:
+                        completed_scans[automatic_evidence["scan_generation"]] = automatic_evidence["checkpoint"]
+                    scans_complete = (
+                        automatic_evidence["scan_generation"] >= required_scan_generation
+                        and not automatic_evidence["scan_in_progress"]
+                    )
+                if all(row is not None and row.handled_generation >= 1 for row in rows) and scans_complete:
                     break
                 if asyncio.get_running_loop().time() >= deadline:
                     raise failed("accepted-work-timeout")
@@ -450,6 +548,16 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
                 )
             if review_count != 1 or (review_cursor is not None and review_cursor.cursor.sequence != 0):
                 raise failed("pending-review-noop-consumed-domain-input")
+            if automatic_profile:
+                automatic_evidence = await _automatic_profile_state(contexts, supervisor)
+                automatic_evidence.update({
+                    "initial_scan_generation": initial_state["profile_scan_generation"],
+                    "required_scan_generation": required_scan_generation,
+                    "observed_completed_scans": completed_scans,
+                    "cron": "* * * * *",
+                    "two_cron_fires_completed": True,
+                    "initial_profile_explicit_request": False,
+                })
             replay_without_model_calls = resume and initial_state["all_requests_handled"]
             if replay_without_model_calls and initial_state["model_requests"] != final_state["model_requests"]:
                 raise failed("completed-request-replay-made-model-calls")
@@ -482,6 +590,7 @@ async def run_acceptance(  # noqa: C901 - one bounded end-to-end acceptance life
                 "embedding_model": config.inference.embedding_model,
                 "model_requests": final_state["model_requests"],
                 "custom_prompts": prompt_evidence,
+                "automatic_profile": automatic_evidence,
                 "source_journal_position": initial_state["source_journal_position"],
                 "all_requests_handled": final_state["all_requests_handled"],
                 "resume_without_processing_model_calls": replay_without_model_calls,
@@ -523,6 +632,9 @@ def main() -> int:
     parser.add_argument(
         "--custom-prompts", action="store_true", help="Verify Scope-owned Memory and Experience custom Prompts."
     )
+    parser.add_argument(
+        "--automatic-profile", action="store_true", help="Verify Profile Policy filtering across two real cron fires."
+    )
     parser.add_argument("--generation-timeout-seconds", type=float)
     parser.add_argument("--oceanbase-url-env", default="POWERCONTEXT_TEST_OCEANBASE_URL")
     args = parser.parse_args()
@@ -550,6 +662,7 @@ def main() -> int:
                     mode=args.mode,
                     resume=args.resume,
                     custom_prompts=args.custom_prompts,
+                    automatic_profile=args.automatic_profile,
                 )
             )
     except Exception as error:

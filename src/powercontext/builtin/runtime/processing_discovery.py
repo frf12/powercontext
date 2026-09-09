@@ -17,12 +17,32 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.supervision import ArtifactProcessingFence, ArtifactProcessingLeaseRepository
 from powercontext.builtin.persistence.tables import PROFILE_POLICIES_TABLE, SOURCE_JOURNAL_HEADS_TABLE
+
+
+async def enabled_profile_scopes(connection: AsyncConnection, scope_ids: tuple[str, ...]) -> frozenset[str]:
+    """Qualify one bounded automatic page before accepting any invocation.
+
+    Hold enabled Policy rows through admission so concurrent policy changes
+    serialize with the decision. This reads metadata only, before any Worker
+    authorization, model construction, or retry state exists for the page.
+    """
+
+    if not scope_ids:
+        return frozenset()
+    table = PROFILE_POLICIES_TABLE
+    rows = await connection.scalars(
+        select(table.c.scope_id)
+        .where(table.c.scope_id.in_(scope_ids), table.c.generation_enabled.is_(True))
+        .with_for_update()
+    )
+    return frozenset(rows)
 
 
 class SourceProcessingPendingProvider:

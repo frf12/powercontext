@@ -54,11 +54,11 @@ class _FailingBindingStates(ArtifactProcessingBindingStateRepository):
             raise _InjectedRollback
 
 
-@pytest.mark.parametrize("boundary", ["start", "admit", "finish", "commit", "cancel"])
+@pytest.mark.parametrize("boundary", ["start", "eligibility", "admit", "finish", "commit", "cancel"])
 def test_automatic_page_rollback_retains_frontier_and_resumes_same_scan(tmp_path, monkeypatch, boundary):  # noqa: C901
     monkeypatch.setattr(processing, "_DISCOVERY_PAGE_SIZE", 2)
 
-    async def scenario():  # noqa: C901 - exercise five transaction failure boundaries
+    async def scenario():  # noqa: C901 - exercise transaction failure boundaries
         async with _profile(tmp_path, "scan-rollback") as profile:
             scopes = ("a", "b", "c", "d", "e")
             for scope in scopes:
@@ -66,6 +66,15 @@ def test_automatic_page_rollback_retains_frontier_and_resumes_same_scan(tmp_path
             intents = _FailingIntents()
             states = _FailingBindingStates()
             launcher = _Launcher(profile.database)
+            fail_eligibility = False
+
+            async def eligible_scopes(connection, scopes):
+                nonlocal fail_eligibility
+                if fail_eligibility:
+                    fail_eligibility = False
+                    raise _InjectedRollback
+                return frozenset(scopes)
+
             supervisor = ArtifactProcessingSupervisor(
                 database=profile.database,
                 bindings=(
@@ -75,6 +84,7 @@ def test_automatic_page_rollback_retains_frontier_and_resumes_same_scan(tmp_path
                         launcher,
                         max_workers=2,
                         automatic_processing_interval=timedelta(days=30),
+                        automatic_scope_filter=eligible_scopes,
                     ),
                 ),
                 lease_mode="single-process",
@@ -115,6 +125,8 @@ def test_automatic_page_rollback_retains_frontier_and_resumes_same_scan(tmp_path
                 rows_before = [await _intent(profile.database, "memory-binding", scope) for scope in scopes]
                 if boundary in {"start", "admit", "cancel"}:
                     intents.boundary = boundary
+                elif boundary == "eligibility":
+                    fail_eligibility = True
                 elif boundary == "finish":
                     states.fail_finish = True
 
