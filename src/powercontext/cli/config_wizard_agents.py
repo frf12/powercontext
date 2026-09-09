@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import shutil
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from powercontext.cli.hosts import FIRST_CLASS_HOSTS
@@ -25,6 +27,7 @@ class AgentSpec:
     scope_setting: str
     context_assembly_setting: str
     setup_server_url: bool = False
+    executables: tuple[str, ...] = ()
 
     def environment_name(self, setting: str | None) -> str | None:
         """Return the full environment name for an environment-backed setting."""
@@ -44,6 +47,7 @@ _HOST_METADATA = {
         "CAPTURE_PROMPTS",
         "SCOPE_ID",
         "CONTEXT_ASSEMBLY",
+        executables=("codex",),
     ),
     "claude-code": AgentSpec(
         "claude-code",
@@ -55,7 +59,8 @@ _HOST_METADATA = {
         "CAPTURE_PROMPTS",
         "SCOPE_ID",
         "CONTEXT_ASSEMBLY",
-        True,
+        setup_server_url=True,
+        executables=("claude",),
     ),
     "dsh": AgentSpec(
         "dsh",
@@ -67,6 +72,7 @@ _HOST_METADATA = {
         "CAPTURE_PROMPTS",
         "SCOPE_ID",
         "CONTEXT_ASSEMBLY",
+        executables=("dsh",),
     ),
     "openclaw": AgentSpec(
         "openclaw",
@@ -78,7 +84,8 @@ _HOST_METADATA = {
         "autoCapture",
         "scopeId",
         "contextAssembly",
-        True,
+        setup_server_url=True,
+        executables=("openclaw",),
     ),
     "opencode": AgentSpec(
         "opencode",
@@ -90,6 +97,7 @@ _HOST_METADATA = {
         "CAPTURE_PROMPTS",
         "SCOPE_ID",
         "CONTEXT_ASSEMBLY",
+        executables=("opencode",),
     ),
     "pi": AgentSpec(
         "pi",
@@ -101,6 +109,7 @@ _HOST_METADATA = {
         "CAPTURE_PROMPTS",
         "SCOPE_ID",
         "CONTEXT_ASSEMBLY",
+        executables=("pi",),
     ),
     "hermes": AgentSpec(
         "hermes",
@@ -112,6 +121,7 @@ _HOST_METADATA = {
         "CAPTURE_TURNS",
         "SCOPE_ID",
         "CONTEXT_ASSEMBLY",
+        executables=("hermes",),
     ),
 }
 
@@ -130,4 +140,15 @@ WORKBUDDY = AgentSpec(
 AGENT_SPECS: tuple[AgentSpec, ...] = (*(_HOST_METADATA[host.name] for host in FIRST_CLASS_HOSTS), WORKBUDDY)
 AGENT_SPEC_BY_ID = {spec.identifier: spec for spec in AGENT_SPECS}
 
-__all__ = ["AGENT_SPECS", "AGENT_SPEC_BY_ID", "AgentSpec"]
+
+def preferred_agent(agents: Sequence[AgentSpec], which: Callable[[str], str | None] = shutil.which) -> str:
+    """Return the first installed Agent, falling back to Codex."""
+    for agent in agents:
+        if any(which(command) for command in agent.executables):
+            return agent.identifier
+    if any(agent.identifier == "codex" for agent in agents):
+        return "codex"
+    return agents[0].identifier
+
+
+__all__ = ["AGENT_SPECS", "AGENT_SPEC_BY_ID", "AgentSpec", "preferred_agent"]

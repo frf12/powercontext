@@ -20,7 +20,7 @@ import typer
 from pydantic import ValidationError
 from sqlalchemy.engine import URL, make_url
 
-from powercontext.cli.config_wizard_agents import AGENT_SPEC_BY_ID, AGENT_SPECS, AgentSpec
+from powercontext.cli.config_wizard_agents import AGENT_SPEC_BY_ID, AGENT_SPECS, AgentSpec, preferred_agent
 from powercontext.cli.config_wizard_document import read_sqlite_summary, update_document
 from powercontext.cli.config_wizard_models import collect_models
 from powercontext.cli.config_wizard_ui import WizardUI, choose_language
@@ -674,9 +674,15 @@ def _agents(state: Wizard) -> None:
             "Select an Agent to configure (one at a time)",
             "请选择一个要配置的 Agent（每次配置一个）",
             choices,
-            default="none",
+            default="none" if state.agents else preferred_agent(remaining),
         )
         if selected == "none":
+            if not state.agents and not ui.confirm(
+                "No Agent connection configuration will be generated. Continue without an Agent?",
+                "不会生成任何 Agent 连接配置。确认不配置 Agent 并继续吗？",
+                default=False,
+            ):
+                continue
             break
         agent = AGENT_SPEC_BY_ID[selected]
         _configure_agent(state, agent)
@@ -746,9 +752,17 @@ def _configure_agent(state: Wizard, agent: AgentSpec) -> None:
         "Which Scope should this Agent use?",
         "这个 Agent 应使用哪个 Scope？",
         [
-            ("new", "Create an isolated Scope after Server starts", "Server 启动后创建独立 Scope"),
-            ("existing", "Bind an existing Scope ID", "绑定已有 Scope ID"),
-            ("default", "Use session/workspace binding, then Server default", "按会话/工作区绑定，再回落默认 Scope"),
+            (
+                "new",
+                "Plan a new isolated Scope (create it later from the saved instructions)",
+                "规划新的独立 Scope（保存后按指引创建）",
+            ),
+            ("existing", "Bind a Scope ID I already have", "绑定我已有的 Scope ID"),
+            (
+                "default",
+                "Leave unbound; use session/workspace binding, then the Server default",
+                "暂不固定 Scope（使用会话/工作区绑定，再回落 Server 默认值）",
+            ),
         ],
         default="new",
     )

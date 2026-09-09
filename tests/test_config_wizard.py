@@ -19,11 +19,15 @@ class AgentAnswers(WizardUI):
         super().__init__("en", interactive=False)
         self.answers = iter(answers)
         self.choice_ids: list[tuple[str, ...]] = []
+        self.choice_labels: list[tuple[str, ...]] = []
+        self.defaults: list[str] = []
         self.prompts: list[str] = []
 
     def choose(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
         self.prompts.append(en)
         self.choice_ids.append(tuple(choice[0] for choice in choices))
+        self.choice_labels.append(tuple(choice[1] for choice in choices))
+        self.defaults.append(default)
         answer = next(self.answers)
         assert isinstance(answer, str)
         return answer
@@ -65,6 +69,28 @@ def test_agent_menu_repeats_with_configured_agents_removed() -> None:
         "none",
     )
     assert "Capture user prompts as Sources?" not in ui.prompts
+    assert ui.defaults[0] == "codex"
+    assert ui.defaults[2] == "none"
+
+
+def test_finishing_without_an_agent_requires_confirmation() -> None:
+    state, ui = _agent_state("none", True)
+
+    config_wizard._agents(state)
+
+    assert state.agents == ()
+    assert any("no agent connection configuration" in prompt.casefold() for prompt in ui.prompts)
+
+
+def test_scope_choices_describe_planned_existing_and_unbound_outcomes() -> None:
+    state, ui = _agent_state("codex", "new", "none")
+
+    config_wizard._agents(state)
+
+    scope_labels = ui.choice_labels[1]
+    assert "Plan a new isolated Scope" in scope_labels[0]
+    assert "I already have" in scope_labels[1]
+    assert "unbound" in scope_labels[2]
 
 
 def test_advanced_capture_opt_out_warns_for_topic_memory() -> None:
@@ -162,7 +188,7 @@ def test_base_wizard_writes_private_environment_without_models(tmp_path: Path) -
     result = CliRunner().invoke(
         app,
         ["init", "--language", "en", "--output", str(output)],
-        input=f"sqlite\n{database}\nlocal\nbase\nn\nnone\ny\n",
+        input=f"sqlite\n{database}\nlocal\nbase\nn\nnone\ny\ny\n",
     )
     assert result.exit_code == 0, result.output
     values = parse_environment(output.read_text())
@@ -181,7 +207,7 @@ def test_cancel_in_chinese_does_not_write_files(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
         ["init", "--language", "zh", "--output", str(output)],
-        input=f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\nn\nnone\nn\n",
+        input=f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\nn\nnone\ny\nn\n",
     )
     assert result.exit_code == 0, result.output
     assert "配置向导" in result.output
@@ -194,7 +220,7 @@ def test_existing_server_skips_server_models_and_storage(tmp_path: Path) -> None
     result = CliRunner().invoke(
         app,
         ["init", "--language", "en", "--output", str(output)],
-        input="remote\nhttps://memory.example.com\nsecret-bearer\nnone\ny\n",
+        input="remote\nhttps://memory.example.com\nsecret-bearer\nnone\ny\ny\n",
     )
     assert result.exit_code == 0, result.output
     values = parse_environment(output.read_text())
@@ -302,7 +328,7 @@ def test_custom_topic_memory_does_not_require_embedding(tmp_path: Path) -> None:
         ["init", "--language", "en", "--output", str(output)],
         input=(
             f"sqlite\n{tmp_path / 'context.db'}\nlocal\ncustom\n"
-            "n\ny\nn\nn\nn\nn\nn\nn\nbailian\n\n\nexample-test-key\nrecommended\nnone\ny\n"
+            "n\ny\nn\nn\nn\nn\nn\nn\nbailian\n\n\nexample-test-key\nrecommended\nnone\ny\ny\n"
         ),
     )
     assert result.exit_code == 0, result.output
@@ -430,7 +456,7 @@ def test_processing_choice_says_selected_automatic_capabilities_are_already_enab
         ["init", "--language", "zh", "--output", str(output)],
         input=(
             f"sqlite\n{tmp_path / 'context.db'}\nlocal\ncustom\n"
-            "n\ny\nn\nn\nn\nn\nn\nn\nbailian\n\n\nkey\nrecommended\nnone\nn\n"
+            "n\ny\nn\nn\nn\nn\nn\nn\nbailian\n\n\nkey\nrecommended\nnone\ny\nn\n"
         ),
     )
     assert result.exit_code == 0, result.output
