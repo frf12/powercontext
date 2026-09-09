@@ -20,7 +20,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from powercontext.cli.config_wizard import CLIENT, SERVER, Wizard, _network
+from powercontext.cli.config_wizard import CLIENT, SERVER, Wizard, _network, _scenario
 from powercontext.cli.config_wizard_ui import WizardUI
 
 
@@ -32,6 +32,21 @@ def _run_network(state: Wizard, input_text: str):
         _network(state)
 
     return CliRunner().invoke(app, [], input=input_text)
+
+
+def test_scenario_only_asks_local_or_other_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = Wizard(WizardUI("en"), {}, {})
+    choices: list[tuple[str, ...]] = []
+
+    def choose(en: str, zh: str, items, default: str) -> str:
+        choices.append(tuple(item[0] for item in items))
+        return "local"
+
+    monkeypatch.setattr(state.ui, "choose", choose)
+
+    _scenario(state)
+
+    assert choices == [("local", "remote")]
 
 
 @pytest.mark.parametrize("original_port", ["not-a-number", "0", "65536"])
@@ -71,13 +86,35 @@ def test_existing_non_default_local_port_can_be_changed() -> None:
 
 
 def test_custom_remote_url_prompt_has_no_invalid_protocol_only_default() -> None:
-    state = Wizard(WizardUI("zh"), {}, {}, scenario="custom")
+    state = Wizard(WizardUI("zh"), {}, {}, scenario="remote")
 
     result = _run_network(state, "否\ncustom\n0.0.0.0\n8000\n\nhttps://memory.example.com\n")
 
     assert result.exit_code == 0, result.output
     assert "[https://]" not in result.output
     assert "例如 https://memory.example.com" in result.output
+    assert state.client[CLIENT + "SERVER_URL"] == "https://memory.example.com"
+
+
+def test_reverse_proxy_keeps_loopback_listener_and_uses_public_https_url() -> None:
+    state = Wizard(WizardUI("en"), {}, {}, scenario="remote")
+
+    result = _run_network(state, "n\nhttps\n\nhttps://memory.example.com\n")
+
+    assert result.exit_code == 0, result.output
+    assert state.values[SERVER + "HTTP_HOST"] == "127.0.0.1"
+    assert state.client[CLIENT + "SERVER_URL"] == "https://memory.example.com"
+    assert "Nginx" in result.output or "Caddy" in result.output
+
+
+def test_custom_access_asks_for_listener_and_client_url() -> None:
+    state = Wizard(WizardUI("en"), {}, {}, scenario="remote")
+
+    result = _run_network(state, "n\ncustom\n0.0.0.0\n9000\nhttps://memory.example.com\n")
+
+    assert result.exit_code == 0, result.output
+    assert state.values[SERVER + "HTTP_HOST"] == "0.0.0.0"  # noqa: S104 - deliberate remote-listener fixture
+    assert state.values[SERVER + "HTTP_PORT"] == "9000"
     assert state.client[CLIENT + "SERVER_URL"] == "https://memory.example.com"
 
 
@@ -103,6 +140,7 @@ def test_ssh_preserves_server_address_and_exposes_forwarded_client_address() -> 
     assert state.client[CLIENT + "SERVER_URL"] == "http://127.0.0.1:8000"
     assert state.forwarded_address == "http://127.0.0.1:18000"
     assert "ssh -N -L 18000:127.0.0.1:8000 t1" in result.output
+    assert "run the generated command on the client" in result.output
 
 
 def test_switching_from_ssh_to_local_clears_the_old_forwarded_address() -> None:

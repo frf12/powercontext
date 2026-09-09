@@ -271,7 +271,6 @@ def _scenario(state: Wizard) -> None:
         [
             ("local", "Only on this machine", "只在当前机器"),
             ("remote", "Access from other devices", "从其他设备访问"),
-            ("custom", "Custom listener and deployment", "自定义监听与部署"),
         ],
         default="local" if old_host in {"127.0.0.1", "localhost", "::1"} else "remote",
     )
@@ -375,6 +374,58 @@ def _stored_network_port(state: Wizard) -> tuple[int, bool]:
     return 8000, True
 
 
+def _custom_access(state: Wizard, port: int) -> tuple[str, int, str]:
+    """Return the custom bind host, port, and client-visible URL."""
+    host = state.ui.ask(
+        "Server bind address (not the client URL)",
+        "Server 监听地址（不是客户端 URL）",
+        default=state.values.get(f"{SERVER}HTTP_HOST", "127.0.0.1"),
+        required=True,
+    )
+    port = state.ui.integer("Server port", "Server 端口", default=port, maximum=65535)
+    address = _server_url(state.ui, state.values.get(f"{SERVER}PUBLIC_URL", ""))
+    state.patch({f"{SERVER}PUBLIC_URL": address})
+    return host, port, address
+
+
+def _reverse_proxy_access(state: Wizard, port: int) -> tuple[str, int, str]:
+    """Keep a loopback listener and return the public HTTPS URL."""
+    state.ui.say(
+        "PowerContext will stay on loopback behind an HTTPS proxy such as Nginx or Caddy.",
+        "PowerContext 将监听环回地址，并由 Nginx、Caddy 等 HTTPS 反向代理对外提供服务。",
+    )
+    port = state.ui.integer("Server port behind the proxy", "反向代理后的 Server 端口", default=port, maximum=65535)
+    address = _server_url(state.ui, state.values.get(f"{SERVER}PUBLIC_URL", ""))
+    state.patch({f"{SERVER}PUBLIC_URL": address})
+    state.note(
+        "Configure the HTTPS proxy separately; this wizard does not install certificates or proxies.",
+        "HTTPS 代理需要单独配置；本向导不会安装证书或代理。",
+    )
+    return "127.0.0.1", port, address
+
+
+def _ssh_forwarding_access(state: Wizard, port: int, dashboard: bool) -> tuple[str, int, str]:
+    """Keep loopback and record a tunnel command that runs on the client."""
+    remote_host = state.ui.ask(
+        "SSH host or alias (for instructions)", "SSH 主机或别名（用于生成说明）", default="t1", required=True
+    )
+    local_port = state.ui.integer(
+        "Forwarded port on your other computer", "另一台电脑上的转发端口", default=18000, maximum=65535
+    )
+    state.forwarded_address = f"http://127.0.0.1:{local_port}"
+    state.note(
+        f"Run on the client computer: ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}",
+        f"在客户端电脑执行：ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}",
+    )
+    if dashboard:
+        state.note(
+            f"Browser after forwarding: http://127.0.0.1:{local_port}/dashboard/home",
+            f"转发后的浏览器入口：http://127.0.0.1:{local_port}/dashboard/home",
+        )
+    state.patch({f"{SERVER}PUBLIC_URL": None})
+    return "127.0.0.1", port, f"http://127.0.0.1:{port}"
+
+
 def _network(state: Wizard) -> None:
     ui = state.ui
     ui.section("4. Dashboard and access", "4. Dashboard 与访问")
@@ -394,46 +445,29 @@ def _network(state: Wizard) -> None:
             "Remote access method",
             "远程访问方式",
             [
-                ("https", "Existing HTTPS reverse proxy", "已有 HTTPS 反向代理"),
-                ("ssh", "SSH port forwarding", "SSH 端口转发"),
-                ("custom", "Custom listener and client URL", "自定义监听及客户端地址"),
+                ("custom", "Custom listener address and client URL", "自定义监听地址和客户端 URL"),
+                (
+                    "https",
+                    "HTTPS reverse proxy, such as Nginx or Caddy",
+                    "使用 HTTPS 反向代理（如 Nginx、Caddy）",
+                ),
+                (
+                    "ssh",
+                    "SSH port forwarding (run the generated command on the client)",
+                    "SSH 端口转发（需在客户端执行生成的命令）",
+                ),
             ],
-            default="https",
+            default="custom",
         )
         if access == "ssh":
             if invalid_port:
                 port = ui.integer("Server port", "Server 端口", default=port, maximum=65535)
                 address = f"http://127.0.0.1:{port}"
-            remote_host = ui.ask(
-                "SSH host or alias (for instructions)", "SSH 主机或别名（用于生成说明）", default="t1", required=True
-            )
-            local_port = ui.integer(
-                "Forwarded port on your other computer", "另一台电脑上的转发端口", default=18000, maximum=65535
-            )
-            state.forwarded_address = f"http://127.0.0.1:{local_port}"
-            state.note(
-                f"On the other computer: ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}",
-                f"在另一台电脑执行：ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}",
-            )
-            if dashboard:
-                state.note(
-                    f"Browser after forwarding: http://127.0.0.1:{local_port}/dashboard/home",
-                    f"转发后的浏览器入口：http://127.0.0.1:{local_port}/dashboard/home",
-                )
+            host, port, address = _ssh_forwarding_access(state, port, dashboard)
+        elif access == "https":
+            host, port, address = _reverse_proxy_access(state, port)
         else:
-            host = ui.ask(
-                "Server bind address (not the client URL)",
-                "Server 监听地址（不是客户端 URL）",
-                default=state.values.get(f"{SERVER}HTTP_HOST", "127.0.0.1"),
-                required=True,
-            )
-            port = ui.integer("Server port", "Server 端口", default=port, maximum=65535)
-            address = _server_url(ui, state.values.get(f"{SERVER}PUBLIC_URL", "https://"))
-            state.patch({f"{SERVER}PUBLIC_URL": address})
-            state.note(
-                "Configure the HTTPS proxy separately; this wizard does not install certificates or proxies.",
-                "HTTPS 代理需要单独配置；本向导不会安装证书或代理。",
-            )
+            host, port, address = _custom_access(state, port)
     token = state.values.get(f"{SERVER}AUTH_TOKEN", "")
     authenticated = (
         dashboard or state.scenario != "local" or bool(token) or state.values.get(f"{SERVER}ACCESS_MODE") == "enforced"
