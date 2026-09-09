@@ -310,12 +310,9 @@ def test_full_memory_configuration_shares_provider_and_adds_profile_recall(tmp_p
     assert CliRunner().invoke(app, ["validate", "--env-file", str(output)]).exit_code == 0
     client = parse_environment(output.with_name("server.env.client.env").read_text())
     assembly = json.loads(client["POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY"])
-    assert {section["family"] for section in assembly["sections"]} == {
-        "memory",
-        "topic-memory",
-        "profile",
-        "experience",
-    }
+    families = [section["family"] for section in assembly["sections"]]
+    assert families == ["memory", "profile", "topic-memory", "experience"]
+    assert len(families) == len(set(families))
     assert not any(key.startswith(inference) for key in client)
     assert "profile-policy" in output.with_name("server.env.next-steps.md").read_text()
     assert not (tmp_path / "context.db").exists()
