@@ -266,6 +266,7 @@ async def open_builtin_runtime(
 
     async with AsyncExitStack() as resources:
         configured_source_registry = source_registry or BUILTIN_SOURCE_REGISTRY
+        _validate_processing_source_registry(config, artifact_processing_bindings, configured_source_registry)
         prompt_demonstrators: dict[str, DemonstrationGenerator] = {}
         (
             generated_profile,
@@ -489,6 +490,30 @@ async def open_builtin_runtime(
         yield runtime
 
 
+def _validate_processing_source_registry(
+    config: BuiltinConfig,
+    bindings: Sequence[ArtifactProcessingBinding],
+    source_registry: SourceDefinitionRegistry,
+) -> None:
+    """Reject unsupported child Sources before database bootstrap commits deployment identity."""
+
+    if config.runtime.artifact_processing_role == "api":
+        return
+    registered = {binding.artifact_family for binding in bindings}
+    if all(family in registered for family in processing_capabilities(config)):
+        return
+    definitions = source_registry.definitions
+    builtin_definitions = BUILTIN_SOURCE_REGISTRY.definitions
+    if (
+        type(source_registry) is not SourceDefinitionRegistry
+        or len(definitions) != len(builtin_definitions)
+        or any(
+            definition is not expected for definition, expected in zip(definitions, builtin_definitions, strict=True)
+        )
+    ):
+        raise BuiltinConfigurationError("artifact-processing-source-registry")
+
+
 def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one registration per Family
     config: BuiltinConfig,
     contexts: RelationalContexts,
@@ -525,21 +550,11 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
             raise BuiltinConfigurationError(issue)
     if config.runtime.artifact_processing_role == "api":
         return tuple(configured)
+    _validate_processing_source_registry(config, configured, source_registry)
     injected_pipelines = injected_pipelines or {}
     for family in capabilities:
         if family in registered:
             continue
-        definitions = source_registry.definitions
-        builtin_definitions = BUILTIN_SOURCE_REGISTRY.definitions
-        if (
-            type(source_registry) is not SourceDefinitionRegistry
-            or len(definitions) != len(builtin_definitions)
-            or any(
-                definition is not expected
-                for definition, expected in zip(definitions, builtin_definitions, strict=True)
-            )
-        ):
-            raise BuiltinConfigurationError("artifact-processing-source-registry")
         if config.inference.generation_model is None:
             raise BuiltinConfigurationError("artifact-processing-families")
         if (

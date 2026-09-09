@@ -47,7 +47,9 @@ def _custom_registry():
 
 @pytest.mark.parametrize("family", _FAMILIES)
 @pytest.mark.parametrize("mode", ["global", "dedicated"])
-def test_runtime_rejects_custom_sources_before_starting_builtin_workers(tmp_path, monkeypatch, family, mode):
+def test_runtime_rejects_custom_sources_before_bootstrap_and_allows_corrected_restart(
+    tmp_path, monkeypatch, family, mode
+):
     async def scenario():
         launcher = Mock(side_effect=AssertionError("unsupported Source registry reached a child launcher"))
         monkeypatch.setattr(composition, "SpawnArtifactProcessingWorkerLauncher", launcher)
@@ -62,6 +64,22 @@ def test_runtime_rejects_custom_sources_before_starting_builtin_workers(tmp_path
                 config, source_registry=_custom_registry(), scheduler_path=tmp_path / "scheduler.db"
             ):
                 pytest.fail("unsupported child Source capabilities must fail before accepting work")
+        launcher.assert_not_called()
+        # A configuration rejection must not freeze a completed deployment
+        # manifest that prevents the suggested correction on the same database.
+        assert not (tmp_path / "unsupported.db").exists()
+        corrected = config.model_copy(
+            update={"runtime": RuntimeConfig(artifact_processing_families=(), artifact_processing_supervisor_mode=mode)}
+        )
+        async with open_builtin_runtime(
+            corrected, source_registry=_custom_registry(), scheduler_path=tmp_path / "scheduler.db"
+        ) as runtime:
+            context = await runtime._provider.get("project")
+            resolved = await context.sources.resolve(CustomCapture(source_id="custom", value="corrected startup"))
+            stored = await context.sources.add(resolved)
+            assert isinstance(stored, CustomSource)
+            assert await context.sources.read(stored) == "corrected startup"
+            assert runtime.artifact_processing_supervisor is None
         launcher.assert_not_called()
 
     asyncio.run(scenario())
