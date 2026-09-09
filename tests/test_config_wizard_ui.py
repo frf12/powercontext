@@ -279,3 +279,39 @@ def test_interactive_search_uses_fuzzy_with_localized_instruction(fake_inquirer)
     assert options["message"] == "服务商"
     assert options["default"] == "openai"
     assert options["instruction"] == "（输入可搜索）"  # noqa: RUF001
+
+
+def test_interactive_text_uses_localized_message_and_visible_default(fake_inquirer) -> None:
+    fake_inquirer.answers = ["9000"]
+    ui = wizard_ui.WizardUI("zh", interactive=True)
+
+    assert ui.ask("Port", "端口", default="8000") == "9000"
+    assert fake_inquirer.calls == [("text", {"message": "端口", "default": "8000"})]
+
+
+def test_interactive_secret_preserves_empty_retained_value_without_exposing_it(fake_inquirer) -> None:
+    fake_inquirer.answers = [""]
+    ui = wizard_ui.WizardUI("en", interactive=True)
+
+    assert ui.ask("API key", "密钥", default="saved-credential", secret=True) == "saved-credential"
+    assert fake_inquirer.calls == [("secret", {"message": "API key"})]
+    assert "saved-credential" not in repr(fake_inquirer.calls)
+
+
+def test_interactive_confirm_uses_native_boolean_prompt(fake_inquirer) -> None:
+    fake_inquirer.answers = [False]
+    ui = wizard_ui.WizardUI("zh", interactive=True)
+
+    assert ui.confirm("Continue?", "继续？", default=True) is False  # noqa: RUF001
+    assert fake_inquirer.calls == [("confirm", {"message": "继续？", "default": True})]  # noqa: RUF001
+
+
+def test_interactive_integer_retries_with_localized_validation(fake_inquirer, capsys) -> None:
+    fake_inquirer.answers = ["abc", "0", "9000"]
+    ui = wizard_ui.WizardUI("zh", interactive=True)
+
+    assert ui.integer("Port", "端口", default=8000, minimum=1, maximum=65535) == 9000
+    assert [kind for kind, _options in fake_inquirer.calls] == ["text", "text", "text"]
+    output = capsys.readouterr().out
+    assert "请输入整数" in output
+    assert "1 到 65535" in output

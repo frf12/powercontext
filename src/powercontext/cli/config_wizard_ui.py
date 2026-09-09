@@ -181,13 +181,20 @@ class WizardUI:
     def ask(self, en: str, zh: str, default: str = "", secret: bool = False, required: bool = False) -> str:
         """Ask for text, preserving an existing secret without displaying it."""
         while True:
-            value = typer.prompt(
-                self.text(en, zh),
-                default=default,
-                type=str,
-                hide_input=secret,
-                show_default=not secret and bool(default),
-            )
+            inquirer = self._inquirer()
+            if inquirer is None:
+                value = typer.prompt(
+                    self.text(en, zh),
+                    default=default,
+                    type=str,
+                    hide_input=secret,
+                    show_default=not secret and bool(default),
+                )
+            elif secret:
+                entered = str(inquirer.secret(message=self.text(en, zh)).execute())
+                value = entered or default
+            else:
+                value = str(inquirer.text(message=self.text(en, zh), default=default).execute())
             if required and not value.strip():
                 self.say("This value cannot be empty.", "此项不能为空。")
                 continue
@@ -195,6 +202,9 @@ class WizardUI:
 
     def confirm(self, en: str, zh: str, default: bool = True) -> bool:
         """Accept English and Chinese confirmations in either UI language."""
+        inquirer = self._inquirer()
+        if inquirer is not None:
+            return bool(inquirer.confirm(message=self.text(en, zh), default=default).execute())
         answer_default = self.text("y" if default else "n", "是" if default else "否")
         while True:
             answer = self.ask(en, zh, default=answer_default).casefold()
