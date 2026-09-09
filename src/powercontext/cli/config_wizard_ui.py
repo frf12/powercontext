@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
+from typing import Any
 
 import typer
 
@@ -84,10 +85,12 @@ def choose_language(explicit: str | None = None, previous: str | None = None) ->
 
 
 class WizardUI:
-    """Small numbered-menu UI that works in terminals and redirected test input."""
+    """Bilingual InquirerPy UI with a deterministic redirected-input fallback."""
 
-    def __init__(self, language: str) -> None:
+    def __init__(self, language: str, *, interactive: bool | None = None) -> None:
         self.language = normalize_language(language)
+        self.interactive = sys.stdin.isatty() and sys.stdout.isatty() if interactive is None else interactive
+        self._fallback_reported = False
 
     def text(self, en: str, zh: str) -> str:
         """Select text without mutating the process locale."""
@@ -108,6 +111,59 @@ class WizardUI:
         if not identifiers or default not in identifiers:
             message = "Wizard choice default must identify one of its choices."
             raise ValueError(message)
+        inquirer = self._inquirer()
+        if inquirer is not None:
+            return str(
+                inquirer.select(
+                    message=self.text(en, zh),
+                    choices=[
+                        {"name": self.text(en_label, zh_label), "value": identifier}
+                        for identifier, en_label, zh_label in choices
+                    ],
+                    default=default,
+                ).execute()
+            )
+        return self._text_choose(en, zh, choices, default)
+
+    def search(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
+        """Select from a searchable list in a TTY and a numbered list otherwise."""
+        identifiers = [identifier for identifier, _, _ in choices]
+        if not identifiers or default not in identifiers:
+            message = "Wizard choice default must identify one of its choices."
+            raise ValueError(message)
+        inquirer = self._inquirer()
+        if inquirer is not None:
+            return str(
+                inquirer.fuzzy(
+                    message=self.text(en, zh),
+                    choices=[
+                        {"name": self.text(en_label, zh_label), "value": identifier}
+                        for identifier, en_label, zh_label in choices
+                    ],
+                    default=default,
+                    instruction=self.text("(type to search)", "（输入可搜索）"),  # noqa: RUF001
+                ).execute()
+            )
+        return self._text_choose(en, zh, choices, default)
+
+    def _inquirer(self) -> Any | None:
+        if not self.interactive:
+            return None
+        try:
+            from InquirerPy import inquirer
+        except ImportError:
+            self.interactive = False
+            if not self._fallback_reported:
+                self.say(
+                    "Interactive UI is unavailable; using text prompts.",
+                    "交互式界面不可用，改用文本输入。",  # noqa: RUF001
+                )
+                self._fallback_reported = True
+            return None
+        return inquirer
+
+    def _text_choose(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
+        identifiers = [identifier for identifier, _, _ in choices]
         self.say(en, zh)
         for number, (_, en_label, zh_label) in enumerate(choices, start=1):
             typer.echo(f"  {number}. {self.text(en_label, zh_label)}")

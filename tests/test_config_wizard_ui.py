@@ -18,12 +18,53 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
 import powercontext.cli.config_wizard_ui as wizard_ui
+
+
+class _Prompt:
+    def __init__(self, answer):
+        self.answer = answer
+
+    def execute(self):
+        return self.answer
+
+
+class _FakeInquirer:
+    def __init__(self) -> None:
+        self.answers = []
+        self.calls = []
+
+    def _prompt(self, kind: str, **kwargs):
+        self.calls.append((kind, kwargs))
+        return _Prompt(self.answers.pop(0))
+
+    def select(self, **kwargs):
+        return self._prompt("select", **kwargs)
+
+    def fuzzy(self, **kwargs):
+        return self._prompt("fuzzy", **kwargs)
+
+    def text(self, **kwargs):
+        return self._prompt("text", **kwargs)
+
+    def secret(self, **kwargs):
+        return self._prompt("secret", **kwargs)
+
+    def confirm(self, **kwargs):
+        return self._prompt("confirm", **kwargs)
+
+
+@pytest.fixture
+def fake_inquirer(monkeypatch):
+    fake = _FakeInquirer()
+    monkeypatch.setitem(wizard_ui.sys.modules, "InquirerPy", SimpleNamespace(inquirer=fake))
+    return fake
 
 
 def _invoke(action: Callable[[], None], input_text: str = ""):
@@ -212,3 +253,29 @@ def test_chinese_confirmation_accepts_local_and_english_answers(entered, expecte
     result = _invoke(action, f"{entered}\n")
     assert result.exit_code == 0
     assert observed == [expected]
+
+
+def test_interactive_choice_uses_localized_select(fake_inquirer) -> None:
+    fake_inquirer.answers = ["sqlite"]
+    ui = wizard_ui.WizardUI("zh", interactive=True)
+
+    assert ui.choose("Storage", "存储", [("sqlite", "Local", "本地")], "sqlite") == "sqlite"
+    kind, options = fake_inquirer.calls[0]
+    assert kind == "select"
+    assert options == {
+        "message": "存储",
+        "choices": [{"name": "本地", "value": "sqlite"}],
+        "default": "sqlite",
+    }
+
+
+def test_interactive_search_uses_fuzzy_with_localized_instruction(fake_inquirer) -> None:
+    fake_inquirer.answers = ["openai"]
+    ui = wizard_ui.WizardUI("zh", interactive=True)
+
+    assert ui.search("Provider", "服务商", [("openai", "OpenAI", "OpenAI")], "openai") == "openai"
+    kind, options = fake_inquirer.calls[0]
+    assert kind == "fuzzy"
+    assert options["message"] == "服务商"
+    assert options["default"] == "openai"
+    assert options["instruction"] == "（输入可搜索）"  # noqa: RUF001
