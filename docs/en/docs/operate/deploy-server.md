@@ -85,13 +85,21 @@ powercontext server run --env-file /etc/powercontext/powercontext.env
 ```
 
 The successful installation summary prints the environment file actually used. If Bearer authentication is enabled,
-read `POWERCONTEXT_SERVER_AUTH_TOKEN` from that file; the command never prints the token value. Authentication is
-disabled by default, so no token is generated automatically.
+read `POWERCONTEXT_SERVER_AUTH_TOKEN` from that file; the command never prints the token value. The basic model-free
+template leaves authentication disabled. The wizard generates a token when Dashboard or authenticated access
+requires one and no existing token is available.
 
 The file may contain provider credentials or a bearer token, so restrict it to the Server operator. For `server run`,
-process environment variables override same-named file values. `config init` creates a model-free base configuration; see
-[Enable extraction and vector search](../get-started/configure-models.md)
-when you need to add inference models and enable the full capability set.
+process environment variables override same-named file values. `config init` opens a bilingual wizard: choose storage,
+usage scenario, and capabilities, then configure Dashboard/access and only the necessary model connections.
+It selects English or Chinese from the system language (`LC_ALL` before `LC_MESSAGES` before `LANG`, then system
+preferences), with English fallback for an unknown or unsupported language. Change the language on the first screen
+or pass `--language en` or `--language zh`; add `--template` to retain the basic model-free template.
+
+The wizard writes configuration and follow-up instructions. It does not start or register services, migrate a
+database, or probe remote storage and model endpoints. Existing local SQLite metadata can be inspected read-only.
+After saving, perform the deployment checks below and, when enabled, the
+[Memory extraction and vector search checks](../get-started/configure-models.md).
 
 Whether the Server runs in the foreground, in Docker, or as a personal service, startup or installation output warns
 that missing models may affect some artifact features and links to the

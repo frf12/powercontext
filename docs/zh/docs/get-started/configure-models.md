@@ -7,13 +7,14 @@ description: 配置模型、启动 Server，并验证完整 Memory 闭环。
 
 以下步骤使用 `master` 和 Bash。Windows 支持为 `experimental`，平台要求见[安装与运行](install-and-run.md)。
 
-`powercontext server run` 不配置模型也可以运行，但依赖模型的提取和向量检索不会启用。`config init` 只负责生成可启动的
-基础环境文件，不在部署过程中索要 provider、credential 或 model；需要完整能力时，再显式补充模型配置。
+`powercontext server run` 不配置模型也可以运行，但依赖模型的提取和向量检索不会启用。`config init` 默认打开向导，
+先询问存储、使用场景和记忆能力，再收集所选能力需要的模型连接。基础记忆可以由 Agent 显式保存，不需要独立模型 API；
+本文介绍自动提取和向量搜索。
 
 | 能力 | 最小 Server | 已配置 Runtime |
 | --- | --- | --- |
 | Source capture | 启用 | 启用 |
-| Memory extraction | 关闭 | 启用 |
+| 自动 Memory extraction | 关闭 | 启用 |
 | Search mode | `auto, fts` | `auto, fts, vector, hybrid` |
 | Dashboard | 单独启用，要求静态 token | 单独启用，要求静态 token |
 | MCP endpoint | `/mcp` | `/mcp` |
@@ -28,8 +29,14 @@ uv tool install --force "powercontext[cli,server] @ git+https://github.com/ocean
 powercontext config init --output .env
 ```
 
-该命令不会询问模型或 credential。要启用完整能力，请编辑 `.env`，至少补充下面这些值，并按 provider 要求补充 credential
-和 Base URL：
+选择完整记忆，或者在自定义能力中勾选自动 Memory 提取和语义检索。向导会收集 Generation、Embedding 模型及凭据，
+必要的 embedding profile、维度，以及处理调度。命令生成配置和后续操作说明，不部署服务，也不测试远程连接。
+
+首屏提供英语和中文，默认根据系统语言选择，无法识别或不支持的语言回退英语。可以用 `--language en` 或
+`--language zh` 显式选择；需要手动编辑无模型基础模板时，加上 `--template`。
+语言判断优先级和已有文件处理方式见[配置 Server 环境](configure-server-environment.md)。
+
+如果手动配置，Memory 自动提取和向量检索对应的设置包括以下各项，还需按 provider 要求补充 credential 和 Base URL：
 
 ```dotenv
 POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL=provider:generation-model
@@ -49,8 +56,9 @@ powercontext config show --env-file .env
 powercontext config validate --env-file .env
 ```
 
-生成文件包含 Server、数据库和 integration transport 设置；模型配置由你显式补充后才会启用 Scheduler。Scope identity 由运行中的
-Server 管理，Config Generator 不会凭空生成 Scope ID。
+生成文件包含 Server、数据库和所选 integration 设置。向导会为选中的自动能力配置调度，基础模式不会启用自动提取。
+Scope identity 由运行中的 Server 管理，Config Generator 不会凭空生成 Scope ID。
+服务启动后仍需完成下文的 Memory 闭环检查；成功保存文件不代表端到端验收通过。
 
 ## 2. 启动并检查 Server
 
@@ -64,6 +72,7 @@ powercontext server run --env-file .env
 set -a
 . ./.env
 set +a
+export POWERCONTEXT_CLIENT_API_TOKEN="${POWERCONTEXT_CLIENT_API_TOKEN:-${POWERCONTEXT_SERVER_AUTH_TOKEN:-}}"
 powercontext doctor
 powercontext ready
 powercontext capabilities
@@ -72,10 +81,15 @@ powercontext capabilities
 Readiness 为 `ready`、Memory extraction 已启用，并且 search mode 包含 `vector` 和 `hybrid` 时，完整 Runtime 可用。
 如果只有 `auto, fts`，检查 Embedding model、profile ID、dimension、credential 和 Base URL。
 
+以下请求使用本机 Server 地址；选择了其他主机或端口时，请相应调整。开启 Dashboard 或鉴权访问后，检查需要
+`POWERCONTEXT_CLIENT_API_TOKEN`。上面的 export 会在未加载客户端令牌时使用受保护的 Server token。
+生成的客户端环境文件可为 Agent 进程提供连接设置，无需向它们暴露模型凭据。
+
 获取默认 Scope 的不透明 ID，供后续 API 检查使用：
 
 ```bash
 SCOPE_ID="$(curl -fsS http://127.0.0.1:8000/v1/scopes/default \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   | python -c 'import json, sys; print(json.load(sys.stdin)["scope_id"])')"
 export SCOPE_ID
 ```
@@ -87,6 +101,7 @@ export SCOPE_ID
 ```bash
 SOURCE_ID="quickstart-$(date +%s)-$$"
 curl -fsS -X POST http://127.0.0.1:8000/v1/sources/content \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\",\"source_id\":\"${SOURCE_ID}\",\"content\":\"PowerContext quick start check: prefer small, verifiable steps.\"}"
 ```
@@ -95,6 +110,7 @@ curl -fsS -X POST http://127.0.0.1:8000/v1/sources/content \
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/v1/memory/flush \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\"}"
 ```
@@ -105,6 +121,7 @@ curl -fsS -X POST http://127.0.0.1:8000/v1/memory/flush \
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/v1/memory/entries/list \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\"}"
 ```
@@ -113,6 +130,7 @@ curl -fsS -X POST http://127.0.0.1:8000/v1/memory/entries/list \
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/v1/memory/search \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\",\"query\":\"verifiable steps\",\"mode\":\"vector\",\"limit\":50}"
 ```

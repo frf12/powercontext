@@ -8,13 +8,14 @@ description: Configure models, start the Server, and verify the complete Memory 
 These steps use `master` and Bash. Windows support is `experimental`; see [platform requirements](install-and-run.md).
 
 `powercontext server run` works without model configuration, but model-backed extraction and vector search stay off.
-`config init` only creates a runnable base environment and does not ask for providers, credentials, or models during
-deployment. Add model configuration explicitly when you need the full capability set.
+`config init` opens a guided setup and asks for storage, usage scenario, and memory capabilities before collecting
+the model connections those capabilities need. Basic memory can use explicit Agent-saved entries without a separate
+model API; this guide covers automatic extraction and vector search.
 
 | Capability | Minimal Server | Configured runtime |
 | --- | --- | --- |
 | Source capture | Enabled | Enabled |
-| Memory extraction | Disabled | Enabled |
+| Automatic Memory extraction | Disabled | Enabled |
 | Search modes | `auto, fts` | `auto, fts, vector, hybrid` |
 | Dashboard | Opt-in, static token required | Opt-in, static token required |
 | MCP endpoint | `/mcp` | `/mcp` |
@@ -29,8 +30,17 @@ uv tool install --force "powercontext[cli,server] @ git+https://github.com/ocean
 powercontext config init --output .env
 ```
 
-The command does not prompt for models or credentials. To enable the full capability set, edit `.env` and add at least
-the following values, plus the credential and Base URL required by the selected provider:
+Select full memory, or select automatic Memory extraction and semantic retrieval individually. The wizard collects
+Generation and Embedding models, credentials, the required embedding profile and dimension, and processing
+schedules. It generates configuration and follow-up instructions; it does not deploy or test the remote connections.
+
+The first screen offers English and Chinese, with a detected system-language default and English fallback for
+unsupported or unknown languages. Use `--language en` or `--language zh` to choose explicitly. For a model-free
+template to edit manually, add `--template`. See [Configure a Server environment](configure-server-environment.md)
+for language precedence and existing-file behavior.
+
+For manual configuration, the equivalent Memory extraction and vector retrieval settings include the following,
+plus the credential and Base URL required by the selected provider:
 
 ```dotenv
 POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL=provider:generation-model
@@ -51,9 +61,10 @@ powercontext config show --env-file .env
 powercontext config validate --env-file .env
 ```
 
-The generated file contains Server, database, and integration transport settings; the Scheduler is enabled only after
-you explicitly add a generation model and its schedule. Scope identity is owned by the running Server and is not
-invented by the Config Generator.
+The generated file contains Server, database, and selected integration settings. The wizard configures schedules
+for the automatic capabilities you selected; basic mode does not enable automatic extraction. Scope identity is
+owned by the running Server and is not invented by the Config Generator. Validate the actual Memory loop below
+after starting the service; successfully saving the file is not an end-to-end check.
 
 ## 2. Start and verify the Server
 
@@ -67,6 +78,7 @@ In another terminal:
 set -a
 . ./.env
 set +a
+export POWERCONTEXT_CLIENT_API_TOKEN="${POWERCONTEXT_CLIENT_API_TOKEN:-${POWERCONTEXT_SERVER_AUTH_TOKEN:-}}"
 powercontext doctor
 powercontext ready
 powercontext capabilities
@@ -75,10 +87,16 @@ powercontext capabilities
 The full runtime is ready when readiness is `ready`, Memory extraction is enabled, and search modes include `vector`
 and `hybrid`. If only `auto, fts` appear, check the Embedding model, profile ID, dimension, credential, and Base URL.
 
+The following requests use the local Server address. Adjust it if you selected another host or port. If Dashboard
+or authenticated access is enabled, these checks need `POWERCONTEXT_CLIENT_API_TOKEN`. The export above uses the
+protected Server token when no client token is already loaded. The generated client environment file provides the
+connection settings for Agent processes without exposing model credentials.
+
 Retrieve the default Scope's opaque ID for the following API checks:
 
 ```bash
 SCOPE_ID="$(curl -fsS http://127.0.0.1:8000/v1/scopes/default \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   | python -c 'import json, sys; print(json.load(sys.stdin)["scope_id"])')"
 export SCOPE_ID
 ```
@@ -90,6 +108,7 @@ Capture a Source with a unique ID:
 ```bash
 SOURCE_ID="quickstart-$(date +%s)-$$"
 curl -fsS -X POST http://127.0.0.1:8000/v1/sources/content \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\",\"source_id\":\"${SOURCE_ID}\",\"content\":\"PowerContext quick start check: prefer small, verifiable steps.\"}"
 ```
@@ -98,6 +117,7 @@ Keep the returned `position`, then flush the same Scope:
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/v1/memory/flush \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\"}"
 ```
@@ -109,6 +129,7 @@ List Memory entries:
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/v1/memory/entries/list \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\"}"
 ```
@@ -118,6 +139,7 @@ retrieval:
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/v1/memory/search \
+  -H "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
   -H 'content-type: application/json' \
   -d "{\"scope_id\":\"${SCOPE_ID}\",\"query\":\"verifiable steps\",\"mode\":\"vector\",\"limit\":50}"
 ```

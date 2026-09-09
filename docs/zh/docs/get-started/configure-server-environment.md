@@ -13,13 +13,33 @@ description: 通过显式环境文件生成、检查、校验并运行 PowerCont
 powercontext config init --output .env
 ```
 
-引导式命令会以 `0600` 权限写入私有文件，不会在部署过程中询问 model 或 provider 凭据。默认文件可以直接启动 Server；
-如果需要自动抽取、模型生成或向量检索，请在文件中补充对应的 model、credential、embedding profile ID 和 dimension。
+命令默认打开中英文向导。首次使用时，依次按 `LC_ALL`、`LC_MESSAGES`、`LANG` 判断默认语言；都未设置时，再读取系统语言
+（包括 macOS 语言偏好）。无法判断或语言不受支持时使用英语。可以在首屏切换，也可以显式指定 `--language en` 或
+`--language zh`。再次配置已有文件时，会记住上次使用的向导语言。
 
-如果 `--force` 会删除已有的 model、embedding、推理调度或 provider 凭据配置，命令会明确提示影响，并要求一次默认选择
-“否”的确认。用户确认后，命令会先创建权限为 `0600` 的备份，再替换原文件。
+选择语言后，先选择存储、使用场景和记忆能力，再配置 Dashboard 与访问方式，以及所选能力必需的模型连接。
+基础记忆通过 Agent 显式保存和全文召回，不要求独立模型 API；自动处理和语义检索分别需要对应的模型配置。
+已有环境文件可以直接沿用，也可以按模块调整。
 
-在 macOS 和 Linux 上，引导式命令会以 `0600` 权限写入私有文件。通过环境或 secret manager 提供 provider 凭据，不要把它们写入命令行参数。
+配置 Agent 时每次选择一个 Agent；完成后可以继续添加，已配置项不会再次出现。每个 Agent 可分别使用默认 Scope、绑定已有
+Scope，或计划创建独立 Scope。独立 Scope 使用 `codex-<随机串>`、`claude-code-<随机串>` 形式的标题，但真正的
+`scope_id` 必须使用 Server 创建后返回的不透明 ID，向导不会把标题冒充为 ID。
+
+保存前会展示配置供你检查。命令只生成文件和后续操作说明，不启动 Server、安装 Agent 插件、迁移数据库，也不探测远程
+存储或模型端点。它可以只读检查已有本地 SQLite 元数据，但这不代表部署兼容性已经验证。
+保存完整记忆配置也不代表记忆提取已经跑通。
+
+需要保留原来的无模型基础模板时，使用：
+
+```bash
+powercontext config init --template --output .env
+```
+
+模板模式替换已有文件需要 `--force`；如果会移除推理设置或 provider 凭据，还会要求一次默认选择“否”的确认。
+向导模式会预览所选改动并保留无关设置。两种模式在替换已有文件前都会创建备份。
+
+在 macOS 和 Linux 上，生成的环境文件和备份均使用 `0600` 权限。通过向导的隐藏输入、环境或 secret manager 提供
+provider 凭据，不要把它们写入命令行参数。
 
 Windows 支持为 `experimental`。将文件用于个人服务前，按[部署 Server](../operate/deploy-server.md)限制其 ACL。
 

@@ -27,6 +27,7 @@ from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Never
@@ -266,13 +267,35 @@ def main() -> None:
     """Manage environment-file configuration."""
 
 
+class WizardLanguage(StrEnum):
+    """Languages supported by the configuration wizard."""
+
+    ENGLISH = "en"
+    CHINESE = "zh"
+
+
 @app.command("init")
 def init_command(
     output: Annotated[Path, typer.Option("--output", "-o", help="Environment file to create.")] = Path(".env"),
-    force: Annotated[bool, typer.Option(help="Replace managed values in an existing file.")] = False,
-    advanced: Annotated[bool, typer.Option(help="Configure storage and scheduling choices.")] = False,
+    force: Annotated[
+        bool, typer.Option(help="Allow --template to replace an existing file after confirmation.")
+    ] = False,
+    advanced: Annotated[bool, typer.Option(help="Also ask about processing limits and logging.")] = False,
+    language: Annotated[
+        WizardLanguage | None,
+        typer.Option("--language", "-l", help="Wizard language; otherwise detect the system language."),
+    ] = None,
+    template: Annotated[
+        bool, typer.Option("--template", help="Use the basic model-free template instead of the guided setup.")
+    ] = False,
 ) -> None:
     """Create a working configuration through a short guided setup."""
+
+    if not template:
+        from powercontext.cli.config_wizard import run_wizard
+
+        run_wizard(output, language=None if language is None else language.value, advanced=advanced)
+        return
 
     if output.exists() and not force:
         _fail(f"{output} already exists; use --force")
@@ -899,7 +922,7 @@ def _required(values: Mapping[str, str], name: str) -> str:
 def _is_secret_name(name: str) -> bool:
     return (
         name in _SECRET_NAMES
-        or name.endswith(("_KEY", "_PASSWORD", "_SECRET", "_TOKEN"))
+        or name.endswith(("_KEY", "_PASSWORD", "_SECRET", "_TOKEN", "_AUTHORIZATION"))
         or "_KEY_" in name
         or name.endswith(_CREDENTIAL_CONTAINER_SUFFIXES)
     )

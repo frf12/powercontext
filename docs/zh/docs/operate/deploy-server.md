@@ -34,7 +34,8 @@ powercontext service install --env-file /path/to/powercontext.env
 ```
 
 安装成功后的摘要会显示实际使用的环境文件路径。若启用了 Bearer 鉴权，请从该文件中的
-`POWERCONTEXT_SERVER_AUTH_TOKEN` 读取令牌；命令不会在终端打印令牌值。默认配置关闭鉴权，因此不会自动生成令牌。
+`POWERCONTEXT_SERVER_AUTH_TOKEN` 读取令牌；命令不会在终端打印令牌值。无模型基础模板关闭鉴权。
+向导选择的 Dashboard 或鉴权访问需要令牌时，会在没有现有令牌的情况下生成令牌。
 
 在 Windows 上，校验前需要移除继承权限，只授予当前用户、`SYSTEM` 和本机 `Administrators` 访问权限，例如：
 
@@ -85,8 +86,13 @@ powercontext server run --env-file /etc/powercontext/powercontext.env
 ```
 
 文件可能包含 Provider 凭据或 Bearer token，因此只能允许 Server 运维者读取。对于 `server run`，进程环境变量会覆盖
-文件中的同名值。`config init` 生成的是不含模型的基础配置；需要启用完整
-推理能力时，请阅读[启用提取与向量搜索](../get-started/configure-models.md)并补充模型配置。
+文件中的同名值。`config init` 默认打开双语向导：先选择存储、使用场景和能力，再配置 Dashboard/访问方式及必需的模型连接。
+默认语言依次读取 `LC_ALL`、`LC_MESSAGES`、`LANG`，再尝试系统语言偏好；无法判断或不支持的语言回退英语。
+可以在首屏切换中英文，或传入 `--language en`、`--language zh`；加上 `--template` 则保留原来的无模型基础模板。
+
+向导生成配置和后续操作说明，不启动或注册服务、不迁移数据库，也不探测远程存储或模型端点。
+已有本地 SQLite 元数据可以只读检查。保存后，仍需完成下文的部署检查；启用模型能力时，还应完成
+[Memory 提取与向量搜索检查](../get-started/configure-models.md)。
 
 无论使用前台进程、Docker 还是个人服务安装，只要 generation 或 embedding model 未配置，启动或安装输出都会提示
 缺少 model 可能影响部分制品功能，具体影响范围及配置方式请参考
