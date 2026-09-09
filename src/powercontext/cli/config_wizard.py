@@ -285,20 +285,26 @@ def _capabilities(state: Wizard) -> None:
         [
             (
                 "full",
-                "Full memory: background generation + semantic search (model APIs needed)",
-                "完整记忆：后台整理 + 语义检索（需要模型 API）",
+                "Full memory capabilities (recommended)",
+                "完整记忆能力（推荐）",
             ),
             (
                 "base",
-                "Basic: Agent-saved memories and full-text recall (no model API needed)",
-                "基础记忆：Agent 显式保存与全文召回（无需额外模型 API）",
+                "Basic memory (no additional model API)",
+                "基础记忆（无需额外模型 API）",
             ),
-            ("custom", "Choose capabilities individually", "自定义能力组合"),
+            ("custom", "Choose capabilities individually (advanced)", "自行选择能力（高级）"),
         ],
         default="full",
     )
     if profile == "full":
         state.features = {feature for feature, _, _ in FEATURES if feature != "rerank"}
+        ui.say(
+            "Enabled: Memory, Topic Memory, Profile, Experience, Skill, and semantic retrieval. "
+            "Generation and Embedding model APIs are required.",
+            "将启用：Memory、Topic Memory、Profile、Experience、Skill 和语义检索；"
+            "需要 Generation 与 Embedding 模型 API。",
+        )
     elif profile == "base":
         state.features = set()
     else:
@@ -430,8 +436,8 @@ def _network(state: Wizard) -> None:
     ui = state.ui
     ui.section("4. Dashboard and access", "4. Dashboard 与访问")
     dashboard = ui.confirm(
-        "Enable the browser Dashboard?",
-        "开启浏览器 Dashboard？",
+        "Enable the browser Dashboard? This also enables authenticated access and creates or retains a Server token.",
+        "开启浏览器 Dashboard？这会同时启用访问认证，并生成或沿用 Server Token。",
         default=state.values.get(f"{SERVER}DASHBOARD_ENABLED", "true") == "true",
     )
     port, invalid_port = _stored_network_port(state)
@@ -541,7 +547,11 @@ def _processing(state: Wizard) -> None:
         "How should processing schedules be configured?",
         "如何设置自动处理周期？",
         [
-            ("recommended", "Use recommended schedules", "使用推荐周期"),
+            (
+                "recommended",
+                "Use recommended schedules (families every 60 seconds; Profile daily at 02:00)",
+                "使用推荐周期（各记忆能力每 60 秒检查；Profile 每天 02:00）",
+            ),
             ("custom", "Customize each schedule", "逐项自定义周期"),
         ],
         default="recommended",
@@ -551,14 +561,14 @@ def _processing(state: Wizard) -> None:
         key = f"{RUNTIME}{family.upper().replace('-', '_')}_SCHEDULE_SECONDS"
         default = int(float(state.values.get(key, "60")))
         seconds = (
-            default
+            60
             if recommended
             else ui.integer(f"{family}: check interval (seconds)", f"{family}：检查间隔（秒）", default=default)
         )
         state.patch({key: str(seconds)})
     if "profile" in automatic:
-        cron = state.values.get(f"{RUNTIME}PROFILE_CRON", "0 2 * * *")
-        timezone = state.values.get(f"{RUNTIME}PROFILE_TIMEZONE", "Asia/Shanghai")
+        cron = "0 2 * * *" if recommended else state.values.get(f"{RUNTIME}PROFILE_CRON", "0 2 * * *")
+        timezone = "Asia/Shanghai" if recommended else state.values.get(f"{RUNTIME}PROFILE_TIMEZONE", "Asia/Shanghai")
         if not recommended:
             cron = ui.ask("Profile cron", "Profile 定时表达式", default=cron, required=True)
             timezone = ui.ask("Profile timezone", "Profile 时区", default=timezone, required=True)

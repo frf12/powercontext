@@ -129,6 +129,18 @@ def test_default_local_port_keeps_the_short_flow() -> None:
     assert state.forwarded_address == ""
 
 
+def test_dashboard_question_explains_authentication_and_keeps_mcp_enabled() -> None:
+    state = Wizard(WizardUI("en"), {}, {})
+
+    result = _run_network(state, "n\n")
+
+    assert result.exit_code == 0, result.output
+    assert "authenticated access" in result.output
+    assert "Server token" in result.output
+    assert state.values[SERVER + "DASHBOARD_ENABLED"] == "false"
+    assert state.values[SERVER + "MCP_ENABLED"] == "true"
+
+
 def test_ssh_preserves_server_address_and_exposes_forwarded_client_address() -> None:
     state = Wizard(WizardUI("en"), {}, {}, scenario="remote")
 

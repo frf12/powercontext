@@ -274,6 +274,10 @@ def test_full_memory_configuration_shares_provider_and_adds_profile_recall(tmp_p
     assert values[inference + "EMBEDDING_MODEL"] == "openai:text-embedding-v4"
     assert values[inference + "GENERATION_HEADERS"] == values[inference + "EMBEDDING_HEADERS"]
     assert "example-test-key" not in result.output
+    assert "Memory, Topic Memory, Profile, Experience, Skill" in result.output
+    assert "Generation and Embedding" in result.output
+    assert "every 60 seconds" in result.output
+    assert "daily at 02:00" in result.output
     assert CliRunner().invoke(app, ["validate", "--env-file", str(output)]).exit_code == 0
     client = parse_environment(output.with_name("server.env.client.env").read_text())
     assembly = json.loads(client["POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY"])
