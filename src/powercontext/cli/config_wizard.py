@@ -20,6 +20,7 @@ import typer
 from pydantic import ValidationError
 from sqlalchemy.engine import URL, make_url
 
+from powercontext.cli.config_wizard_agents import AGENT_SPEC_BY_ID, AGENT_SPECS, AgentSpec
 from powercontext.cli.config_wizard_document import read_sqlite_summary, update_document
 from powercontext.cli.config_wizard_models import collect_models
 from powercontext.cli.config_wizard_ui import WizardUI, choose_language
@@ -58,9 +59,12 @@ class Wizard:
     notes: list[str] = field(default_factory=list)
     features: set[str] = field(default_factory=set)
     client_only: bool = False
+    advanced: bool = False
     scenario: str = "local"
     forwarded_address: str = ""
     agents: tuple[str, ...] = ()
+    agent_addresses: dict[str, str] = field(default_factory=dict)
+    agent_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     planned_scopes: dict[str, str] = field(default_factory=dict)
     storage_summary: dict[str, object] = field(default_factory=dict)
 
@@ -92,7 +96,7 @@ def run_wizard(output: Path, *, language: str | None = None, advanced: bool = Fa
         match = re.search(r"(?m)^# powercontext-wizard-language=(en|zh)\s*$", content)
         chosen = choose_language(language, None if match is None else match.group(1))
         ui = WizardUI(chosen)
-        state = Wizard(ui=ui, original=original, values=dict(original))
+        state = Wizard(ui=ui, original=original, values=dict(original), advanced=advanced)
         ui.section("PowerContext configuration wizard", "PowerContext 配置向导")
         ui.say(
             "Generate files, then review the startup and acceptance steps. No services will start here.",
@@ -597,12 +601,9 @@ def _agents(state: Wizard) -> None:
         token = state.values.get(f"{SERVER}AUTH_TOKEN", state.values.get(f"{CLIENT}API_TOKEN", ""))
         if token:
             state.client[f"{CLIENT}API_TOKEN"] = token
-    remaining = ["codex", "claude-code"]
+    remaining = list(AGENT_SPECS)
     while remaining:
-        choices = [
-            (agent, "Codex" if agent == "codex" else "Claude Code", "Codex" if agent == "codex" else "Claude Code")
-            for agent in remaining
-        ]
+        choices = [(agent.identifier, agent.en, agent.zh) for agent in remaining]
         choices.append(("none", "Finish Agent configuration", "结束 Agent 配置"))
         selected = ui.choose(
             "Select an Agent to configure (one at a time)",
@@ -612,11 +613,10 @@ def _agents(state: Wizard) -> None:
         )
         if selected == "none":
             break
-        _configure_agent(state, selected)
-        remaining.remove(selected)
+        agent = AGENT_SPEC_BY_ID[selected]
+        _configure_agent(state, agent)
+        remaining.remove(agent)
         state.agents = (*state.agents, selected)
-        if not remaining or not ui.confirm("Configure another Agent?", "继续配置其他 Agent？", default=False):
-            break
     if not state.agents:
         return
     state.note(
@@ -635,7 +635,7 @@ def _agents(state: Wizard) -> None:
         )
 
 
-def _configure_agent(state: Wizard, agent: str) -> None:
+def _configure_agent(state: Wizard, agent: AgentSpec) -> None:
     ui = state.ui
     address = state.client[f"{CLIENT}SERVER_URL"]
     if state.forwarded_address:
@@ -652,7 +652,31 @@ def _configure_agent(state: Wizard, agent: str) -> None:
             address = state.forwarded_address
     if state.scenario != "local":
         address = _server_url(ui, address)
-    capture = ui.confirm("Capture user prompts as Sources?", "将用户输入采集为 Source？")
+    capture = True
+    if state.advanced:
+        capture = ui.confirm(
+            "Capture ordinary prompts or turns as Sources?",
+            "将普通提示词或对话轮次采集为 Source？",
+            default=True,
+        )
+    else:
+        if state.features & {"memory", "topic-memory"}:
+            ui.say(
+                "Ordinary prompts or turns will be captured as Source evidence for automatic memory processing.",
+                "将采集普通提示词或对话轮次作为 Source 证据，供自动记忆处理使用。",
+            )
+        else:
+            ui.say(
+                "Ordinary prompts or turns will be captured as Source evidence. Basic memory still requires explicit "
+                "saves; capture alone does not extract Memory.",
+                "将采集普通提示词或对话轮次作为 Source 证据。基础记忆仍需显式保存；仅采集不会自动提取 Memory。",
+            )
+    if not capture and state.features & {"memory", "topic-memory"}:
+        state.note(
+            f"{agent.en} Source capture is disabled; its ordinary conversations will not drive automatic Memory or "
+            "Topic Memory.",
+            f"{agent.zh} 已关闭 Source 采集；该 Agent 的普通对话不会推动自动 Memory 或 Topic Memory。",
+        )
     scope_mode = ui.choose(
         "Which Scope should this Agent use?",
         "这个 Agent 应使用哪个 Scope？",
@@ -667,39 +691,58 @@ def _configure_agent(state: Wizard, agent: str) -> None:
     if scope_mode == "existing":
         scope = ui.ask("Existing Scope ID", "已有 Scope ID", required=True)
     elif scope_mode == "new":
-        state.planned_scopes[agent] = f"{agent}-{uuid.uuid4().hex[:8]}"
+        state.planned_scopes[agent.identifier] = f"{agent.identifier}-{uuid.uuid4().hex[:8]}"
         ui.say(
-            f"Planned isolated Scope title: {state.planned_scopes[agent]}. The Server will return the real Scope ID.",
-            f"计划创建独立 Scope：{state.planned_scopes[agent]}。真实 Scope ID 由 Server 返回。",
+            f"Planned isolated Scope title: {state.planned_scopes[agent.identifier]}. "
+            "The Server will return the real Scope ID.",
+            f"计划创建独立 Scope：{state.planned_scopes[agent.identifier]}。真实 Scope ID 由 Server 返回。",
         )
     _agent_fields(state, agent, address, capture=capture, scope=scope)
 
 
-def _agent_fields(state: Wizard, agent: str, address: str, *, capture: bool, scope: str) -> None:
-    name = "CODEX" if agent == "codex" else "CLAUDE"
-    prefix = f"POWERCONTEXT_{name}_"
-    state.client[prefix + "SERVER_URL"] = address
-    state.client[prefix + "CAPTURE_PROMPTS"] = str(capture).lower()
-    if scope:
-        state.client[prefix + "SCOPE_ID"] = scope
+def _agent_fields(state: Wizard, agent: AgentSpec, address: str, *, capture: bool, scope: str) -> None:
+    state.agent_addresses[agent.identifier] = address
+    prefix = agent.environment_prefix
+    if prefix is None:
+        settings: dict[str, object] = {agent.server_setting or "endpoint": address, agent.capture_setting: capture}
+        if scope:
+            settings[agent.scope_setting] = scope
+        if "profile" in state.features:
+            settings[agent.context_assembly_setting] = _context_assembly(state)
+        state.agent_settings[agent.identifier] = settings
+        return
+    if server_name := agent.environment_name(agent.server_setting):
+        state.client[server_name] = address
+    capture_name = agent.environment_name(agent.capture_setting)
+    if capture_name is None:
+        message = f"missing capture environment name for {agent.identifier}"
+        raise RuntimeError(message)
+    state.client[capture_name] = str(capture).lower()
+    if scope and (scope_name := agent.environment_name(agent.scope_setting)):
+        state.client[scope_name] = scope
     token = state.client.get(f"{CLIENT}API_TOKEN")
-    if token:
-        state.client[prefix + "AUTHORIZATION"] = f"Bearer {token}"
-    if "profile" in state.features:
-        sections = [{"family": "memory", "limit": 3}, {"family": "profile", "limit": 1}]
-        if "topic-memory" in state.features:
-            sections.append({"family": "topic-memory", "limit": 2})
-        if "experience" in state.features:
-            sections.append({"family": "experience", "limit": 2})
-        state.client[prefix + "CONTEXT_ASSEMBLY"] = json.dumps({"sections": sections})
+    if token and (authorization_name := agent.environment_name(agent.authorization_setting)):
+        state.client[authorization_name] = f"Bearer {token}"
+    if "profile" in state.features and (assembly_name := agent.environment_name(agent.context_assembly_setting)):
+        state.client[assembly_name] = json.dumps(_context_assembly(state))
+
+
+def _context_assembly(state: Wizard) -> dict[str, object]:
+    sections = [{"family": "memory", "limit": 3}, {"family": "profile", "limit": 1}]
+    if "topic-memory" in state.features:
+        sections.append({"family": "topic-memory", "limit": 2})
+    if "experience" in state.features:
+        sections.append({"family": "experience", "limit": 2})
+    return {"sections": sections}
 
 
 def _client_updates(state: Wizard) -> dict[str, str | None]:
     updates: dict[str, str | None] = {f"{CLIENT}API_TOKEN": None}
     for agent in state.agents:
-        name = "CODEX" if agent == "codex" else "CLAUDE"
-        for suffix in ("SCOPE_ID", "AUTHORIZATION", "CONTEXT_ASSEMBLY"):
-            updates[f"POWERCONTEXT_{name}_{suffix}"] = None
+        spec = AGENT_SPEC_BY_ID[agent]
+        for setting in (spec.scope_setting, spec.authorization_setting, spec.context_assembly_setting):
+            if name := spec.environment_name(setting):
+                updates[name] = None
     updates.update(state.client)
     return updates
 
@@ -900,24 +943,7 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
         ]
     if state.planned_scopes:
         lines += _scope_creation_steps(state)
-    if state.agents:
-        lines += [
-            ui.text(
-                "Install the plugin from this same checkout (or the matching release ref):",
-                "从同一份源码目录（或匹配的发行版本）安装插件：",
-            ),
-            "",
-            "```bash",
-        ]
-        source = Path(__file__).resolve().parents[3]
-        for agent in state.agents:
-            command = f"powercontext setup {agent} --source {shlex.quote(str(source))}"
-            if agent == "claude-code":
-                command += f" --server-url {shlex.quote(state.client[f'{CLIENT}SERVER_URL'])}"
-            lines += [command, f"powercontext doctor {agent}"]
-        lines += ["```", ""]
-        if "codex" in state.agents:
-            lines += _codex_endpoint_steps(state)
+    lines += _agent_installation_steps(state)
     if "profile" in state.features:
         lines += [
             ui.text(
@@ -955,6 +981,32 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _agent_installation_steps(state: Wizard) -> list[str]:
+    if not state.agents:
+        return []
+    lines = [
+        state.ui.text(
+            "Install the plugin from this same checkout (or the matching release ref):",
+            "从同一份源码目录（或匹配的发行版本）安装插件：",
+        ),
+        "",
+        "```bash",
+    ]
+    source = Path(__file__).resolve().parents[3]
+    for agent in state.agents:
+        spec = AGENT_SPEC_BY_ID[agent]
+        command = f"powercontext setup {agent} --source {shlex.quote(str(source))}"
+        if spec.setup_server_url:
+            command += f" --server-url {shlex.quote(state.agent_addresses[agent])}"
+        lines += [command, f"powercontext doctor {agent}"]
+    lines += ["```", ""]
+    if "openclaw" in state.agents:
+        lines += _openclaw_configuration_steps(state)
+    if "codex" in state.agents:
+        lines += _codex_endpoint_steps(state)
+    return lines
+
+
 def _scope_creation_steps(state: Wizard) -> list[str]:
     lines = [
         "## " + state.ui.text("Create the planned isolated Scopes", "创建计划中的独立 Scope"),
@@ -968,9 +1020,8 @@ def _scope_creation_steps(state: Wizard) -> list[str]:
         "",
     ]
     for agent, title in state.planned_scopes.items():
-        name = "CODEX" if agent == "codex" else "CLAUDE"
-        prefix = f"POWERCONTEXT_{name}_"
-        address = state.client[prefix + "SERVER_URL"]
+        spec = AGENT_SPEC_BY_ID[agent]
+        address = state.agent_addresses[agent]
         payload = json.dumps(
             {
                 "title": title,
@@ -986,23 +1037,54 @@ def _scope_creation_steps(state: Wizard) -> list[str]:
             f"curl -sS -X POST {shlex.quote(address + '/v1/scopes')} \\",
             "  -H 'Content-Type: application/json' \\",
         ]
-        if prefix + "AUTHORIZATION" in state.client:
-            lines += [f'  -H "Authorization: ${prefix}AUTHORIZATION" \\']
+        authorization_name = spec.environment_name(spec.authorization_setting)
+        if authorization_name and authorization_name in state.client:
+            lines += [f'  -H "Authorization: ${authorization_name}" \\']
+        elif spec.identifier == "openclaw" and f"{CLIENT}API_TOKEN" in state.client:
+            lines += [f'  -H "Authorization: Bearer ${CLIENT}API_TOKEN" \\']
         lines += [
             f"  --data {shlex.quote(payload)}",
             "```",
             "",
-            state.ui.text(
-                f"Then set {prefix}SCOPE_ID to the returned scope_id in the client environment file.",
-                f"然后把返回的 scope_id 写入客户端环境文件的 {prefix}SCOPE_ID。",
-            ),
+            _scope_binding_instruction(state, spec),
             "",
         ]
     return lines
 
 
+def _scope_binding_instruction(state: Wizard, spec: AgentSpec) -> str:
+    if spec.identifier == "openclaw":
+        return state.ui.text(
+            "Then replace <returned-scope-id> and run: openclaw config set "
+            "plugins.entries.memory-powercontext.config.scopeId '<returned-scope-id>'.",
+            "然后把 <returned-scope-id> 替换为返回值并执行：openclaw config set "
+            "plugins.entries.memory-powercontext.config.scopeId '<returned-scope-id>'。",
+        )
+    scope_name = spec.environment_name(spec.scope_setting)
+    if scope_name is None:
+        message = f"missing Scope configuration for {spec.identifier}"
+        raise RuntimeError(message)
+    return state.ui.text(
+        f"Then set {scope_name} to the returned scope_id in the client environment file.",
+        f"然后把返回的 scope_id 写入客户端环境文件的 {scope_name}。",
+    )
+
+
+def _openclaw_configuration_steps(state: Wizard) -> list[str]:
+    settings = state.agent_settings["openclaw"]
+    lines = [state.ui.text("Configure the OpenClaw plugin:", "配置 OpenClaw 插件："), "", "```bash"]
+    for setting in ("endpoint", "autoCapture", "contextAssembly"):
+        if setting not in settings:
+            continue
+        value = settings[setting]
+        rendered = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else shlex.quote(value)
+        lines.append(f"openclaw config set plugins.entries.memory-powercontext.config.{setting} {rendered}")
+    lines += ["```", ""]
+    return lines
+
+
 def _codex_endpoint_steps(state: Wizard) -> list[str]:
-    address = state.client.get("POWERCONTEXT_CODEX_SERVER_URL", state.client[f"{CLIENT}SERVER_URL"])
+    address = state.agent_addresses["codex"]
     configuration = {
         "mcpServers": {
             "powercontext": {

@@ -1,12 +1,158 @@
 """User-visible file generation flows for the bilingual configuration wizard."""
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 from typer.testing import CliRunner
 
+import powercontext.cli.config_wizard as config_wizard
 from powercontext.cli.config import app
+from powercontext.cli.config_wizard import CLIENT, Wizard
+from powercontext.cli.config_wizard_agents import AGENT_SPEC_BY_ID
+from powercontext.cli.config_wizard_ui import WizardUI
 from powercontext.cli.env_file import parse_environment
+
+
+class AgentAnswers(WizardUI):
+    def __init__(self, *answers: str | bool) -> None:
+        super().__init__("en", interactive=False)
+        self.answers = iter(answers)
+        self.choice_ids: list[tuple[str, ...]] = []
+        self.prompts: list[str] = []
+
+    def choose(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
+        self.prompts.append(en)
+        self.choice_ids.append(tuple(choice[0] for choice in choices))
+        answer = next(self.answers)
+        assert isinstance(answer, str)
+        return answer
+
+    def confirm(self, en: str, zh: str, default: bool = True) -> bool:
+        self.prompts.append(en)
+        answer = next(self.answers)
+        assert isinstance(answer, bool)
+        return answer
+
+    def say(self, en: str, zh: str) -> None:
+        pass
+
+    def section(self, en: str, zh: str) -> None:
+        pass
+
+
+def _agent_state(*answers: str | bool, advanced: bool = False) -> tuple[Wizard, AgentAnswers]:
+    ui = AgentAnswers(*answers)
+    state = Wizard(ui, {}, {}, advanced=advanced)
+    state.client = {f"{CLIENT}SERVER_URL": "http://127.0.0.1:8000"}
+    return state, ui
+
+
+def test_agent_menu_repeats_with_configured_agents_removed() -> None:
+    state, ui = _agent_state("codex", "default", "claude-code", "default", "none")
+
+    config_wizard._agents(state)
+
+    assert state.agents == ("codex", "claude-code")
+    assert ui.choice_ids[2] == (
+        "claude-code",
+        "dsh",
+        "openclaw",
+        "opencode",
+        "pi",
+        "hermes",
+        "workbuddy",
+        "none",
+    )
+    assert "Capture user prompts as Sources?" not in ui.prompts
+
+
+def test_advanced_capture_opt_out_warns_for_topic_memory() -> None:
+    state, _ = _agent_state("codex", False, "default", "none", advanced=True)
+    state.features = {"topic-memory"}
+
+    config_wizard._agents(state)
+
+    assert state.client["POWERCONTEXT_CODEX_CAPTURE_PROMPTS"] == "false"
+    assert any("will not drive" in note for note in state.notes)
+
+
+def test_agent_client_fields_follow_real_contract() -> None:
+    cases = (
+        ("dsh", "POWERCONTEXT_DSH_BASE_URL", "POWERCONTEXT_DSH_CAPTURE_PROMPTS", "POWERCONTEXT_DSH_SCOPE_ID"),
+        (
+            "opencode",
+            "POWERCONTEXT_OPENCODE_BASE_URL",
+            "POWERCONTEXT_OPENCODE_CAPTURE_PROMPTS",
+            "POWERCONTEXT_OPENCODE_SCOPE_ID",
+        ),
+        ("pi", "POWERCONTEXT_PI_BASE_URL", "POWERCONTEXT_PI_CAPTURE_PROMPTS", "POWERCONTEXT_PI_SCOPE_ID"),
+        (
+            "hermes",
+            "POWERCONTEXT_HERMES_BASE_URL",
+            "POWERCONTEXT_HERMES_CAPTURE_TURNS",
+            "POWERCONTEXT_HERMES_SCOPE_ID",
+        ),
+        (
+            "workbuddy",
+            "POWERCONTEXT_WORKBUDDY_SERVER_URL",
+            "POWERCONTEXT_WORKBUDDY_CAPTURE_PROMPTS",
+            "POWERCONTEXT_WORKBUDDY_SCOPE_ID",
+        ),
+    )
+    for agent, url_name, capture_name, scope_name in cases:
+        state, _ = _agent_state()
+        state.client[f"{CLIENT}API_TOKEN"] = "test-token"
+        config_wizard._agent_fields(
+            state,
+            AGENT_SPEC_BY_ID[agent],
+            "http://127.0.0.1:8000",
+            capture=True,
+            scope="SCOPE_TEST",
+        )
+        assert state.client[url_name] == "http://127.0.0.1:8000"
+        assert state.client[capture_name] == "true"
+        assert state.client[scope_name] == "SCOPE_TEST"
+
+
+def test_openclaw_fields_remain_plugin_settings() -> None:
+    state, _ = _agent_state()
+    state.client[f"{CLIENT}API_TOKEN"] = "test-token"
+
+    config_wizard._agent_fields(
+        state,
+        AGENT_SPEC_BY_ID["openclaw"],
+        "http://127.0.0.1:8000",
+        capture=True,
+        scope="SCOPE_TEST",
+    )
+
+    assert state.agent_settings["openclaw"] == {
+        "endpoint": "http://127.0.0.1:8000",
+        "autoCapture": True,
+        "scopeId": "SCOPE_TEST",
+    }
+    assert not any(name.startswith("POWERCONTEXT_OPENCLAW_") for name in state.client)
+
+
+def test_openclaw_next_steps_use_plugin_configuration_contract(tmp_path: Path) -> None:
+    output = tmp_path / "server.env"
+    result = CliRunner().invoke(
+        app,
+        ["init", "--language", "en", "--output", str(output)],
+        input=f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\ny\nopenclaw\nnew\nnone\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    assert not any(name.startswith("POWERCONTEXT_OPENCLAW_") for name in client)
+    steps = output.with_name("server.env.next-steps.md").read_text()
+    assert "powercontext setup openclaw" in steps
+    assert "--server-url http://127.0.0.1:8000" in steps
+    assert "plugins.entries.memory-powercontext.config.endpoint" in steps
+    assert "plugins.entries.memory-powercontext.config.autoCapture true" in steps
+    assert "plugins.entries.memory-powercontext.config.scopeId '<returned-scope-id>'" in steps
+    assert "Authorization: Bearer $POWERCONTEXT_CLIENT_API_TOKEN" in steps
 
 
 def test_base_wizard_writes_private_environment_without_models(tmp_path: Path) -> None:
@@ -93,9 +239,7 @@ def test_dashboard_and_agent_files_hide_tokens_and_clear_old_bindings(tmp_path: 
     result = CliRunner().invoke(
         app,
         ["init", "--language", "en", "--output", str(output)],
-        input=(
-            f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\ny\ncodex\ny\ndefault\ny\nclaude-code\ny\ndefault\ny\n"
-        ),
+        input=f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\ny\ncodex\ndefault\nclaude-code\ndefault\nnone\ny\n",
     )
     assert result.exit_code == 0, result.output
     server_values = parse_environment(output.read_text())
@@ -120,7 +264,7 @@ def test_full_memory_configuration_shares_provider_and_adds_profile_recall(tmp_p
         ["init", "--language", "en", "--output", str(output)],
         input=(
             f"sqlite\n{tmp_path / 'context.db'}\nlocal\nfull\nn\n"
-            "bailian\n\n\nexample-test-key\ny\n\nrecommended\ncodex\ny\nexisting\nproject:demo\nn\ny\n"
+            "bailian\n\n\nexample-test-key\ny\n\nrecommended\ncodex\nexisting\nproject:demo\nnone\ny\n"
         ),
     )
     assert result.exit_code == 0, result.output
@@ -181,13 +325,13 @@ def test_ssh_forwarding_configures_the_agent_on_the_other_computer(tmp_path: Pat
     result = CliRunner().invoke(
         app,
         ["init", "--language", "en", "--output", str(output)],
-        input=(f"sqlite\n{tmp_path / 'context.db'}\nremote\nbase\ny\nssh\nt1\n18000\ncodex\nother\n\ny\nnew\nn\ny\n"),
+        input=(f"sqlite\n{tmp_path / 'context.db'}\nremote\nbase\ny\nssh\nt1\n18000\ncodex\nother\n\nnew\nnone\ny\n"),
     )
     assert result.exit_code == 0, result.output
     values = parse_environment(output.read_text())
     assert values["POWERCONTEXT_SERVER_HTTP_PORT"] == "8000"
     client = parse_environment(output.with_name("server.env.client.env").read_text())
-    assert client["POWERCONTEXT_CODEX_SERVER_URL"] == "http://127.0.0.1:18000"
+    assert "POWERCONTEXT_CODEX_SERVER_URL" not in client
     steps = output.with_name("server.env.next-steps.md").read_text()
     assert '"url": "http://127.0.0.1:18000/mcp"' in steps
     assert "ssh -N -L 18000:127.0.0.1:8000 t1" in steps
@@ -249,10 +393,10 @@ def test_agents_are_selected_one_at_a_time_and_get_independent_scope_plans(tmp_p
     result = CliRunner().invoke(
         app,
         ["init", "--language", "en", "--output", str(output)],
-        input=(f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\nn\ncodex\ny\nnew\ny\nclaude-code\ny\nnew\ny\n"),
+        input=(f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\nn\ncodex\nnew\nclaude-code\nnew\nnone\ny\n"),
     )
     assert result.exit_code == 0, result.output
-    assert result.output.count("Select an Agent to configure") == 2
+    assert result.output.count("Select an Agent to configure") == 3
     client = parse_environment(output.with_name("server.env.client.env").read_text())
     assert "POWERCONTEXT_CODEX_SCOPE_ID" not in client
     assert "POWERCONTEXT_CLAUDE_SCOPE_ID" not in client
@@ -270,7 +414,7 @@ def test_existing_scope_is_requested_separately_for_each_agent(tmp_path: Path) -
         ["init", "--language", "en", "--output", str(output)],
         input=(
             f"sqlite\n{tmp_path / 'context.db'}\nlocal\nbase\nn\n"
-            "codex\ny\nexisting\nSCOPE_CODEX\ny\nclaude-code\ny\nexisting\nSCOPE_CLAUDE\ny\n"
+            "codex\nexisting\nSCOPE_CODEX\nclaude-code\nexisting\nSCOPE_CLAUDE\nnone\ny\n"
         ),
     )
     assert result.exit_code == 0, result.output
