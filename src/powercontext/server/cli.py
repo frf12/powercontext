@@ -37,6 +37,7 @@ from powercontext.builtin.runtime.composition import open_builtin_runtime
 from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 from powercontext.cli.env_file import environment_context
+from powercontext.cli.inference_notice import write_inference_capability_notice
 from powercontext.server.authz import PrincipalRef
 from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.configuration import ServerConfigurationError, server_settings_context
@@ -197,6 +198,10 @@ def _run_configured_server(settings: ServerSettings) -> None:
     configure_server_logging(settings.logging)
     tracing = configure_server_tracing(settings.tracing)
     try:
+        write_inference_capability_notice(
+            generation_model=settings.inference.generation_model,
+            embedding_model=settings.inference.embedding_model,
+        )
         if settings.runtime.artifact_processing_role == "background":
             _run_background(settings, tracing)
             return
