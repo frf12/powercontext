@@ -71,7 +71,7 @@ covers Codex and Claude Code, Dashboard login, SSH forwarding, HTTPS prerequisit
 For example, the matching Codex installation is:
 
 ```bash
-powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup codex
 powercontext doctor codex
 ```
 

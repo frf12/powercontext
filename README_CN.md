@@ -67,7 +67,7 @@ powercontext capabilities
 SSH 隧道、HTTPS 前提及逐项验收。例如，匹配本版本的 Codex 安装命令是：
 
 ```bash
-powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup codex
 powercontext doctor codex
 ```
 

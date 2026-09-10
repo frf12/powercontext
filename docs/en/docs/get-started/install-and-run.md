@@ -6,7 +6,8 @@ description: Choose a version and storage, generate configuration, and start or 
 # Install and run
 
 For the complete installation → wizard → startup → Agent connection → memory check, follow [Quick Start](quickstart.md).
-This page covers installation roles, storage, and updates. Commands use the `master` branch of `oceanbase/powercontext`.
+This page covers installation roles, storage, and updates. Commands use the default installation from
+`oceanbase/powercontext`.
 
 ## Platforms and prerequisites
 
@@ -21,8 +22,8 @@ This page covers installation roles, storage, and updates. Commands use the `mas
 
 ## Choose a version
 
-The guided experience on this site comes from the specified development branch; an arbitrary published package may
-not contain the same wizard. Keep the repository and ref identical for the tool and Agent plugins:
+The guided experience on this site is provided by the current `oceanbase/powercontext` installation. Keep the Server
+tool and Agent plugins on the same installed PowerContext version:
 
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
@@ -30,8 +31,8 @@ powercontext --version
 ```
 
 `uv tool` installs an isolated environment without creating a source checkout in your current directory.
-`--force` refreshes the installation from the branch. To pin an acceptance run, use the same existing tag for the
-installation ref and setup's `--ref`, or use the same source checkout. Do not switch only the plugin to another repository's `master`.
+`--force` refreshes the installed tool. To pin an acceptance run, install a specific existing release or use the same
+source checkout for the Server and plugin. Do not switch only the plugin to another repository or version.
 
 ## Retry dependency downloads with a mirror
 
@@ -127,14 +128,14 @@ Use the wizard's configuration for the full experience.
 On the machine running the Agent, first load its `.env.client.env`, then install the corresponding plugin:
 
 ```bash
-powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup codex
 powercontext doctor codex
 ```
 
 For Claude Code:
 
 ```bash
-powercontext setup claude-code --source oceanbase/powercontext --ref master --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
+powercontext setup claude-code --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 powercontext doctor claude-code
 ```
 

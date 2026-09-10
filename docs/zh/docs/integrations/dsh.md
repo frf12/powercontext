@@ -17,7 +17,7 @@ description: 安装 PowerContext DeepSeek Harness 插件并控制其本地行为
 
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
-powercontext setup dsh --source oceanbase/powercontext --ref master
+powercontext setup dsh
 ```
 
 按照本站流程验收时，Server 和插件都使用这个源码分支。

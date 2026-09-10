@@ -94,7 +94,7 @@ Reload the client settings and install the matching plugin:
 set -a
 . ./.env.client.env
 set +a
-powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup codex
 powercontext doctor codex
 codex
 ```

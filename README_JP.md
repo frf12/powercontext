@@ -50,7 +50,7 @@ Server を起動したまま、別のターミナルで同じ設定ディレク�
 クライアント環境の読み込み、Scope の作成・紐付け、同じバージョンの Agent プラグインのインストールを行います。例：
 
 ```bash
-powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup codex
 powercontext doctor codex
 ```
 

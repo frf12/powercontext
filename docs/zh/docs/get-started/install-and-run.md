@@ -6,7 +6,7 @@ description: 选择安装版本和存储，生成配置，并启动或更新 Pow
 # 安装和运行
 
 首次使用请按[快速开始](quickstart.md)完成“安装 → 向导 → 启动 → 接入 Agent → 记忆验收”。
-本页补充安装角色、存储与更新，命令统一使用 `oceanbase/powercontext` 的 `master` 分支。
+本页补充安装角色、存储与更新，命令使用 `oceanbase/powercontext` 的默认安装来源。
 
 ## 平台与准备
 
@@ -118,14 +118,14 @@ powercontext capabilities
 在运行 Agent 的机器上执行对应命令，且先加载它自己的 `.env.client.env`：
 
 ```bash
-powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup codex
 powercontext doctor codex
 ```
 
 Claude Code 使用：
 
 ```bash
-powercontext setup claude-code --source oceanbase/powercontext --ref master --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
+powercontext setup claude-code --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 powercontext doctor claude-code
 ```
 

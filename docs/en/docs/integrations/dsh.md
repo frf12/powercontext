@@ -17,7 +17,7 @@ For this guided-setup build:
 
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
-powercontext setup dsh --source oceanbase/powercontext --ref master
+powercontext setup dsh
 ```
 
 Keep the Server package and the plugin on this same source branch when following this website's walkthrough.

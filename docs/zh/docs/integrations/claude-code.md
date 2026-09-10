@@ -28,7 +28,7 @@ Python package 和插件应使用同一个 PowerContext 仓库 ref。Hook 会校
 set -a
 . ./.env.client.env
 set +a
-powercontext setup claude-code --source oceanbase/powercontext --ref master --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
+powercontext setup claude-code --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 ```
 
 修改 Claude Code 设置前，setup 会报告设置项、插件缓存、持久化数据位置、所需权限和准确的回滚命令。
@@ -118,7 +118,7 @@ exact Revision 才是跨 Agent 的持久交接点。
 安装时设置 endpoint：
 
 ```bash
-powercontext setup claude-code --source oceanbase/powercontext --ref master \
+powercontext setup claude-code \
   --server-url http://127.0.0.1:9000 \
   --no-capture-prompts
 ```
