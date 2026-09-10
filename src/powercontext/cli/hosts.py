@@ -44,6 +44,7 @@ FIRST_CLASS_HOSTS: tuple[HostSpec, ...] = (
     HostSpec("opencode", "OpenCode"),
     HostSpec("pi", "Pi"),
     HostSpec("hermes", "Hermes"),
+    HostSpec("workbuddy", "WorkBuddy"),
 )
 HOST_NAMES: tuple[str, ...] = tuple(host.name for host in FIRST_CLASS_HOSTS)
 _HOST_INDEX: dict[str, str] = {str(index): host.name for index, host in enumerate(FIRST_CLASS_HOSTS, start=1)}
@@ -319,6 +320,10 @@ def install_host(
         from powercontext.cli.hermes import install_hermes_plugin
 
         return install_hermes_plugin(source=source, ref=ref)
+    if name == "workbuddy":
+        from powercontext.cli.workbuddy import install_workbuddy_plugin
+
+        return install_workbuddy_plugin(source=source, ref=ref)
     raise SetupSelectError.unknown_host(name)
 
 
@@ -343,6 +348,10 @@ def verify_host(name: str) -> None:
         from powercontext.cli.hermes import run_hermes_diagnostics
 
         diagnostics = run_hermes_diagnostics()
+    elif name == "workbuddy":
+        from powercontext.cli.workbuddy import run_workbuddy_diagnostics
+
+        diagnostics = run_workbuddy_diagnostics()
     elif name == "opencode":
         from powercontext.cli.opencode import run_opencode_diagnostics
 
