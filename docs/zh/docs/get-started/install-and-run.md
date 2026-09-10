@@ -33,6 +33,18 @@ powercontext --version
 需要固定验收版本时，可将安装命令中的 ref 和后续 setup 的 `--ref` 同时替换为同一个已存在的 tag；也可使用同一份源码 checkout。
 不要只把插件改成另一个仓库的 `master`。
 
+## 使用镜像重试依赖下载
+
+如果 GitHub 源码已拉取成功，但从 PyPI 下载 Python 依赖很慢，或出现网络/TLS 错误，可用阿里云 HTTPS 镜像重试本次安装：
+
+```bash
+uv tool install --force --default-index https://mirrors.aliyun.com/pypi/simple "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+```
+
+这个参数只对本条命令生效，不修改全局 uv 配置；它覆盖 Python 依赖（包括构建依赖）的下载源，不代理 GitHub 源码访问。
+如果失败发生在拉取 GitHub 源码阶段，需要另行解决 GitHub 的连接问题。镜像使用 HTTPS，无需增加 `--trusted-host`
+或关闭证书验证。安装成功后，继续下面的配置向导步骤。
+
 ## 生成配置与选择存储
 
 在专用目录运行向导：

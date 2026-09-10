@@ -39,6 +39,8 @@ cd powercontext-config
 powercontext config init --language en --output .env
 ```
 
+If Python dependency downloads are slow or fail, follow the [mirror retry instructions](https://frf12.github.io/powercontext/en/docs/get-started/install-and-run/#retry-dependency-downloads-with-a-mirror).
+
 The wizard asks about storage, local or remote access, memory capabilities, Dashboard, model APIs, and Agent
 connections. Choose **Full memory capabilities** to test automatic Memory and Topic Memory; this requires separate
 Generation and Embedding API credentials. An Agent subscription does not provide those Server credentials.

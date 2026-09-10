@@ -33,6 +33,20 @@ powercontext --version
 `--force` refreshes the installation from the branch. To pin an acceptance run, use the same existing tag for the
 installation ref and setup's `--ref`, or use the same source checkout. Do not switch only the plugin to another repository's `master`.
 
+## Retry dependency downloads with a mirror
+
+If the GitHub checkout succeeds but downloading Python dependencies from PyPI is slow or fails with a network/TLS error,
+retry this installation using the Aliyun HTTPS index:
+
+```bash
+uv tool install --force --default-index https://mirrors.aliyun.com/pypi/simple "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+```
+
+This selects the index for this command only; it does not change global uv settings. It applies to Python dependencies,
+including build dependencies, not the GitHub source checkout. If GitHub itself is unreachable, configure working GitHub
+access separately. The mirror uses HTTPS, so this command does not need `--trusted-host` or disabled certificate verification.
+After installation succeeds, continue with the configuration wizard below.
+
 ## Generate configuration and select storage
 
 Run the wizard in a dedicated directory:

@@ -39,6 +39,8 @@ cd powercontext-config
 powercontext config init --language zh --output .env
 ```
 
+Python 依赖下载缓慢或失败时，可按[镜像重试步骤](https://frf12.github.io/powercontext/zh/docs/get-started/install-and-run/#使用镜像重试依赖下载)重新安装。
+
 向导会依次询问存储、使用场景、记忆能力、Dashboard、模型 API 和 Agent 连接。
 要体验自动 Memory 提取和 Topic Memory，请选择**完整记忆能力**并准备独立的 Generation、Embedding API 凭据；
 Agent 官方订阅不会自动给 PowerContext Server 提供这些凭据。选择**基础记忆**则可显式保存与召回，无需额外模型 API。
