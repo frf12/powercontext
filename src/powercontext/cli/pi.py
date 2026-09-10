@@ -72,7 +72,11 @@ def install_pi_plugin(*, source: str, ref: str) -> PiSetupResult:
     require_pi_package(package_dir)
     _run_pi("install", str(package_dir))
     _remove_existing_pi_packages(keep=package_dir)
-    from powercontext.cli.authorization import configure_stored_authorization
+    from powercontext.cli.authorization import (
+        configure_stored_authorization,
+        setup_authorization_value,
+        setup_server_url,
+    )
 
     return PiSetupResult(
         package=PI_PACKAGE_NAME,
@@ -80,8 +84,8 @@ def install_pi_plugin(*, source: str, ref: str) -> PiSetupResult:
         data_dir=str(data_dir),
         authorization_state=configure_stored_authorization(
             "pi",
-            server_url="http://127.0.0.1:8000",
-            value=os.environ.get("POWERCONTEXT_CLIENT_API_TOKEN"),
+            server_url=setup_server_url("pi", "http://127.0.0.1:8000"),
+            value=setup_authorization_value("pi"),
         ),
     )
 

@@ -63,7 +63,11 @@ def install_dsh_plugin(*, source: str, ref: str) -> DshSetupResult:
     plugin_dir = resolve_dsh_plugin_dir(source=source, ref=ref)
     require_built_plugin(plugin_dir)
     _run_dsh("plugin", "--profile", DSH_PROFILE, "add", str(plugin_dir))
-    from powercontext.cli.authorization import configure_stored_authorization
+    from powercontext.cli.authorization import (
+        configure_stored_authorization,
+        setup_authorization_value,
+        setup_server_url,
+    )
 
     return DshSetupResult(
         plugin=DSH_PLUGIN_NAME,
@@ -71,8 +75,8 @@ def install_dsh_plugin(*, source: str, ref: str) -> DshSetupResult:
         data_dir=str(data_dir),
         authorization_state=configure_stored_authorization(
             "dsh",
-            server_url="http://127.0.0.1:8000",
-            value=os.environ.get("POWERCONTEXT_CLIENT_API_TOKEN"),
+            server_url=setup_server_url("dsh", "http://127.0.0.1:8000"),
+            value=setup_authorization_value("dsh"),
         ),
     )
 

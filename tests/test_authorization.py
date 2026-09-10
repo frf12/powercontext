@@ -1,3 +1,17 @@
+# Copyright (c) 2026 OceanBase.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import json
@@ -12,6 +26,8 @@ from powercontext.cli.authorization import (
     credential_path,
     normalize_authorization,
     read_stored_authorization,
+    setup_authorization_value,
+    setup_server_url,
     write_stored_authorization,
 )
 
@@ -81,6 +97,15 @@ def test_clear_stored_authorization_is_idempotent(tmp_path: Path) -> None:
 
     assert clear_stored_authorization(path) == "cleared"
     assert clear_stored_authorization(path) == "not_configured"
+
+
+def test_setup_uses_host_specific_credentials_and_endpoints(monkeypatch) -> None:
+    monkeypatch.setenv("POWERCONTEXT_OPENCODE_AUTHORIZATION", "Bearer host-token")
+    monkeypatch.setenv("POWERCONTEXT_OPENCODE_BASE_URL", "https://memory.example/api")
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_API_TOKEN", "Bearer shared-token")
+
+    assert setup_authorization_value("opencode") == "Bearer host-token"
+    assert setup_server_url("opencode", "http://127.0.0.1:8000") == "https://memory.example/api"
 
 
 def test_credential_path_uses_host_owned_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

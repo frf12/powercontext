@@ -28,8 +28,25 @@ from powercontext.client.settings import normalize_server_url
 
 AuthorizationStatus = Literal["configured", "not_configured", "url_mismatch", "invalid", "unsafe_permissions"]
 SetupAuthorizationStatus = Literal[
-    "configured", "preserved", "not_configured", "url_mismatch", "invalid", "unsafe_permissions"
+    "configured", "preserved", "cleared", "not_configured", "url_mismatch", "invalid", "unsafe_permissions"
 ]
+
+_AUTHORIZATION_ENVIRONMENTS = {
+    "codex": "POWERCONTEXT_CODEX_AUTHORIZATION",
+    "claude-code": "POWERCONTEXT_CLAUDE_AUTHORIZATION",
+    "opencode": "POWERCONTEXT_OPENCODE_AUTHORIZATION",
+    "pi": "POWERCONTEXT_PI_AUTHORIZATION",
+    "workbuddy": "POWERCONTEXT_WORKBUDDY_AUTHORIZATION",
+    "dsh": "POWERCONTEXT_DSH_AUTHORIZATION",
+}
+_SERVER_URL_ENVIRONMENTS = {
+    "codex": "POWERCONTEXT_CODEX_SERVER_URL",
+    "claude-code": "POWERCONTEXT_CLAUDE_SERVER_URL",
+    "opencode": "POWERCONTEXT_OPENCODE_BASE_URL",
+    "pi": "POWERCONTEXT_PI_BASE_URL",
+    "workbuddy": "POWERCONTEXT_WORKBUDDY_SERVER_URL",
+    "dsh": "POWERCONTEXT_DSH_BASE_URL",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +176,18 @@ def configure_stored_authorization(host: str, *, server_url: str, value: str | N
     return resolution.status
 
 
+def setup_authorization_value(host: str) -> str | None:
+    """Read the host-specific setup token, falling back to the shared token."""
+
+    return os.environ.get(_AUTHORIZATION_ENVIRONMENTS[host]) or os.environ.get("POWERCONTEXT_CLIENT_API_TOKEN")
+
+
+def setup_server_url(host: str, default: str) -> str:
+    """Resolve the endpoint used by a host before binding its credential."""
+
+    return os.environ.get(_SERVER_URL_ENVIRONMENTS[host], default)
+
+
 __all__ = [
     "AuthorizationResolution",
     "AuthorizationStatus",
@@ -167,5 +196,7 @@ __all__ = [
     "credential_path",
     "normalize_authorization",
     "read_stored_authorization",
+    "setup_authorization_value",
+    "setup_server_url",
     "write_stored_authorization",
 ]

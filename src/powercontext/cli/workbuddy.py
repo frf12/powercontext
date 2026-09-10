@@ -132,7 +132,11 @@ def install_workbuddy_plugin(*, source: str, ref: str, server_url: str | None = 
         _remove_path(hooks_backup)
         _remove_path(skill_backup)
 
-    from powercontext.cli.authorization import configure_stored_authorization
+    from powercontext.cli.authorization import (
+        configure_stored_authorization,
+        setup_authorization_value,
+        setup_server_url,
+    )
 
     return WorkBuddySetupResult(
         plugin=WORKBUDDY_PLUGIN_NAME,
@@ -142,8 +146,8 @@ def install_workbuddy_plugin(*, source: str, ref: str, server_url: str | None = 
         data_dir=str(data_dir),
         authorization_state=configure_stored_authorization(
             "workbuddy",
-            server_url="http://127.0.0.1:8000",
-            value=os.environ.get("POWERCONTEXT_CLIENT_API_TOKEN"),
+            server_url=setup_server_url("workbuddy", "http://127.0.0.1:8000"),
+            value=setup_authorization_value("workbuddy"),
         ),
     )
 
