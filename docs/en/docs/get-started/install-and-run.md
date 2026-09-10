@@ -107,7 +107,7 @@ powercontext server run --env-file .env
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext doctor
 powercontext ready
@@ -125,7 +125,7 @@ Use the wizard's configuration for the full experience.
 
 ## Agent installation and connection
 
-On the machine running the Agent, first load its `.env.client.env`, then install the corresponding plugin:
+On the machine running the Agent, first load the shared `.env`, then install the corresponding plugin:
 
 ```bash
 powercontext setup codex

@@ -207,7 +207,7 @@ def test_openclaw_next_steps_use_plugin_configuration_contract(tmp_path: Path) -
     )
 
     assert result.exit_code == 0, result.output
-    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    client = parse_environment(output.read_text())
     assert not any(name.startswith("POWERCONTEXT_OPENCLAW_") for name in client)
     steps = output.with_name("server.env.next-steps.md").read_text()
     assert "powercontext setup openclaw" in steps
@@ -378,12 +378,6 @@ def test_seekdb_install_failure_prints_one_manual_command(tmp_path: Path, monkey
 
 def test_dashboard_finish_shows_new_token_once_and_clear_old_bindings(tmp_path: Path) -> None:
     output = tmp_path / "server.env"
-    client = tmp_path / "server.env.client.env"
-    client.write_text(
-        "# Keep custom settings\nCUSTOM_FLAG=keep\n"
-        "POWERCONTEXT_CODEX_SCOPE_ID=old-scope\n"
-        "POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY='{}'\n"
-    )
     result = CliRunner().invoke(
         app,
         ["init", "--language", "en", "--output", str(output)],
@@ -391,7 +385,7 @@ def test_dashboard_finish_shows_new_token_once_and_clear_old_bindings(tmp_path: 
     )
     assert result.exit_code == 0, result.output
     server_values = parse_environment(output.read_text())
-    client_values = parse_environment(client.read_text())
+    client_values = server_values
     token = server_values["POWERCONTEXT_SERVER_AUTH_TOKEN"]
     saved_summary = result.output.split("Connection details", maxsplit=1)[1]
     assert result.output.count(token) == 1
@@ -405,9 +399,8 @@ def test_dashboard_finish_shows_new_token_once_and_clear_old_bindings(tmp_path: 
     assert client_values["POWERCONTEXT_CLAUDE_AUTHORIZATION"] == f"Bearer {token}"
     assert "POWERCONTEXT_CODEX_SCOPE_ID" not in client_values
     assert "POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY" not in client_values
-    assert client_values["CUSTOM_FLAG"] == "keep"
-    assert not any(key.startswith("POWERCONTEXT_SERVER_") for key in client_values)
-    assert client.stat().st_mode & 0o777 == 0o600
+    assert client_values["POWERCONTEXT_SERVER_AUTH_TOKEN"] == token
+    assert output.stat().st_mode & 0o777 == 0o600
 
 
 def test_full_memory_configuration_shares_provider_and_adds_profile_recall(tmp_path: Path) -> None:
@@ -437,12 +430,12 @@ def test_full_memory_configuration_shares_provider_and_adds_profile_recall(tmp_p
     assert "Experience every 15 minutes" in result.output
     assert "daily at 02:00" in result.output
     assert CliRunner().invoke(app, ["validate", "--env-file", str(output)]).exit_code == 0
-    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    client = parse_environment(output.read_text())
     assembly = json.loads(client["POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY"])
     families = [section["family"] for section in assembly["sections"]]
     assert families == ["memory", "profile", "topic-memory", "experience"]
     assert len(families) == len(set(families))
-    assert not any(key.startswith(inference) for key in client)
+    assert client[inference + "GENERATION_MODEL"] == "openai-chat:qwen-plus"
     assert "profile-policy" in output.with_name("server.env.next-steps.md").read_text()
     assert not (tmp_path / "context.db").exists()
 
@@ -489,7 +482,7 @@ def test_ssh_forwarding_configures_the_agent_on_the_other_computer(tmp_path: Pat
     assert result.exit_code == 0, result.output
     values = parse_environment(output.read_text())
     assert values["POWERCONTEXT_SERVER_HTTP_PORT"] == "8000"
-    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    client = parse_environment(output.read_text())
     assert "POWERCONTEXT_CODEX_SERVER_URL" not in client
     assert client["POWERCONTEXT_CLIENT_SERVER_URL"] == "http://127.0.0.1:18000"
     steps = output.with_name("server.env.next-steps.md").read_text()
@@ -636,7 +629,7 @@ def test_agents_are_selected_one_at_a_time_and_get_independent_scope_plans(tmp_p
     )
     assert result.exit_code == 0, result.output
     assert result.output.count("Select an Agent to configure") == 3
-    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    client = parse_environment(output.read_text())
     assert "POWERCONTEXT_CODEX_SCOPE_ID" not in client
     assert "POWERCONTEXT_CLAUDE_SCOPE_ID" not in client
     steps = output.with_name("server.env.next-steps.md").read_text()
@@ -657,6 +650,6 @@ def test_existing_scope_is_requested_separately_for_each_agent(tmp_path: Path) -
         ),
     )
     assert result.exit_code == 0, result.output
-    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    client = parse_environment(output.read_text())
     assert client["POWERCONTEXT_CODEX_SCOPE_ID"] == "SCOPE_CODEX"
     assert client["POWERCONTEXT_CLAUDE_SCOPE_ID"] == "SCOPE_CLAUDE"

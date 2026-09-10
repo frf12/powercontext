@@ -26,7 +26,7 @@ Python package 和插件应使用同一个 PowerContext 仓库 ref。Hook 会校
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext setup claude-code --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 ```
@@ -57,9 +57,9 @@ claude
 完整记忆还需完成[Source 与主题验收](../get-started/quickstart.md#4-用普通对话验收-topic-memory)。
 
 为新 Scope 执行 `.env.next-steps.md` 中的创建请求，把返回的真实 `scope_id` 写入
-`.env.client.env` 的 `POWERCONTEXT_CLAUDE_SCOPE_ID`，然后重新加载并开启新会话。
+`.env` 的 `POWERCONTEXT_CLAUDE_SCOPE_ID`，然后重新加载并开启新会话。
 `claude-code-xxxxxxxx` 是标题，不是 ID；不同 Agent 不会仅因名称或目录不同就自动隔离。
-客户端只需要 `.env.client.env`，不要加载 Server `.env` 的模型凭据。
+客户端加载 `.env` 即可；该文件包含完整安装配置，只应复制到可信机器。
 
 MCP endpoint 来自 setup 保存的 `server_url`，Hook 可被 `POWERCONTEXT_CLAUDE_SERVER_URL` 覆盖。
 修改环境地址后也要用同源 setup 的 `--server-url` 更新持久配置，保证两条路径一致。

@@ -47,7 +47,7 @@ def test_mixed_ssh_agents_keep_their_endpoints_and_codex_client_checks(tmp_path,
     )
 
     assert result.exit_code == 0, result.output
-    client = parse_environment(output.with_name("server.env.client.env").read_text())
+    client = parse_environment(output.read_text())
     assert client["POWERCONTEXT_CLIENT_SERVER_URL"] == "http://127.0.0.1:18000"
     assert client["POWERCONTEXT_CLAUDE_SERVER_URL"] == "http://127.0.0.1:8000"
     steps = output.with_name("server.env.next-steps.md").read_text()
@@ -66,7 +66,7 @@ def _state() -> wizard.Wizard:
 
 def test_scope_binding_reloads_client_environment_before_agent_installation(tmp_path) -> None:
     state = _state()
-    client_file = tmp_path / ".env.client.env"
+    client_file = tmp_path / ".env"
 
     steps = wizard._next_steps(state, tmp_path / ".env", client_file)
 
@@ -79,7 +79,7 @@ def test_scope_binding_reloads_client_environment_before_agent_installation(tmp_
 def _profile_script() -> str:
     state = _state()
     state.features = {"profile"}
-    steps = wizard._next_steps(state, Path("/example/.env"), Path("/example/.env.client.env"))
+    steps = wizard._next_steps(state, Path("/example/.env"), Path("/example/.env"))
     scripts = re.findall(r"python3 - <<'PY'\n(.*?)\nPY", steps, re.DOTALL)
     assert len(scripts) == 1, "Profile setup must include a runnable standard-library Python command"
     return scripts[0]

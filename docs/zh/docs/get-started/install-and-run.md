@@ -99,7 +99,7 @@ powercontext server run --env-file .env
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext doctor
 powercontext ready
@@ -115,7 +115,7 @@ powercontext capabilities
 
 ## Agent 安装与配置边界
 
-在运行 Agent 的机器上执行对应命令，且先加载它自己的 `.env.client.env`：
+在运行 Agent 的机器上执行对应命令，且先加载共享的 `.env`：
 
 ```bash
 powercontext setup codex

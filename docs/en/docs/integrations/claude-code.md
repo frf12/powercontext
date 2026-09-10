@@ -28,7 +28,7 @@ On the Claude Code machine, load the client file:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext setup claude-code --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 ```
@@ -61,9 +61,9 @@ These are separate capture/recall and explicit-tool connections; both must work.
 installation state. Complete the [Source and Topic check](../get-started/quickstart.md#4-verify-topic-memory-with-ordinary-conversation) to verify memory behavior.
 
 For a new Scope, run the creation request in `.env.next-steps.md`, write the returned real `scope_id` to
-`POWERCONTEXT_CLAUDE_SCOPE_ID` in `.env.client.env`, reload it, and start a new session. The planned
+`POWERCONTEXT_CLAUDE_SCOPE_ID` in `.env`, reload it, and start a new session. The planned
 `claude-code-xxxxxxxx` title is not an ID. Agent names and working directories do not automatically isolate data.
-Load only `.env.client.env` on the client, not the Server `.env` containing model credentials.
+Load `.env` on the client. It contains the complete installation configuration, so copy it only to trusted machines.
 
 MCP uses setup's persisted `server_url`, while `POWERCONTEXT_CLAUDE_SERVER_URL` can override the Hook.
 After changing that environment URL, also update the persisted connection with matching-source setup and `--server-url`.

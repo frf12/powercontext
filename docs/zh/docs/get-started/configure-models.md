@@ -62,7 +62,7 @@ powercontext server run --env-file .env
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities

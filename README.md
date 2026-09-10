@@ -46,7 +46,7 @@ connections. Choose **Full memory capabilities** to test automatic Memory and To
 Generation and Embedding API credentials. An Agent subscription does not provide those Server credentials.
 Choose **Basic memory** to save and retrieve memories explicitly without additional model APIs.
 
-The wizard writes `.env`, `.env.client.env` when an Agent is selected, and `.env.next-steps.md`.
+The wizard writes one `.env` environment file and `.env.next-steps.md`.
 If seekdb needs installing, it asks once and installs the dependency in the background. Follow the printed
 connection details and start Server in this terminal:
 
@@ -59,7 +59,7 @@ and check the connection:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities

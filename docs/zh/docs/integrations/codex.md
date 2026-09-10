@@ -15,7 +15,7 @@ description: 安装 PowerContext Codex 插件并控制其本地行为。
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext setup codex
 powercontext doctor codex
@@ -123,12 +123,12 @@ Server 不可用时，Hook 的恢复和采集会正常降级，不会阻塞 Code
 
 ## 使用生成的环境文件
 
-如果已通过向导生成配置，在启动 Codex 的终端中加载 `.env.client.env`。
+如果已通过向导生成配置，在启动 Codex 的终端中加载 `.env`。
 它提供 URL、Authorization 和选定的 Scope，不需要把 Server `.env` 中的模型 API key 传给 Agent：
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 codex
 ```

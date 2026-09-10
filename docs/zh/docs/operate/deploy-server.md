@@ -87,9 +87,9 @@ ssh -N -L 18000:127.0.0.1:8000 user@server
 这条隧道由 SSH 加密；地址中的 HTTP 只在两端本机环回连接上使用。
 
 在服务器上运行的 Agent 使用 `http://127.0.0.1:8000`；在客户端电脑运行的 Agent 使用
-`http://127.0.0.1:18000`。向导会询问 Agent 在哪一台机器运行。把对应的 `.env.client.env`
+`http://127.0.0.1:18000`。向导会询问 Agent 在哪一台机器运行。把 `.env`
 安全复制到 Agent 所在机器并加载，检查 `POWERCONTEXT_CLIENT_SERVER_URL` 和各 Agent 的 URL。
-不要把包含模型 API key 的 Server `.env` 复制给客户端。Codex 的 MCP URL 还需与其 Hook URL 一致，
+由于其中包含完整安装配置，只应复制到可信机器。Codex 的 MCP URL 还需与其 Hook URL 一致，
 具体见[Codex 连接步骤](../integrations/codex.md)。
 
 如果隧道启动提示端口被占用，选择空闲的本地端口，并同步修改浏览器和客户端地址。SSH 退出后转发停止，

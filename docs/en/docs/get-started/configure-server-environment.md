@@ -78,7 +78,7 @@ configuration before checking the service:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities

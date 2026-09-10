@@ -37,7 +37,7 @@ powercontext config init --language zh --output .env
 | 文件 | 用途 |
 | --- | --- |
 | `.env` | Server 配置，包括数据库、模型凭据和 Server Token |
-| `.env.client.env` | Agent 和客户端连接配置，不包含模型 API key |
+| `.env` | 本次安装使用的 Server、客户端、Agent 和模型配置 |
 | `.env.next-steps.md` | 与本次选择对应的启动、Scope 创建、插件连接和验收说明 |
 
 向导会打印 Dashboard 地址、新生成的 Token，以及所选 SSH 转发命令。以后可在 `.env` 中查看
@@ -63,7 +63,7 @@ powercontext server run --env-file .env
 ```bash
 cd ~/powercontext-demo
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities
@@ -75,7 +75,7 @@ powercontext capabilities
 ## 3. 创建 Scope 并安装 Codex 插件
 
 打开 `.env.next-steps.md`，执行其中“创建计划中的独立 Scope”的请求。Server 响应会返回真正的 `scope_id`。
-将它写入 `.env.client.env`：
+将它写入 `.env`：
 
 ```dotenv
 POWERCONTEXT_CODEX_SCOPE_ID=替换为返回的scope_id
@@ -89,7 +89,7 @@ POWERCONTEXT_CODEX_SCOPE_ID=替换为返回的scope_id
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext setup codex
 powercontext doctor codex

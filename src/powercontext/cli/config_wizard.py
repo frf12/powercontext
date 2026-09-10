@@ -1064,17 +1064,17 @@ def _finish(state: Wizard, output: Path, original_content: str) -> None:
                 "Existing data: check processing/index compatibility and maintenance requirements before restart.",
                 "已有数据：重启前请检查处理能力、索引兼容性及所需维护。",
             )
+    if state.agents and not state.client_only:
+        updated = update_document(updated, _client_updates(state), language=ui.language)
     bundle = {output: updated}
     snapshots = {output: original_content}
     client_file = output
     if state.agents and not state.client_only:
-        client_file = output.with_name(output.name + ".client.env")
-        _check_output(client_file)
-        previous = client_file.read_text(encoding="utf-8") if client_file.exists() else ""
-        snapshots[client_file] = previous
-        bundle[client_file] = update_document(previous, _client_updates(state), language=ui.language)
-        ui.say("Client-only credentials (no model API keys):", "客户端连接配置（不包含模型 API Key）：")
-        _preview(state, parse_environment(previous), parse_environment(bundle[client_file]))
+        ui.say(
+            "Agent connection settings are included in the same environment file:",
+            "Agent 连接配置已合并到同一个环境文件：",
+        )
+        _preview(state, values, parse_environment(updated))
     notes_file = output.with_name(output.name + ".next-steps.md")
     _check_output(notes_file)
     snapshots[notes_file] = notes_file.read_text(encoding="utf-8") if notes_file.exists() else ""
@@ -1221,8 +1221,8 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
             lines += [
                 ui.text(
                     "Run each Agent's commands on the computer where that Agent will run. If this is another "
-                    "computer, copy the client environment file there and adjust its path in the commands below.",
-                    "请在各 Agent 实际运行的电脑上执行其对应命令。若为另一台电脑，先把客户端环境文件复制过去，"
+                    "computer, copy the environment file there and adjust its path in the commands below.",
+                    "请在各 Agent 实际运行的电脑上执行其对应命令。若为另一台电脑，先把环境文件复制过去，"
                     "并修改下方命令中的文件路径。",
                 ),
                 "",
@@ -1242,8 +1242,8 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
             ]
         lines += [
             ui.text(
-                "Load only the client environment in the terminal that starts your Agent:",
-                "在启动 Agent 的终端中，只加载客户端环境文件：",
+                "Load the environment file in the terminal that starts your Agent:",
+                "在启动 Agent 的终端中，加载这个环境文件：",
             ),
             "",
             "```bash",
@@ -1260,10 +1260,10 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
         lines += _scope_creation_steps(state)
         lines += [
             ui.text(
-                "After saving the returned Scope IDs in the client environment file, reload it in each Agent's "
+                "After saving the returned Scope IDs in the environment file, reload it in each Agent's "
                 "terminal. Reload the edited client environment before starting a new Agent; editing a file "
                 "does not update an already running process:",
-                "将返回的 Scope ID 保存到客户端环境文件后，在各 Agent 的终端中重新加载该文件，再启动新的 "
+                "将返回的 Scope ID 保存到环境文件后，在各 Agent 的终端中重新加载该文件，再启动新的 "
                 "Agent。只编辑文件不会更新已经运行的进程：",
             ),
             "",
@@ -1342,10 +1342,8 @@ def _profile_policy_steps(state: Wizard) -> list[str]:
     if not state.agents and state.values.get(f"{SERVER}AUTH_TOKEN"):
         lines += [
             ui.text(
-                "No Agent client environment was generated. Replace <server-token> with the Server token saved "
-                "in your environment file before running the Profile command:",
-                "本次未生成 Agent 客户端环境文件。执行 Profile 命令前，请将 <server-token> 替换为服务器环境文件"
-                "中保存的 Server Token：",
+                "Replace <server-token> with the Server token saved in your environment file before running the Profile command:",
+                "执行 Profile 命令前，请将 <server-token> 替换为环境文件中保存的 Server Token：",
             ),
             "",
             "```bash",
@@ -1526,8 +1524,8 @@ def _scope_binding_instruction(state: Wizard, spec: AgentSpec) -> str:
         message = f"missing Scope configuration for {spec.identifier}"
         raise RuntimeError(message)
     return state.ui.text(
-        f"Then set {scope_name} to the returned scope_id in the client environment file.",
-        f"然后把返回的 scope_id 写入客户端环境文件的 {scope_name}。",
+        f"Then set {scope_name} to the returned scope_id in the environment file.",
+        f"然后把返回的 scope_id 写入环境文件的 {scope_name}。",
     )
 
 

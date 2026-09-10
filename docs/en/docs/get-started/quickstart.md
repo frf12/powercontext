@@ -39,7 +39,7 @@ The wizard writes:
 | File | Purpose |
 | --- | --- |
 | `.env` | Server settings, database, model credentials, and Server token |
-| `.env.client.env` | Client and Agent connection settings, without model API keys |
+| `.env` | Server, client, Agent, and model settings used by this installation |
 | `.env.next-steps.md` | Startup, Scope creation, plugin connection, and checks for your choices |
 
 The final screen shows the Dashboard URL, a newly generated token, and the SSH command when selected. Later, look up
@@ -66,7 +66,7 @@ Open another terminal, load the client settings, and check the running service:
 ```bash
 cd ~/powercontext-demo
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities
@@ -78,7 +78,7 @@ it is not a successful full-memory check. `config validate` checks configuration
 ## 3. Create a Scope and install the Codex plugin
 
 Open `.env.next-steps.md` and run the request under “Create the planned isolated Scopes”. The Server returns the real
-`scope_id`. Add it to `.env.client.env`:
+`scope_id`. Add it to `.env`:
 
 ```dotenv
 POWERCONTEXT_CODEX_SCOPE_ID=replace-with-returned-scope-id
@@ -92,7 +92,7 @@ Reload the client settings and install the matching plugin:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext setup codex
 powercontext doctor codex

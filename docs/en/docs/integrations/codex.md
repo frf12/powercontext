@@ -15,7 +15,7 @@ On the Codex machine, load the client settings and install the matching plugin:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext setup codex
 powercontext doctor codex
@@ -133,12 +133,12 @@ authorization value.
 
 ## Use a generated environment file
 
-After generating configuration with the wizard, load `.env.client.env` in the terminal that starts Codex.
+After generating configuration with the wizard, load `.env` in the terminal that starts Codex.
 It supplies the URL, Authorization, and selected Scope without exposing the Server's model API keys:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 codex
 ```

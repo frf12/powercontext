@@ -66,7 +66,7 @@ In another terminal, load only the client file:
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities

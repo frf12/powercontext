@@ -91,8 +91,8 @@ SSH encrypts the tunnel; the HTTP connections use loopback at each endpoint.
 
 An Agent on the Server machine uses `http://127.0.0.1:8000`; an Agent on the client computer uses
 `http://127.0.0.1:18000`. The wizard asks which machine hosts the Agent. Securely transfer the corresponding
-`.env.client.env` to that machine and load it. Check `POWERCONTEXT_CLIENT_SERVER_URL` and the Agent-specific URL.
-Do not transfer the Server `.env` with its model API keys to clients. Codex's MCP URL must also match its Hook URL;
+`.env` to that machine and load it. Check `POWERCONTEXT_CLIENT_SERVER_URL` and the Agent-specific URL. Copy it only
+to a trusted machine because it contains the complete installation configuration. Codex's MCP URL must also match its Hook URL;
 see [Codex connection steps](../integrations/codex.md).
 
 If the local port is occupied, choose another port and update the browser/client URLs together. The tunnel stops

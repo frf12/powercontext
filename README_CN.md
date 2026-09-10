@@ -45,7 +45,7 @@ Python 依赖下载缓慢或失败时，可按[镜像重试步骤](https://frf12
 要体验自动 Memory 提取和 Topic Memory，请选择**完整记忆能力**并准备独立的 Generation、Embedding API 凭据；
 Agent 官方订阅不会自动给 PowerContext Server 提供这些凭据。选择**基础记忆**则可显式保存与召回，无需额外模型 API。
 
-向导生成 `.env`、所选 Agent 的 `.env.client.env` 和 `.env.next-steps.md`。
+向导生成一个 `.env` 环境文件和 `.env.next-steps.md`。
 选择 seekdb 且缺少依赖时，会在确认后后台增量安装。按照最后打印的连接信息，在当前终端启动 Server：
 
 ```bash
@@ -56,7 +56,7 @@ powercontext server run --env-file .env
 
 ```bash
 set -a
-. ./.env.client.env
+. ./.env
 set +a
 powercontext ready
 powercontext capabilities
