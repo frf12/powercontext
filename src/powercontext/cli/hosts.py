@@ -48,7 +48,7 @@ FIRST_CLASS_HOSTS: tuple[HostSpec, ...] = (
 )
 HOST_NAMES: tuple[str, ...] = tuple(host.name for host in FIRST_CLASS_HOSTS)
 _HOST_INDEX: dict[str, str] = {str(index): host.name for index, host in enumerate(FIRST_CLASS_HOSTS, start=1)}
-_INTEGRATION_KEYS = frozenset({"plugin", "package", "skill"})
+_INTEGRATION_KEYS = frozenset({"plugin", "package", "skill", "settings", "mcp"})
 _PATH_MISSING = "is not installed or is not on PATH"
 
 
@@ -428,6 +428,10 @@ def diagnose_host(name: str) -> dict[str, Diagnostic]:
         from powercontext.cli.hermes import run_hermes_diagnostics
 
         return run_hermes_diagnostics()
+    if name == "workbuddy":
+        from powercontext.cli.workbuddy import run_workbuddy_diagnostics
+
+        return run_workbuddy_diagnostics()
     raise SetupSelectError.unknown_host(name)
 
 
@@ -444,7 +448,8 @@ def split_host_diagnostics(
 def classify_host_presence(cli: Diagnostic, integrations: tuple[tuple[str, Diagnostic], ...]) -> str:
     """Mark a host missing only when PATH lookup failed and the integration was skipped."""
 
-    if _PATH_MISSING in cli.detail and all(diagnostic.status.value == "skipped" for _, diagnostic in integrations):
+    missing_cli = _PATH_MISSING in cli.detail or "WorkBuddy hooks are not installed" in cli.detail
+    if missing_cli and all(diagnostic.status.value == "skipped" for _, diagnostic in integrations):
         return "missing"
     return "present"
 
