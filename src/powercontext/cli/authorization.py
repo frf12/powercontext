@@ -69,6 +69,7 @@ def credential_path(host: str) -> Path:
         "opencode": Path(os.environ.get("OPENCODE_CONFIG_DIR", Path.home() / ".config" / "opencode")).expanduser(),
         "pi": Path(os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi" / "agent")).expanduser(),
         "workbuddy": Path(os.environ.get("WORKBUDDY_HOME", Path.home() / ".workbuddy")).expanduser(),
+        "dsh": Path(os.environ.get("DSH_HOME", Path.home() / ".dsh")).expanduser(),
     }
     try:
         root = roots[host]

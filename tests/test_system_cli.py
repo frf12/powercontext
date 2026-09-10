@@ -1021,6 +1021,7 @@ def test_setup_dsh_adds_plugin_from_a_local_checkout(tmp_path: Path, monkeypatch
         "plugin": "powercontext-dsh",
         "plugin_path": str(plugin),
         "data_dir": str(tmp_path / "data"),
+        "authorization_state": "not_configured",
     }
     assert run_dsh.call_args_list[0].args == (
         "plugin",
