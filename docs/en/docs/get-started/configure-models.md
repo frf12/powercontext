@@ -143,6 +143,17 @@ Check the returned cursor and the Scope's Memory/Source references. `idle` can m
 it does not necessarily mean no memory exists. Memory flush does not complete all Topic/Profile/Experience processing.
 Use `powercontext stats --scope-id "$POWERCONTEXT_CODEX_SCOPE_ID"` to inspect usage.
 
+For a repeatable acceptance record, assign a source identifier before sending the test input and inspect the resulting
+entry. The list response exposes `current_cursor` and each entry's `position`, `entry_id`, `source_refs`, and `matched_by`
+fields; these let you distinguish captured evidence from a later generated Artifact.
+
+```bash
+SOURCE_ID="quickstart-$(date +%s)-$$"
+echo "Send the acceptance input with source id: $SOURCE_ID"
+curl -fsS "$POWERCONTEXT_CLIENT_SERVER_URL/v1/memory/entries/list?scope_id=$POWERCONTEXT_CODEX_SCOPE_ID" \
+  -H "Authorization: Bearer $POWERCONTEXT_CLIENT_API_TOKEN"
+```
+
 | Symptom | Check first |
 | --- | --- |
 | No Source | Hook loading, capture setting, matching URL/token/Scope |

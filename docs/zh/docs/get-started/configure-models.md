@@ -137,6 +137,16 @@ curl -fsS -X POST "$POWERCONTEXT_CLIENT_SERVER_URL/v1/memory/flush" \
 不代表没有记忆；Memory flush 也不等于 Topic/Profile/Experience 的全部处理完成。
 查看用量可运行 `powercontext stats --scope-id "$POWERCONTEXT_CODEX_SCOPE_ID"`。
 
+为了让验收记录可复现，在发送测试输入前先分配一个来源标识，再检查返回的条目。列表响应包含 `current_cursor`，
+每个条目包含 `position`、`entry_id`、`source_refs` 和 `matched_by`；这些字段可以区分采集到的证据与之后生成的制品。
+
+```bash
+SOURCE_ID="quickstart-$(date +%s)-$$"
+echo "请将测试输入标记为来源：$SOURCE_ID"
+curl -fsS "$POWERCONTEXT_CLIENT_SERVER_URL/v1/memory/entries/list?scope_id=$POWERCONTEXT_CODEX_SCOPE_ID" \
+  -H "Authorization: Bearer $POWERCONTEXT_CLIENT_API_TOKEN"
+```
+
 | 现象 | 优先检查 |
 | --- | --- |
 | Source 为空 | Hook 是否加载、采集是否启用、URL/Token/Scope 是否一致 |

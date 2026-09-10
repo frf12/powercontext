@@ -11,7 +11,7 @@ Plugin skills 和 MCP configuration 的 Agent 使用。
 先 clone 仓库，或使用一个已经包含集成 package 的源码 checkout：
 
 ```bash
-git clone --branch master https://github.com/oceanbase/powercontext.git
+git clone https://github.com/oceanbase/powercontext.git
 cd powercontext
 ```
 
