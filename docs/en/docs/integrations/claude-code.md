@@ -30,7 +30,7 @@ On the Claude Code machine, load the client file:
 set -a
 . ./.env.client.env
 set +a
-powercontext setup claude-code --source frf12/powercontext --ref codex/guided-config --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
+powercontext setup claude-code --source oceanbase/powercontext --ref master --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 ```
 
 Before changing Claude Code settings, setup reports the settings entry, plugin cache, persistent data location,
@@ -126,7 +126,7 @@ processing produces Memory.
 Set the endpoint during setup:
 
 ```bash
-powercontext setup claude-code --source frf12/powercontext --ref codex/guided-config \
+powercontext setup claude-code --source oceanbase/powercontext --ref master \
   --server-url http://127.0.0.1:9000 \
   --no-capture-prompts
 ```

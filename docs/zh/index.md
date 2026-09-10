@@ -19,13 +19,13 @@ home:
     title: 从安装到第一条记忆
     lead: 先部署 Server，通过向导选择所需能力，再接入 Agent。完整指南覆盖本机使用和从其他设备访问。
     preview_label: 配置向导验收版。
-    preview_note: 本站安装命令使用 frf12/powercontext 的 codex/guided-config 分支，用于新用户验收，尚非正式发布版本。
+    preview_note: 本站安装命令使用 oceanbase/powercontext 的官方 master 分支。
     repository_label: 查看当前源码分支
     guide_label: 按完整指南开始
     steps:
       - title: 安装 PowerContext
         description: 准备 Python 3.11 或更高版本、Git 和 uv，在运行 Server 的机器上安装本分支。
-        command: uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+        command: uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
       - title: 完成配置向导
         description: 依次选择存储、访问场景、记忆能力、Dashboard 和 Agent。向导会生成配置文件，以及适合当前配置的后续操作说明。
         command: powercontext config init

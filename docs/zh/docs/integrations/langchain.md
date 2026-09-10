@@ -20,14 +20,14 @@ checkpointer。
 middleware 源码独立打包为 `powercontext-langchain`，要求 LangChain 1.3 或更高版本。目前该包没有发布到 PyPI：
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 powercontext server run
 ```
 
 保持 Server 运行，然后在 LangChain 应用自己的环境中安装 middleware：
 
 ```bash
-uv pip install "powercontext-langchain @ git+https://github.com/frf12/powercontext.git@codex/guided-config#subdirectory=integrations/langchain"
+uv pip install "powercontext-langchain @ git+https://github.com/oceanbase/powercontext.git@master#subdirectory=integrations/langchain"
 ```
 
 应用已经连接到单独管理的 Server 时，可以跳过 Server 安装。在仓库 checkout 中可使用

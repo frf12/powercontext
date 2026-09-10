@@ -16,7 +16,7 @@ You need Python 3.11+, Git, and
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 powercontext server run
 ```
 

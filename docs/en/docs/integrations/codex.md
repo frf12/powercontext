@@ -17,7 +17,7 @@ On the Codex machine, load the client settings and install the matching plugin:
 set -a
 . ./.env.client.env
 set +a
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 

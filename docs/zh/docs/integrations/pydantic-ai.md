@@ -16,8 +16,8 @@ description: 了解当前 Pydantic AI 适配器 API 和安装状态。
 在应用环境中添加相同 ref 的 Client 和适配器。以下示例使用 OpenAI：
 
 ```bash
-uv add "powercontext[client] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
-uv add "powercontext-pydantic-ai @ git+https://github.com/frf12/powercontext.git@codex/guided-config#subdirectory=integrations/pydantic-ai"
+uv add "powercontext[client] @ git+https://github.com/oceanbase/powercontext.git@master"
+uv add "powercontext-pydantic-ai @ git+https://github.com/oceanbase/powercontext.git@master#subdirectory=integrations/pydantic-ai"
 uv add "pydantic-ai-slim[openai]>=2.29,<3"
 ```
 

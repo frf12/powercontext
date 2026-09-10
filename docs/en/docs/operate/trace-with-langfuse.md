@@ -38,7 +38,7 @@ URL of your region, such as `https://cloud.langfuse.com` or `https://us.cloud.la
 Recording and export require the `tracing-otlp` extra:
 
 ```bash
-uv tool install --force "powercontext[cli,server,tracing-otlp] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server,tracing-otlp] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 Without this extra, enabling tracing fails at startup with an explicit error instead of silently dropping spans.

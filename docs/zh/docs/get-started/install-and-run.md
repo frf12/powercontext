@@ -6,7 +6,7 @@ description: 选择安装版本和存储，生成配置，并启动或更新 Pow
 # 安装和运行
 
 首次使用请按[快速开始](quickstart.md)完成“安装 → 向导 → 启动 → 接入 Agent → 记忆验收”。
-本页补充安装角色、存储与更新，命令统一使用 `frf12/powercontext` 的 `codex/guided-config` 分支。
+本页补充安装角色、存储与更新，命令统一使用 `oceanbase/powercontext` 的 `master` 分支。
 
 ## 平台与准备
 
@@ -25,7 +25,7 @@ description: 选择安装版本和存储，生成配置，并启动或更新 Pow
 安装工具和 Agent 插件时保持仓库及 ref 一致：
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 powercontext --version
 ```
 
@@ -38,7 +38,7 @@ powercontext --version
 如果 GitHub 源码已拉取成功，但从 PyPI 下载 Python 依赖很慢，或出现网络/TLS 错误，可用阿里云 HTTPS 镜像重试本次安装：
 
 ```bash
-uv tool install --force --default-index https://mirrors.aliyun.com/pypi/simple "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force --default-index https://mirrors.aliyun.com/pypi/simple "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 这个参数只对本条命令生效，不修改全局 uv 配置；它覆盖 Python 依赖（包括构建依赖）的下载源，不代理 GitHub 源码访问。
@@ -81,7 +81,7 @@ powercontext config init --language zh --output .env
 也可以在首次安装时带上依赖：
 
 ```bash
-uv tool install --force "powercontext[cli,server,seekdb] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server,seekdb] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 seekdb 使用 `POWERCONTEXT_SERVER_DATABASE_PATH` 指定本地目录，不接受 SQLite/SQLAlchemy 的
@@ -118,14 +118,14 @@ powercontext capabilities
 在运行 Agent 的机器上执行对应命令，且先加载它自己的 `.env.client.env`：
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 
 Claude Code 使用：
 
 ```bash
-powercontext setup claude-code --source frf12/powercontext --ref codex/guided-config --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
+powercontext setup claude-code --source oceanbase/powercontext --ref master --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 powercontext doctor claude-code
 ```
 
@@ -146,7 +146,7 @@ MCP、Hook、浏览器应使用同一个服务，Scope 必须使用 Server 实�
 `uv tool` 的隔离环境不会给另一 Python 项目提供可导入的 SDK。应用需要 Client SDK 时，在应用目录执行：
 
 ```bash
-uv add "powercontext[client] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv add "powercontext[client] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 进程内组合使用 `builtin`，独立服务使用 `server`，客户端 SDK 使用 `client`，命令行使用 `cli`。

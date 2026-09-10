@@ -16,7 +16,7 @@ PowerContext は、会話をまたいでもコンテキストを作業ととも�
 
 [Web サイト](https://frf12.github.io/powercontext/en/) · [インストール手順](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
 
-この fork は `codex/guided-config` ブランチの対話式セットアップを提供します。
+上流の `master` ブランチが対話式セットアップを提供します。
 以下のコマンドと Web サイトは同じソースを使用します。PyPI リリースにはこのウィザードは含まれません。
 
 ## 作業の続きをそのまま引き継ぐ
@@ -30,7 +30,7 @@ PowerContext は、会話をまたいでもコンテキストを作業ととも�
 Git、uv、Agent CLI を用意して、このブランチからインストールします：
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 mkdir -p powercontext-config
 cd powercontext-config
 powercontext config init --language en --output .env
@@ -50,7 +50,7 @@ Server を起動したまま、別のターミナルで同じ設定ディレク�
 クライアント環境の読み込み、Scope の作成・紐付け、同じバージョンの Agent プラグインのインストールを行います。例：
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 

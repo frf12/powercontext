@@ -6,7 +6,7 @@ description: Choose a version and storage, generate configuration, and start or 
 # Install and run
 
 For the complete installation → wizard → startup → Agent connection → memory check, follow [Quick Start](quickstart.md).
-This page covers installation roles, storage, and updates. Commands use the `codex/guided-config` branch of `frf12/powercontext`.
+This page covers installation roles, storage, and updates. Commands use the `master` branch of `oceanbase/powercontext`.
 
 ## Platforms and prerequisites
 
@@ -25,7 +25,7 @@ The guided experience on this site comes from the specified development branch; 
 not contain the same wizard. Keep the repository and ref identical for the tool and Agent plugins:
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 powercontext --version
 ```
 
@@ -39,7 +39,7 @@ If the GitHub checkout succeeds but downloading Python dependencies from PyPI is
 retry this installation using the Aliyun HTTPS index:
 
 ```bash
-uv tool install --force --default-index https://mirrors.aliyun.com/pypi/simple "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force --default-index https://mirrors.aliyun.com/pypi/simple "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 This selects the index for this command only; it does not change global uv settings. It applies to Python dependencies,
@@ -88,7 +88,7 @@ command. If no compatible wheel exists, use SQLite/OceanBase or a supported Pyth
 You can also include the dependency during the initial installation:
 
 ```bash
-uv tool install --force "powercontext[cli,server,seekdb] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server,seekdb] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 seekdb uses a local `POWERCONTEXT_SERVER_DATABASE_PATH`, not a SQLite/SQLAlchemy
@@ -127,14 +127,14 @@ Use the wizard's configuration for the full experience.
 On the machine running the Agent, first load its `.env.client.env`, then install the corresponding plugin:
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 
 For Claude Code:
 
 ```bash
-powercontext setup claude-code --source frf12/powercontext --ref codex/guided-config --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
+powercontext setup claude-code --source oceanbase/powercontext --ref master --server-url "$POWERCONTEXT_CLAUDE_SERVER_URL"
 powercontext doctor claude-code
 ```
 
@@ -158,7 +158,7 @@ An isolated `uv tool` environment does not expose an importable SDK to another P
 Install the Client SDK in that project's environment:
 
 ```bash
-uv add "powercontext[client] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv add "powercontext[client] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 Use `builtin` for in-process composition, `server` for a standalone service, `client` for the SDK, and `cli` for commands.

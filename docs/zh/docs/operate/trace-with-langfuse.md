@@ -35,7 +35,7 @@ docker compose up -d
 recording 和 export 需要 `tracing-otlp` extra：
 
 ```bash
-uv tool install --force "powercontext[cli,server,tracing-otlp] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server,tracing-otlp] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 缺少该 extra 时，启用 tracing 会在启动阶段直接报错，而不是静默丢弃 span。

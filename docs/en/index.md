@@ -19,13 +19,13 @@ home:
     title: From installation to your first memory
     lead: Start with a Server, configure the capabilities you need, then connect your Agent. The guide covers local use and access from another device.
     preview_label: Guided setup preview.
-    preview_note: These instructions use the frf12/powercontext fork at codex/guided-config. This is an acceptance build, not an official release.
+    preview_note: These instructions use the official oceanbase/powercontext master branch.
     repository_label: View this source branch
     guide_label: Follow the complete guide
     steps:
       - title: Install PowerContext
         description: Use Python 3.11 or later, Git, and uv. Install this branch on the machine that will run the Server.
-        command: uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+        command: uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
       - title: Follow the configuration wizard
         description: Choose your storage, access scenario, memory capabilities, Dashboard, and Agents. It writes configuration files and tailored next steps.
         command: powercontext config init

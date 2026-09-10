@@ -34,7 +34,7 @@ powercontext doctor hermes
 确认 Git 能够读取仓库：
 
 ```bash
-git ls-remote https://github.com/frf12/powercontext.git refs/heads/codex/guided-config
+git ls-remote https://github.com/oceanbase/powercontext.git refs/heads/master
 ```
 
 如果失败，请配置 Git 使用的 credential helper 或 SSH key，再重新运行 `uv tool install`。`uv` 使用 Git
@@ -75,7 +75,7 @@ powercontext doctor pi
 使用与工具一致的 ref 重新安装：
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 codex plugin list --json
 ```
 
@@ -85,7 +85,7 @@ codex plugin list --json
 
 ```bash
 powercontext doctor claude-code
-powercontext setup claude-code --source frf12/powercontext --ref codex/guided-config
+powercontext setup claude-code --source oceanbase/powercontext --ref master
 claude plugin list --json
 ```
 
@@ -99,7 +99,7 @@ setup 前已有的对象会保留。修正命令报告的 Claude CLI 或仓库�
 
 ```bash
 powercontext doctor dsh
-powercontext setup dsh --source frf12/powercontext --ref codex/guided-config
+powercontext setup dsh --source oceanbase/powercontext --ref master
 dsh --profile web --dump-config
 ```
 
@@ -110,7 +110,7 @@ dsh --profile web --dump-config
 
 ```bash
 powercontext doctor pi
-powercontext setup pi --source frf12/powercontext --ref codex/guided-config
+powercontext setup pi --source oceanbase/powercontext --ref master
 pi list
 ```
 

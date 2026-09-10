@@ -21,14 +21,14 @@ The middleware source is packaged separately as `powercontext-langchain` and req
 not currently published on PyPI:
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 powercontext server run
 ```
 
 Keep the Server running, then install the middleware in the LangChain application's environment:
 
 ```bash
-uv pip install "powercontext-langchain @ git+https://github.com/frf12/powercontext.git@codex/guided-config#subdirectory=integrations/langchain"
+uv pip install "powercontext-langchain @ git+https://github.com/oceanbase/powercontext.git@master#subdirectory=integrations/langchain"
 ```
 
 Skip the Server installation when the application already connects to a separately managed Server. From a repository

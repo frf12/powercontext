@@ -38,7 +38,7 @@ The commands below use Bash on macOS or Linux. Windows support is `experimental`
 
 Run each check command in a terminal. All four commands should print a version instead of `command not found`. The Git
 credentials already configured on the machine must also be able to read
-`https://github.com/frf12/powercontext.git`.
+`https://github.com/oceanbase/powercontext.git`.
 
 ### Prepare three work areas
 
@@ -56,7 +56,7 @@ in Memory or a Handoff.
 From any directory in **Terminal B**, run:
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 `uv tool install` creates an isolated application environment. It does not leave a PowerContext checkout in the
@@ -79,7 +79,7 @@ terminal, and repeat these two checks.
 Still in **Terminal B**, run:
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 ```
 
 Setup performs three operations:

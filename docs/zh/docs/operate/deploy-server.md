@@ -5,7 +5,7 @@ description: 使用持久化数据、健康检查、鉴权和安全网络边界�
 
 # 部署 Server
 
-先按[快速开始](../get-started/quickstart.md)从 `frf12/powercontext` 的 `codex/guided-config` 分支安装并生成配置。
+先按[快速开始](../get-started/quickstart.md)从 `oceanbase/powercontext` 的 `master` 分支安装并生成配置。
 本页接着说明长期运行和远程访问。Server 与 Agent 位于不同机器时，分别在对应机器完成安装，插件使用同一仓库和 ref。
 
 Windows 支持为 `experimental`。

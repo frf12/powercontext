@@ -13,7 +13,7 @@ description: 安装 PowerContext OpenCode 插件并控制其本地行为。
 插件要求 OpenCode 1.18.21 或更新的 1.x 版本。插件应与 PowerContext Server、CLI 使用同一 Git ref：
 
 ```bash
-powercontext setup opencode --source frf12/powercontext --ref codex/guided-config
+powercontext setup opencode --source oceanbase/powercontext --ref master
 ```
 
 该命令会全局注册原生插件，并把属于 PowerContext 的 `project-context` Skill 安装到 OpenCode 配置目录。

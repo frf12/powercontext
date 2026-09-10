@@ -36,7 +36,7 @@ durable Handoff 流程，不代表所有 Agent 的交互方式。
 | Codex CLI | 已完成登录并能开启会话 | `codex --version` |
 
 在终端中逐条运行检查命令。四条命令都应输出版本号，而不是 `command not found`。还需要确保本机现有 Git
-凭据能够读取 `https://github.com/frf12/powercontext.git`。
+凭据能够读取 `https://github.com/oceanbase/powercontext.git`。
 
 ### 准备三个工作位置
 
@@ -53,7 +53,7 @@ durable Handoff 流程，不代表所有 Agent 的交互方式。
 在**终端 B** 的任意目录中运行：
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
 `uv tool install` 会创建隔离的应用环境，不会在当前目录留下 PowerContext 仓库副本。`--force` 会按当前
@@ -74,7 +74,7 @@ powercontext --help
 仍在**终端 B** 中运行：
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 ```
 
 setup 会完成三件事：

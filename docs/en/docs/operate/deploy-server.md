@@ -5,7 +5,7 @@ description: Run PowerContext with persistent data, health checks, authenticatio
 
 # Deploy the Server
 
-First install from the `codex/guided-config` branch of `frf12/powercontext` and generate configuration with
+First install from the `master` branch of `oceanbase/powercontext` and generate configuration with
 [Quick Start](../get-started/quickstart.md). This page covers persistent operation and remote access.
 When Server and Agent run on different machines, install on each machine and keep the plugin repository and ref matched.
 

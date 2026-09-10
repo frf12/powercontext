@@ -16,7 +16,7 @@ PowerContext keeps context with the work across conversations. When you return, 
 
 [Website](https://frf12.github.io/powercontext/) · [Installation walkthrough](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
 
-This fork provides the guided-setup build on `codex/guided-config`. The commands and website below use that same
+The upstream repository provides the guided setup on `master`. The commands and website below use that same
 source version; installing the PyPI release does not install this wizard.
 
 ## Pick up where the work left off
@@ -33,7 +33,7 @@ Python 3.11+ is required; uv can provision it. macOS and Linux are supported; Wi
 Install this build and open the interactive configuration wizard in a dedicated directory:
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 mkdir -p powercontext-config
 cd powercontext-config
 powercontext config init --language en --output .env
@@ -71,7 +71,7 @@ covers Codex and Claude Code, Dashboard login, SSH forwarding, HTTPS prerequisit
 For example, the matching Codex installation is:
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 

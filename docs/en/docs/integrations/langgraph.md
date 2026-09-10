@@ -17,7 +17,7 @@ primitives that are stable public API. It never starts or embeds the Server.
 The package is not yet published to PyPI, so install it from source alongside a running Server:
 
 ```bash
-uv pip install "powercontext-langgraph @ git+https://github.com/frf12/powercontext.git@codex/guided-config#subdirectory=integrations/langgraph"
+uv pip install "powercontext-langgraph @ git+https://github.com/oceanbase/powercontext.git@master#subdirectory=integrations/langgraph"
 powercontext server run
 ```
 

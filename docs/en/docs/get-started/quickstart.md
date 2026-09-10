@@ -6,8 +6,8 @@ description: Configure full memory, connect Codex, and verify Source capture, To
 # Quick Start
 
 Start with installation, discuss a project in Codex, watch its input become Source evidence and an evolving topic,
-then recover the decisions in a new session. These instructions use the `codex/guided-config` branch of
-`frf12/powercontext` for both the Server and the Agent plugin.
+then recover the decisions in a new session. These instructions use the `master` branch of
+`oceanbase/powercontext` for both the Server and the Agent plugin.
 
 You need macOS or Linux, Python 3.11+, Git, [uv](https://docs.astral.sh/uv/getting-started/installation/),
 and an installed Codex CLI. Full memory also needs working Generation and Embedding model APIs:
@@ -18,7 +18,7 @@ and recall; that does not enable automatic Topic Memory.
 ## 1. Install and open the wizard
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 mkdir -p ~/powercontext-demo
 cd ~/powercontext-demo
 powercontext config init --language en --output .env
@@ -94,7 +94,7 @@ Reload the client settings and install the matching plugin:
 set -a
 . ./.env.client.env
 set +a
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 codex
 ```

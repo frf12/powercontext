@@ -11,7 +11,7 @@ description: Install the PowerContext WorkBuddy hooks and control its local beha
 ## Prerequisites
 
 - A running PowerContext installation. Install the CLI and local Server from the same `master` revision used below:
-  `uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"`.
+  `uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"`.
   Start the Server with `powercontext server run`.
 - WorkBuddy with user-level hooks, MCP, and Skills support (the desktop app).
 - Python 3.11 or newer on `PATH` for the hook process.
@@ -28,7 +28,7 @@ The CLI installs the hooks, MCP server, and Skill from a local checkout or a
 GitHub source in one step:
 
 ```bash
-powercontext setup workbuddy --source frf12/powercontext --ref codex/guided-config
+powercontext setup workbuddy --source oceanbase/powercontext --ref master
 ```
 
 For a local checkout, point `--source` at the repository root or the plugin

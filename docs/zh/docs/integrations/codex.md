@@ -17,7 +17,7 @@ description: 安装 PowerContext Codex 插件并控制其本地行为。
 set -a
 . ./.env.client.env
 set +a
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 

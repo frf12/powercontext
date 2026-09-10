@@ -16,7 +16,7 @@ PowerContext 让上下文跟随工作，跨越不同的对话。你回来时，�
 
 [网站](https://frf12.github.io/powercontext/zh/) · [完整安装流程](https://frf12.github.io/powercontext/zh/docs/get-started/quickstart/)
 
-本仓库提供 `codex/guided-config` 分支的配置向导版本。下面的安装命令和网站文档使用同一份源码；
+上游仓库的 `master` 分支提供配置向导。下面的安装命令和网站文档使用同一份源码；
 直接安装 PyPI 发布版不会得到这套向导。
 
 ## 从当前进展继续
@@ -33,7 +33,7 @@ PowerContext 让上下文跟随工作，跨越不同的对话。你回来时，�
 安装本分支版本，然后在独立目录里打开交互式配置向导：
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 mkdir -p powercontext-config
 cd powercontext-config
 powercontext config init --language zh --output .env
@@ -67,7 +67,7 @@ powercontext capabilities
 SSH 隧道、HTTPS 前提及逐项验收。例如，匹配本版本的 Codex 安装命令是：
 
 ```bash
-powercontext setup codex --source frf12/powercontext --ref codex/guided-config
+powercontext setup codex --source oceanbase/powercontext --ref master
 powercontext doctor codex
 ```
 
