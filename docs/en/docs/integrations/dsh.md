@@ -13,20 +13,19 @@ description: Install the PowerContext DeepSeek Harness plugin and control its lo
 Install DeepSeek Harness and make sure its Web profile is available. The real-host acceptance suite pins DSH
 0.1.2-rc.1. Choose one PowerContext installation path and keep the Server and plugin together.
 
-For released PowerContext 0.2.0:
+For this guided-setup build:
 
 ```bash
-uv tool install --force "powercontext[cli,server]==0.2.0"
-powercontext setup dsh --source oceanbase/powercontext --ref powercontext-v0.2.0
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+powercontext setup dsh --source frf12/powercontext --ref codex/guided-config
 ```
 
-Release 0.2.0 includes the direct-operation Scope error boundary. The layered Doctor and automatic snapshot
-presentation described below require the current development checkout; do not expect them in that release.
+Keep the Server package and the plugin on this same source branch when following this website's walkthrough.
 
 For development, install both components from one checkout and record its commit:
 
 ```bash
-git clone --branch master https://github.com/oceanbase/powercontext.git powercontext-dsh-dev
+git clone --branch codex/guided-config https://github.com/frf12/powercontext.git powercontext-dsh-dev
 git -C powercontext-dsh-dev rev-parse HEAD
 uv tool install --force "./powercontext-dsh-dev[cli,server]"
 powercontext setup dsh --source ./powercontext-dsh-dev
@@ -34,7 +33,7 @@ powercontext setup dsh --source ./powercontext-dsh-dev
 
 To update, run `git -C powercontext-dsh-dev pull --ff-only`, record the new commit, and repeat both installation
 commands. A local source must contain the checked-in built `lib/index.js`.
-`setup dsh --source oceanbase/powercontext --ref master` reuses a valid cached checkout without fetching:
+`setup dsh --source frf12/powercontext --ref codex/guided-config` reuses a valid cached checkout without fetching:
 repeating that command does not update a moving branch. A broken checkout is replaced.
 
 `setup dsh` calls `dsh plugin --profile web add`; it does not start the Server. Restart DSH after installation.

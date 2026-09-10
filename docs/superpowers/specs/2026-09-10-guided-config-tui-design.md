@@ -179,7 +179,8 @@ selection, confirmation, hidden input, final preview, and cancel-without-write b
 10. Every remote-access choice produces a distinct listener/client configuration and accurately states the external
     work still required.
 11. Dashboard, full-memory, shared-model, recommended-schedule, and Scope choices display their important consequences
-    before the user leaves the relevant step.
+    before the user leaves the relevant step. Recommended schedules come from per-Artifact runtime metadata rather than
+    one shared interval, and the UI names each selected Artifact's effective recommendation.
 12. Partial editing does not make one module unexpectedly re-run unrelated configuration modules.
 13. The generated context-assembly configuration contains each requested family once, and network-port validation has
     no unreachable duplicate branch.

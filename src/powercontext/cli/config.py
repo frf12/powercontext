@@ -548,7 +548,7 @@ def _validate_storage_location(configuration: GeneratedConfiguration) -> None:
         and configuration.database_path is not None
         and not Path(configuration.database_path).expanduser().is_absolute()
     ):
-        raise ConfigError("seekDB path must be absolute")  # noqa: TRY003
+        raise ConfigError("seekdb path must be absolute")  # noqa: TRY003
     if configuration.database_kind != "sqlite" or configuration.database_url is None:
         return
     from sqlalchemy.engine import make_url
@@ -838,7 +838,7 @@ def _select_value(prompt: str, choices: Sequence[tuple[str, str]], default: str)
 
 def _collect_database() -> tuple[str, str | None, str | None]:
     choices = ("sqlite", "oceanbase", "seekdb")
-    labels = ("SQLite", "OceanBase", "embedded seekDB")
+    labels = ("SQLite", "OceanBase", "embedded seekdb")
     kind = choices[_choose("Database", labels, 1) - 1]
     if kind == "oceanbase":
         value = typer.prompt(
@@ -849,7 +849,7 @@ def _collect_database() -> tuple[str, str | None, str | None]:
         ).strip()
         return kind, value or None, None
     if kind == "seekdb":
-        value = typer.prompt("seekDB path (empty uses user data directory)", default="").strip()
+        value = typer.prompt("seekdb path (empty uses user data directory)", default="").strip()
         return kind, None, value or None
     value = typer.prompt("SQLite URL (empty uses user data database)", default="").strip()
     return kind, value or None, None

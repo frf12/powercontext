@@ -20,7 +20,7 @@ activated. Backend failures do not interrupt the Hermes conversation.
 - a running PowerContext Server.
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
 powercontext server run
 ```
 
@@ -29,7 +29,7 @@ powercontext server run
 In another terminal, install or refresh both plugins from the matching revision:
 
 ```bash
-powercontext setup hermes --source oceanbase/powercontext --ref master
+powercontext setup hermes --source frf12/powercontext --ref codex/guided-config
 powercontext doctor hermes
 ```
 

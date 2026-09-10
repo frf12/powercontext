@@ -15,14 +15,26 @@ import socket
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from textwrap import dedent
 
 import typer
 from pydantic import ValidationError
 from sqlalchemy.engine import URL, make_url
 
+from powercontext.builtin.runtime.processing_registry import (
+    RECOMMENDED_PROCESSING_SCHEDULE_SECONDS,
+    RECOMMENDED_PROFILE_CRON,
+    RECOMMENDED_PROFILE_TIMEZONE,
+)
 from powercontext.cli.config_wizard_agents import AGENT_SPEC_BY_ID, AGENT_SPECS, AgentSpec, preferred_agent
 from powercontext.cli.config_wizard_document import read_sqlite_summary, update_document
+from powercontext.cli.config_wizard_installation import installation_source
 from powercontext.cli.config_wizard_models import collect_models
+from powercontext.cli.config_wizard_seekdb import (
+    SeekDBInstallTask,
+    inspect_seekdb_dependency,
+    start_seekdb_install,
+)
 from powercontext.cli.config_wizard_ui import WizardUI, choose_language
 from powercontext.cli.env_file import EnvironmentFileError, parse_environment
 from powercontext.client.settings import normalize_server_url
@@ -62,11 +74,14 @@ class Wizard:
     advanced: bool = False
     scenario: str = "local"
     forwarded_address: str = ""
+    ssh_tunnel_command: str = ""
+    generated_auth_token: str = ""
     agents: tuple[str, ...] = ()
     agent_addresses: dict[str, str] = field(default_factory=dict)
     agent_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     planned_scopes: dict[str, str] = field(default_factory=dict)
     storage_summary: dict[str, object] = field(default_factory=dict)
+    seekdb_install_task: SeekDBInstallTask | None = None
 
     def patch(self, updates: dict[str, str | None]) -> None:
         self.updates.update(updates)
@@ -89,6 +104,7 @@ def run_wizard(output: Path, *, language: str | None = None, advanced: bool = Fa
     from powercontext.cli.config import ConfigError
 
     output = output.expanduser().absolute()
+    state: Wizard | None = None
     try:
         _check_output(output)
         content = output.read_text(encoding="utf-8") if output.exists() else ""
@@ -141,6 +157,9 @@ def run_wizard(output: Path, *, language: str | None = None, advanced: bool = Fa
             message = "Invalid configuration; review the selected module / 配置无效，请检查所选模块"
         typer.echo(f"Configuration error / 配置错误: {message}", err=True)
         raise typer.Exit(2) from None
+    finally:
+        if state is not None and state.seekdb_install_task is not None and not state.seekdb_install_task.done():
+            state.seekdb_install_task.cancel()
 
 
 def _check_output(path: Path) -> None:
@@ -157,7 +176,7 @@ def _storage(state: Wizard) -> None:
         "数据准备存在哪里，或连接哪个已有服务？",
         [
             ("sqlite", "Local SQLite file", "本机 SQLite 文件"),
-            ("seekdb", "Local embedded seekDB", "本机嵌入式 seekDB"),
+            ("seekdb", "Local embedded seekdb", "本机嵌入式 seekdb"),
             ("oceanbase", "OceanBase database", "OceanBase 数据库"),
             ("remote", "Connect to an existing PowerContext Server", "接入已有 PowerContext Server"),
         ],
@@ -201,8 +220,8 @@ def _storage(state: Wizard) -> None:
         path = (
             Path(
                 ui.ask(
-                    "seekDB directory",
-                    "seekDB 数据目录",
+                    "seekdb directory",
+                    "seekdb 数据目录",
                     default=state.values.get(f"{SERVER}DATABASE_PATH", str(default_seekdb_path())),
                     required=True,
                 )
@@ -211,10 +230,7 @@ def _storage(state: Wizard) -> None:
             .absolute()
         )
         state.patch({f"{SERVER}DATABASE_PATH": str(path), f"{SERVER}DATABASE_URL": None})
-        state.note(
-            "seekDB has not been opened; install the seekdb extra and verify platform support before starting.",
-            "未打开 seekDB；启动前请安装 seekdb 扩展依赖并确认平台支持。",
-        )
+        _prepare_seekdb_dependency(state)
     else:
         previous = state.values.get(f"{SERVER}DATABASE_URL", "")
         if not previous.startswith("mysql+aoceanbase:"):
@@ -262,6 +278,42 @@ def _existing_server(state: Wizard) -> None:
     if token:
         state.client[f"{CLIENT}API_TOKEN"] = token
     state.note("Server capabilities and connectivity have not been tested.", "尚未验证已有服务的能力与连通性。")
+
+
+def _prepare_seekdb_dependency(state: Wizard) -> None:
+    dependency = inspect_seekdb_dependency()
+    if dependency.status == "ready":
+        state.ui.say(
+            f"seekdb dependency is ready, version {dependency.version}.",
+            f"seekdb 依赖已就绪，版本 {dependency.version}。",
+        )
+        return
+    if dependency.status == "unavailable" or dependency.plan is None:
+        state.note(
+            f"seekdb dependency cannot be installed automatically: {dependency.reason}.",
+            f"seekdb 依赖无法自动安装：{dependency.reason}。",
+        )
+        return
+    if not state.ui.confirm(
+        "The seekdb dependency is missing (about 110–130 MB). Install it in the background while you continue?",
+        "尚未安装 seekdb 依赖（约 110–130 MB）。是否在后台安装并继续配置？",
+    ):
+        state.note(
+            "seekdb dependency installation was skipped; install it before starting Server.",
+            "已跳过 seekdb 依赖安装；启动 Server 前必须先完成安装。",
+        )
+        return
+    state.seekdb_install_task = start_seekdb_install(dependency.plan)
+    if dependency.plan.prefer_aliyun:
+        state.ui.say(
+            "China timezone detected; seekdb dependency installation started in the background using the Aliyun mirror.",
+            "检测到中国时区；seekdb 依赖已通过阿里云镜像在后台开始安装，你可以继续配置。",
+        )
+    else:
+        state.ui.say(
+            "seekdb dependency installation started in the background; you can continue configuring.",
+            "seekdb 依赖已在后台开始安装，你可以继续配置。",
+        )
 
 
 def _scenario(state: Wizard) -> None:
@@ -321,7 +373,8 @@ def _capabilities(state: Wizard) -> None:
     changes: dict[str, str | None] = {}
     for family in ("memory", "topic-memory", "experience"):
         key = f"{RUNTIME}{family.upper().replace('-', '_')}_SCHEDULE_SECONDS"
-        changes[key] = state.values.get(key, "60") if family in state.features else None
+        recommended = RECOMMENDED_PROCESSING_SCHEDULE_SECONDS[family]
+        changes[key] = state.values.get(key, str(recommended)) if family in state.features else None
     changes[f"{RUNTIME}SCHEDULE_SECONDS"] = None
     changes[f"{RUNTIME}PROFILE_SCHEDULE_ENABLED"] = str("profile" in state.features).lower()
     changes[f"{RUNTIME}MEMORY_RERANK_ENABLED"] = str("rerank" in state.features).lower()
@@ -386,15 +439,26 @@ def _stored_network_port(state: Wizard) -> tuple[int, bool]:
 
 def _custom_access(state: Wizard, port: int) -> tuple[str, int, str]:
     """Return the custom bind host, port, and client-visible URL."""
+    stored_host = state.values.get(f"{SERVER}HTTP_HOST", "127.0.0.1")
+    default_host = "0.0.0.0" if stored_host in {"127.0.0.1", "localhost", "::1"} else stored_host  # noqa: S104
     host = state.ui.ask(
         "Server bind address (not the client URL)",
         "Server 监听地址（不是客户端 URL）",
-        default=state.values.get(f"{SERVER}HTTP_HOST", "127.0.0.1"),
+        default=default_host,
         required=True,
     )
     port = state.ui.integer("Server port", "Server 端口", default=port, maximum=65535)
+    state.ui.say(
+        "The built-in Server provides HTTP only. The client URL below must be the HTTPS address exposed by your "
+        "existing proxy, gateway, or load balancer.",
+        "内置 Server 只提供 HTTP。下面的客户端 URL 必须填写现有反向代理、网关或负载均衡对外提供的 HTTPS 地址。",
+    )
     address = _server_url(state.ui, state.values.get(f"{SERVER}PUBLIC_URL", ""))
     state.patch({f"{SERVER}PUBLIC_URL": address})
+    state.note(
+        "PowerContext does not provide HTTPS itself; configure TLS termination for the client-visible URL separately.",
+        "PowerContext 本身不提供 HTTPS；客户端访问地址所需的 TLS 终止必须单独配置。",
+    )
     return host, port, address
 
 
@@ -423,9 +487,10 @@ def _ssh_forwarding_access(state: Wizard, port: int, dashboard: bool) -> tuple[s
         "Forwarded port on your other computer", "另一台电脑上的转发端口", default=18000, maximum=65535
     )
     state.forwarded_address = f"http://127.0.0.1:{local_port}"
+    state.ssh_tunnel_command = f"ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}"
     state.note(
-        f"Run on the client computer: ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}",
-        f"在客户端电脑执行：ssh -N -L {local_port}:127.0.0.1:{port} {shlex.quote(remote_host)}",
+        f"Run on the client computer: {state.ssh_tunnel_command}",
+        f"在客户端电脑执行：{state.ssh_tunnel_command}",
     )
     if dashboard:
         state.note(
@@ -446,6 +511,7 @@ def _network(state: Wizard) -> None:
     )
     port, invalid_port = _stored_network_port(state)
     state.forwarded_address = ""
+    state.ssh_tunnel_command = ""
     if state.scenario == "local" and (invalid_port or port != 8000):
         port = ui.integer("Server port", "Server 端口", default=port, maximum=65535)
     host = "127.0.0.1"
@@ -484,10 +550,13 @@ def _network(state: Wizard) -> None:
     )
     if authenticated and not token:
         token = secrets.token_urlsafe(32)
+        state.generated_auth_token = token
         ui.say(
-            "A private Server token will be generated; its value is not displayed.",
-            "将生成私有 Server 令牌，终端不显示令牌值。",
+            "A private Server token will be generated and shown once after the files are saved.",
+            "将生成私有 Server Token，并在文件保存成功后显示一次。",
         )
+    else:
+        state.generated_auth_token = ""
     updates: dict[str, str | None] = {
         f"{SERVER}HTTP_HOST": host,
         f"{SERVER}HTTP_PORT": str(port),
@@ -503,7 +572,11 @@ def _network(state: Wizard) -> None:
     if token:
         state.client[f"{CLIENT}API_TOKEN"] = token
     if dashboard:
-        state.note(f"Dashboard: {address}/dashboard/home", f"Dashboard：{address}/dashboard/home")
+        dashboard_address = state.forwarded_address or address
+        state.note(
+            f"Dashboard: {dashboard_address}/dashboard/home",
+            f"Dashboard：{dashboard_address}/dashboard/home",
+        )
 
 
 def _infer_features(state: Wizard) -> None:
@@ -570,8 +643,8 @@ def _processing(state: Wizard) -> None:
         [
             (
                 "recommended",
-                "Use recommended schedules (families every 60 seconds; Profile daily at 02:00)",
-                "使用推荐周期（各记忆能力每 60 秒检查；Profile 每天 02:00）",
+                _recommended_schedule_summary(automatic, "en"),
+                _recommended_schedule_summary(automatic, "zh"),
             ),
             ("custom", "Customize each schedule", "逐项自定义周期"),
         ],
@@ -580,16 +653,25 @@ def _processing(state: Wizard) -> None:
     recommended = schedule_mode == "recommended"
     for family in sorted(automatic - {"profile"}):
         key = f"{RUNTIME}{family.upper().replace('-', '_')}_SCHEDULE_SECONDS"
-        default = int(float(state.values.get(key, "60")))
+        family_recommended = RECOMMENDED_PROCESSING_SCHEDULE_SECONDS[family]
+        default = int(float(state.values.get(key, str(family_recommended))))
         seconds = (
-            60
+            family_recommended
             if recommended
             else ui.integer(f"{family}: check interval (seconds)", f"{family}：检查间隔（秒）", default=default)
         )
         state.patch({key: str(seconds)})
     if "profile" in automatic:
-        cron = "0 2 * * *" if recommended else state.values.get(f"{RUNTIME}PROFILE_CRON", "0 2 * * *")
-        timezone = "Asia/Shanghai" if recommended else state.values.get(f"{RUNTIME}PROFILE_TIMEZONE", "Asia/Shanghai")
+        cron = (
+            RECOMMENDED_PROFILE_CRON
+            if recommended
+            else state.values.get(f"{RUNTIME}PROFILE_CRON", RECOMMENDED_PROFILE_CRON)
+        )
+        timezone = (
+            RECOMMENDED_PROFILE_TIMEZONE
+            if recommended
+            else state.values.get(f"{RUNTIME}PROFILE_TIMEZONE", RECOMMENDED_PROFILE_TIMEZONE)
+        )
         if not recommended:
             cron = ui.ask("Profile cron", "Profile 定时表达式", default=cron, required=True)
             timezone = ui.ask("Profile timezone", "Profile 时区", default=timezone, required=True)
@@ -611,6 +693,31 @@ def _processing(state: Wizard) -> None:
             "Experience requires task-outcome Sources and creates candidates for review, not automatic approval.",
             "Experience 需要 task-outcome 任务结果，只生成待审候选，不会自动批准。",
         )
+
+
+def _recommended_schedule_summary(automatic: set[str], language: str) -> str:
+    names = {"memory": "Memory", "topic-memory": "Topic Memory", "experience": "Experience"}
+    parts: list[str] = []
+    for family in ("memory", "topic-memory", "experience"):
+        if family not in automatic:
+            continue
+        seconds = RECOMMENDED_PROCESSING_SCHEDULE_SECONDS[family]
+        if language == "zh":
+            duration = f"{seconds // 60} 分钟" if seconds % 60 == 0 else f"{seconds} 秒"
+            parts.append(f"{names[family]} 每 {duration}")
+        else:
+            if seconds % 60 == 0:
+                minutes = seconds // 60
+                duration = f"{minutes} minute" + ("s" if minutes != 1 else "")
+            else:
+                duration = f"{seconds} seconds"
+            parts.append(f"{names[family]} every {duration}")
+    if "profile" in automatic:
+        parts.append("Profile 每天 02:00" if language == "zh" else "Profile daily at 02:00")
+    joined = "；".join(parts) if language == "zh" else "; ".join(parts)
+    if language == "zh":
+        return f"使用各 Artifact 推荐周期（{joined}）"
+    return f"Use Artifact-specific recommended schedules ({joined})"
 
 
 def _advanced(state: Wizard) -> None:
@@ -721,8 +828,12 @@ def _configure_agent(state: Wizard, agent: AgentSpec) -> None:
         )
         if location == "other":
             address = state.forwarded_address
+        else:
+            address = f"http://127.0.0.1:{state.values.get(f'{SERVER}HTTP_PORT', '8000')}"
     if state.scenario != "local":
         address = _server_url(ui, address)
+    if not state.agent_addresses or agent.identifier == "codex":
+        state.client[f"{CLIENT}SERVER_URL"] = address
     capture = True
     if state.advanced:
         capture = ui.confirm(
@@ -963,6 +1074,8 @@ def _finish(state: Wizard, output: Path, original_content: str) -> None:
         ui.say("No changes written.", "未写入任何文件。")
         return
     _save_bundle(state, bundle, snapshots)
+    _finish_seekdb_install(state)
+    _show_connection_details(state, output, values, notes_file)
 
 
 def _save_bundle(state: Wizard, bundle: dict[Path, str], snapshots: dict[Path, str]) -> None:
@@ -986,6 +1099,83 @@ def _save_bundle(state: Wizard, bundle: dict[Path, str], snapshots: dict[Path, s
     )
 
 
+def _finish_seekdb_install(state: Wizard) -> None:
+    task = state.seekdb_install_task
+    if task is None:
+        return
+    if not task.done():
+        state.ui.section("Finishing seekdb dependency installation", "正在完成 seekdb 依赖安装")
+        state.ui.wait_for_activity(task.done, task.phase, task.elapsed_seconds)
+    result = task.wait()
+    if result.status == "ready":
+        state.ui.say(
+            f"seekdb dependency installation completed, version {result.version}.",
+            f"seekdb 依赖安装完成，版本 {result.version}。",
+        )
+        return
+    if result.status == "unsupported":
+        state.ui.say(
+            "No compatible seekdb package is available for this Python and platform. Choose SQLite or OceanBase instead.",
+            "当前 Python 与平台没有兼容的 seekdb 安装包，请改用 SQLite 或 OceanBase。",
+        )
+        return
+    state.ui.say(
+        f"seekdb dependency installation failed: {result.reason}.",
+        f"seekdb 依赖安装失败：{result.reason}。",
+    )
+    if result.manual_command:
+        state.ui.say("Install it manually before starting Server:", "启动 Server 前请手动执行：")
+        typer.echo(result.manual_command)
+
+
+def _show_connection_details(state: Wizard, output: Path, values: dict[str, str], notes_file: Path) -> None:
+    """Print the URLs and commands that need immediate user attention after a successful save."""
+
+    ui = state.ui
+    ui.section("Connection details", "连接与下一步")
+    if not state.client_only:
+        command = f"powercontext server run --env-file {shlex.quote(str(output))}"
+        ui.say(f"Start Server: {command}", f"启动 Server：{command}")
+    if state.ssh_tunnel_command:
+        ui.say(
+            f"Run on the client computer: {state.ssh_tunnel_command}",
+            f"在客户端电脑执行 SSH 隧道：{state.ssh_tunnel_command}",
+        )
+    base_url = _connection_base_url(state, values)
+    if values.get(f"{SERVER}DASHBOARD_ENABLED") == "true" and base_url:
+        ui.say(f"Dashboard: {base_url}/dashboard/home", f"Dashboard：{base_url}/dashboard/home")
+    if values.get(f"{SERVER}MCP_ENABLED") == "true" and base_url:
+        path = values.get(f"{SERVER}MCP_PATH", "/mcp")
+        ui.say(f"MCP endpoint: {base_url}{path}", f"MCP 地址：{base_url}{path}")
+    token = values.get(f"{SERVER}AUTH_TOKEN", "")
+    if state.generated_auth_token:
+        ui.say(
+            "Server token (shown only this time; do not paste it into logs, screenshots, or issues):",
+            "Server Token（仅本次显示；请勿粘贴到日志、截图或 Issue）：",
+        )
+        typer.echo(state.generated_auth_token)
+    if token:
+        ui.say(
+            f"Later, find POWERCONTEXT_SERVER_AUTH_TOKEN in {output}",
+            f"以后可在 {output} 中查找 POWERCONTEXT_SERVER_AUTH_TOKEN",
+        )
+    ui.say(f"Full instructions: {notes_file}", f"完整操作说明：{notes_file}")
+
+
+def _connection_base_url(state: Wizard, values: dict[str, str]) -> str:
+    if state.forwarded_address:
+        return state.forwarded_address.rstrip("/")
+    if address := state.client.get(f"{CLIENT}SERVER_URL"):
+        return address.rstrip("/")
+    if address := values.get(f"{SERVER}PUBLIC_URL"):
+        return address.rstrip("/")
+    host = values.get(f"{SERVER}HTTP_HOST", "127.0.0.1")
+    if host in {"0.0.0.0", "::", "[::]"}:  # noqa: S104 - normalize wildcard listeners for a local browser URL
+        host = "127.0.0.1"
+    port = values.get(f"{SERVER}HTTP_PORT", "8000")
+    return f"http://{host}:{port}"
+
+
 def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
     ui = state.ui
     lines = [
@@ -1005,7 +1195,40 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
             "```",
             "",
         ]
+        if state.values.get(f"{SERVER}AUTH_TOKEN"):
+            lines += [
+                ui.text(
+                    f"The Server token is stored as `POWERCONTEXT_SERVER_AUTH_TOKEN` in `{output}`. "
+                    "Do not paste it into logs or issues.",
+                    f"Server Token 保存在 `{output}` 的 `POWERCONTEXT_SERVER_AUTH_TOKEN` 中；"
+                    "请勿将其粘贴到日志或 Issue。",
+                ),
+                "",
+            ]
     if state.agents or state.client_only:
+        if state.scenario != "local":
+            lines += [
+                ui.text(
+                    "Run each Agent's commands on the computer where that Agent will run. If this is another "
+                    "computer, copy the client environment file there and adjust its path in the commands below.",
+                    "请在各 Agent 实际运行的电脑上执行其对应命令。若为另一台电脑，先把客户端环境文件复制过去，"
+                    "并修改下方命令中的文件路径。",
+                ),
+                "",
+            ]
+        if state.ssh_tunnel_command:
+            lines += [
+                ui.text(
+                    "On the other computer, start the SSH tunnel in a separate terminal and leave it running "
+                    "before using the forwarded URLs:",
+                    "在另一台电脑的独立终端中启动 SSH 隧道并保持运行，然后再使用转发后的地址：",
+                ),
+                "",
+                "```bash",
+                state.ssh_tunnel_command,
+                "```",
+                "",
+            ]
         lines += [
             ui.text(
                 "Load only the client environment in the terminal that starts your Agent:",
@@ -1021,26 +1244,28 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
             "```",
             "",
         ]
+        lines += _alternate_client_check_steps(state)
     if state.planned_scopes:
         lines += _scope_creation_steps(state)
-    lines += _agent_installation_steps(state)
-    if "profile" in state.features:
         lines += [
             ui.text(
-                "Profile needs a real Scope and its generation policy; the file alone does not enable that policy.",
-                "Profile 需要真实 Scope 及其生成策略；仅保存本文件不会启用该 Scope 策略。",
+                "After saving the returned Scope IDs in the client environment file, reload it in each Agent's "
+                "terminal. Reload the edited client environment before starting a new Agent; editing a file "
+                "does not update an already running process:",
+                "将返回的 Scope ID 保存到客户端环境文件后，在各 Agent 的终端中重新加载该文件，再启动新的 "
+                "Agent。只编辑文件不会更新已经运行的进程：",
             ),
             "",
-            "PUT /v1/scopes/{scope_id}/profile-policy",
-            "",
-            '{"generation_enabled":true,"activation_mode":"review_required","expected_version":0}',
-            "",
-            ui.text(
-                "Read the existing policy first and use its version for updates.",
-                "先读取现有策略，更新时使用真实版本。",
-            ),
+            "```bash",
+            "set -a",
+            f". {shlex.quote(str(client_file))}",
+            "set +a",
+            "```",
             "",
         ]
+    lines += _agent_installation_steps(state)
+    if "profile" in state.features:
+        lines += _profile_policy_steps(state)
     lines += ["## " + ui.text("Checks and pending steps", "验收与待完成项"), ""]
     lines += ["- " + note for note in state.notes]
     lines += [
@@ -1061,21 +1286,166 @@ def _next_steps(state: Wizard, output: Path, client_file: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _agent_installation_steps(state: Wizard) -> list[str]:
-    if not state.agents:
+def _alternate_client_check_steps(state: Wizard) -> list[str]:
+    if len(set(state.agent_addresses.values())) < 2:
         return []
     lines = [
         state.ui.text(
-            "Install the plugin from this same checkout (or the matching release ref):",
-            "从同一份源码目录（或匹配的发行版本）安装插件：",
+            "The shared Client CLI URL follows Codex when configured, otherwise the first Agent. "
+            "Each Agent retains its own endpoint. To check an Agent at another endpoint, run its checks "
+            "on that Agent's computer with the URL explicitly selected:",
+            "通用 Client CLI 地址采用 Codex 的地址；未配置 Codex 时采用首个 Agent 的地址。"
+            "各 Agent 保留各自的连接地址。检查其他地址时，请在对应 Agent 的电脑上显式指定 URL：",
+        ),
+        "",
+    ]
+    for agent, address in state.agent_addresses.items():
+        lines += [
+            f"### {AGENT_SPEC_BY_ID[agent].en}",
+            "",
+            "```bash",
+            f"POWERCONTEXT_CLIENT_SERVER_URL={shlex.quote(address)} powercontext ready",
+            f"POWERCONTEXT_CLIENT_SERVER_URL={shlex.quote(address)} powercontext capabilities",
+            "```",
+            "",
+        ]
+    return lines
+
+
+def _profile_policy_steps(state: Wizard) -> list[str]:
+    ui = state.ui
+    lines = [
+        "## " + ui.text("Enable Profile for each Scope", "为各 Scope 开启 Profile"),
+        "",
+        ui.text(
+            "After loading the client environment, run the matching command on each Agent's computer. "
+            "It reads the current policy version before enabling generation with review_required. "
+            "A missing policy (HTTP 404) is created with expected_version=0; any other failure stops the command. "
+            "Profile candidates will need your review before activation.",
+            "加载客户端环境后，在各 Agent 的电脑上执行对应命令。命令先读取策略的当前版本，再以 review_required "
+            "开启生成；策略不存在（HTTP 404）时使用 expected_version=0 创建，其他错误会停止执行。"
+            "生成的 Profile 候选需审核后才生效。",
+        ),
+        "",
+    ]
+    if not state.agents and state.values.get(f"{SERVER}AUTH_TOKEN"):
+        lines += [
+            ui.text(
+                "No Agent client environment was generated. Replace <server-token> with the Server token saved "
+                "in your environment file before running the Profile command:",
+                "本次未生成 Agent 客户端环境文件。执行 Profile 命令前，请将 <server-token> 替换为服务器环境文件"
+                "中保存的 Server Token：",
+            ),
+            "",
+            "```bash",
+            "export POWERCONTEXT_CLIENT_API_TOKEN='<server-token>'",
+            "```",
+            "",
+        ]
+    for identifier in state.agents or (None,):
+        spec = AGENT_SPEC_BY_ID[identifier] if identifier else None
+        scope_name = spec.environment_name(spec.scope_setting) if spec else None
+        bound = scope_name and (scope_name in state.client or identifier in state.planned_scopes)
+        if not bound:
+            scope_name = "POWERCONTEXT_PROFILE_SCOPE_ID"
+        address = state.agent_addresses[identifier] if identifier else _connection_base_url(state, state.values)
+        authorization_name = spec.environment_name(spec.authorization_setting) if spec else None
+        lines += ["### " + (spec.en if spec else "Scope"), ""]
+        if not bound:
+            lines += [
+                ui.text(
+                    "Replace <scope-id> with the real Scope ID used by this Agent or selected in Dashboard:",
+                    "请将 <scope-id> 替换为该 Agent 使用的或 Dashboard 中选中的真实 Scope ID：",
+                ),
+                "",
+                "```bash",
+                "export POWERCONTEXT_PROFILE_SCOPE_ID='<scope-id>'",
+                "```",
+                "",
+            ]
+        lines += ["```bash", "python3 - <<'PY'"]
+        lines += _profile_policy_script(address, scope_name or "POWERCONTEXT_PROFILE_SCOPE_ID", authorization_name)
+        lines += ["PY", "```", ""]
+    return lines
+
+
+def _profile_policy_script(address: str, scope_name: str, authorization_name: str | None) -> list[str]:
+    return dedent(f"""\
+        import json
+        import os
+        import sys
+        from urllib.error import HTTPError, URLError
+        from urllib.parse import quote
+        from urllib.request import Request, urlopen
+
+        scope_id = os.environ.get({scope_name!r}, "").strip()
+        if not scope_id or scope_id == "<scope-id>":
+            sys.exit("Set {scope_name} to a real Scope ID and reload the client environment first.")
+        address = {address!r}
+        url = address.rstrip("/") + "/v1/scopes/" + quote(scope_id, safe="") + "/profile-policy"
+        headers = {{"Accept": "application/json", "Content-Type": "application/json"}}
+        authorization = os.environ.get({authorization_name or ""!r}, "")
+        if not authorization and os.environ.get("POWERCONTEXT_CLIENT_API_TOKEN"):
+            authorization = "Bearer " + os.environ["POWERCONTEXT_CLIENT_API_TOKEN"]
+        if authorization:
+            headers["Authorization"] = authorization
+        try:
+            with urlopen(Request(url, headers=headers), timeout=30) as response:
+                current = json.load(response)
+            version = current.get("version") if isinstance(current, dict) else None
+            if type(version) is not int or version < 1:
+                sys.exit("GET profile policy returned an invalid version; no policy was changed.")
+        except HTTPError as error:
+            error.close()
+            if error.code != 404:
+                sys.exit(f"GET profile policy failed (HTTP {{error.code}}); no policy was changed.")
+            version = 0
+        except (URLError, OSError, ValueError):
+            sys.exit("GET profile policy failed; check connectivity and the Server. No policy was changed.")
+        payload = json.dumps({{
+            "generation_enabled": True,
+            "activation_mode": "review_required",
+            "expected_version": version,
+        }}).encode()
+        try:
+            with urlopen(Request(url, data=payload, headers=headers, method="PUT"), timeout=30) as response:
+                json.load(response)
+        except HTTPError as error:
+            error.close()
+            sys.exit(f"PUT profile policy failed (HTTP {{error.code}}); resolve the error and rerun this command.")
+        except (URLError, OSError, ValueError):
+            sys.exit("Could not confirm the Profile policy update; check connectivity and rerun this command.")
+        print("Profile generation enabled with review_required for Scope " + scope_id)
+        """).splitlines()
+
+
+def _agent_installation_steps(state: Wizard) -> list[str]:
+    if not state.agents:
+        return []
+    source = installation_source(Path(__file__))
+    lines = [
+        state.ui.text(
+            "Install the plugin from the same source as this PowerContext installation:",
+            "从当前 PowerContext 安装使用的相同来源安装插件：",
+        )
+        if source is not None
+        else state.ui.text(
+            "The source of this installed package could not be identified. Choose the matching repository and branch "
+            "or tag before installing your Agent plugin. Consult the setup options below:",
+            "无法确定当前安装包的源码来源。安装 Agent 插件前，请选择与当前版本匹配的仓库及分支或标签。"
+            "可通过以下命令查看安装选项：",
         ),
         "",
         "```bash",
     ]
-    source = Path(__file__).resolve().parents[3]
     for agent in state.agents:
         spec = AGENT_SPEC_BY_ID[agent]
-        command = f"powercontext setup {agent} --source {shlex.quote(str(source))}"
+        if source is None:
+            lines.append(f"powercontext setup {agent} --help")
+            continue
+        command = f"powercontext setup {agent} --source {shlex.quote(source.source)}"
+        if source.ref:
+            command += f" --ref {shlex.quote(source.ref)}"
         if spec.setup_server_url:
             command += f" --server-url {shlex.quote(state.agent_addresses[agent])}"
         lines += [command, f"powercontext doctor {agent}"]

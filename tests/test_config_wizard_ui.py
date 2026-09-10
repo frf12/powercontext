@@ -243,6 +243,21 @@ def test_required_value_and_integer_retry_in_selected_language() -> None:
     assert observed == ["alice", 9000]
 
 
+def test_redirected_activity_wait_is_quiet_and_waits_until_done() -> None:
+    ui = wizard_ui.WizardUI("zh", interactive=False)
+    checks = iter((False, False, True))
+    sleeps: list[float] = []
+
+    ui.wait_for_activity(
+        lambda: next(checks),
+        lambda: "installing",
+        sleep=sleeps.append,
+        interval=0.01,
+    )
+
+    assert sleeps == [0.01, 0.01]
+
+
 @pytest.mark.parametrize(("entered", "expected"), [("是", True), ("否", False), ("y", True), ("n", False), ("", True)])
 def test_chinese_confirmation_accepts_local_and_english_answers(entered, expected) -> None:
     observed = []

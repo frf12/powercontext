@@ -16,7 +16,7 @@ description: 把 LangGraph 图连接到运行中的 PowerContext Server，获得
 该包尚未发布到 PyPI，请从源码安装，并配合一个运行中的 Server：
 
 ```bash
-uv pip install "powercontext-langgraph @ git+https://github.com/oceanbase/powercontext.git@master#subdirectory=integrations/langgraph"
+uv pip install "powercontext-langgraph @ git+https://github.com/frf12/powercontext.git@codex/guided-config#subdirectory=integrations/langgraph"
 powercontext server run
 ```
 

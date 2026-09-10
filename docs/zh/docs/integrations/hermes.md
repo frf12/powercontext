@@ -19,7 +19,7 @@ provider 把召回、采集和显式操作发送给单独运行的 PowerContext 
 - PowerContext Server 正在运行。
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
 powercontext server run
 ```
 
@@ -28,7 +28,7 @@ powercontext server run
 在另一个终端从同一 revision 安装或刷新两个插件：
 
 ```bash
-powercontext setup hermes --source oceanbase/powercontext --ref master
+powercontext setup hermes --source frf12/powercontext --ref codex/guided-config
 powercontext doctor hermes
 ```
 

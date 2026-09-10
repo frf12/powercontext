@@ -13,20 +13,19 @@ description: 安装 PowerContext DeepSeek Harness 插件并控制其本地行为
 先安装 DeepSeek Harness，并确保 Web profile 可用。真实宿主验收固定使用 DSH 0.1.2-rc.1。
 选择以下一种 PowerContext 安装方式，让 Server 和插件保持匹配。
 
-正式版 PowerContext 0.2.0：
+使用本站对应的配置向导版本：
 
 ```bash
-uv tool install --force "powercontext[cli,server]==0.2.0"
-powercontext setup dsh --source oceanbase/powercontext --ref powercontext-v0.2.0
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+powercontext setup dsh --source frf12/powercontext --ref codex/guided-config
 ```
 
-0.2.0 已包含直接操作的 Scope 错误边界。下文的分层 Doctor 和自动 snapshot 展示需要当前开发版 checkout，
-不能将这些行为视为 0.2.0 已发布的能力。
+按照本站流程验收时，Server 和插件都使用这个源码分支。
 
 开发版从同一个 checkout 安装两个组件，并记录 commit：
 
 ```bash
-git clone --branch master https://github.com/oceanbase/powercontext.git powercontext-dsh-dev
+git clone --branch codex/guided-config https://github.com/frf12/powercontext.git powercontext-dsh-dev
 git -C powercontext-dsh-dev rev-parse HEAD
 uv tool install --force "./powercontext-dsh-dev[cli,server]"
 powercontext setup dsh --source ./powercontext-dsh-dev
@@ -34,7 +33,7 @@ powercontext setup dsh --source ./powercontext-dsh-dev
 
 更新时执行 `git -C powercontext-dsh-dev pull --ff-only`，记录新的 commit，再重复两个安装命令。
 本地目录必须包含仓库提交的已构建文件 `lib/index.js`。
-`setup dsh --source oceanbase/powercontext --ref master` 会直接复用有效缓存 checkout，不会 fetch；
+`setup dsh --source frf12/powercontext --ref codex/guided-config` 会直接复用有效缓存 checkout，不会 fetch；
 重复运行不代表更新了移动分支。只有残缺 checkout 会被替换。
 
 `setup dsh` 调用 `dsh plugin --profile web add`，不会启动 Server。安装完成后重启 DSH。

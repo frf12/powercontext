@@ -5,6 +5,9 @@ description: 使用持久化数据、健康检查、鉴权和安全网络边界�
 
 # 部署 Server
 
+先按[快速开始](../get-started/quickstart.md)从 `frf12/powercontext` 的 `codex/guided-config` 分支安装并生成配置。
+本页接着说明长期运行和远程访问。Server 与 Agent 位于不同机器时，分别在对应机器完成安装，插件使用同一仓库和 ref。
+
 Windows 支持为 `experimental`。
 
 `powercontext server run` 是前台进程。在个人 macOS、Linux 或 Windows 工作站上，PowerContext 可以把同一个 Server runner 注册到原生当前用户服务管理器。托管部署仍应使用容器平台或管理员拥有的服务管理器。
@@ -14,7 +17,7 @@ Windows 支持为 `experimental`。
 安装并启动可选的当前用户服务：
 
 ```bash
-powercontext service install
+powercontext service install --env-file /absolute/path/to/.env
 powercontext service status
 ```
 
@@ -33,6 +36,7 @@ powercontext config validate --env-file /path/to/powercontext.env
 powercontext service install --env-file /path/to/powercontext.env
 ```
 
+将示例路径替换为向导生成 `.env` 的绝对路径。先用 `Ctrl-C` 停止同端口的前台 Server，再安装服务。
 安装成功后的摘要会显示实际使用的环境文件路径。若启用了 Bearer 鉴权，请从该文件中的
 `POWERCONTEXT_SERVER_AUTH_TOKEN` 读取令牌；命令不会在终端打印令牌值。无模型基础模板关闭鉴权。
 向导选择的 Dashboard 或鉴权访问需要令牌时，会在没有现有令牌的情况下生成令牌。
@@ -65,6 +69,43 @@ loopback 地址。
 
 内置命令只提供 HTTP，没有 TLS 选项。HTTPS 必须在 PowerContext 外部终止。
 
+“自定义监听地址和客户端 URL”中的 `0.0.0.0` 表示接受所有网卡上的连接，不是浏览器访问地址，
+也不会启用 HTTPS。PowerContext 客户端只允许环回地址使用明文 HTTP；不能将远程 IP 的
+`http://服务器:8000` 当作客户端连接地址。首次跨设备验收且没有域名、证书和 HTTPS 代理时，使用 SSH 转发。
+
+## 通过 SSH 从另一台电脑访问
+
+在服务器运行向导，选择“从其他设备访问”→“SSH 端口转发”，填写真实的 SSH 主机/别名和客户端转发端口。
+Server 仍监听 `127.0.0.1:8000`。按生成配置启动后，在客户端电脑上执行向导打印的命令，例如：
+
+```bash
+ssh -N -L 18000:127.0.0.1:8000 user@server
+```
+
+把 `user@server` 换成你平时 SSH 使用的地址或别名，保持这个终端运行。随后在客户端浏览器打开
+`http://127.0.0.1:18000/dashboard/home`，用 Server Token 登录。
+这条隧道由 SSH 加密；地址中的 HTTP 只在两端本机环回连接上使用。
+
+在服务器上运行的 Agent 使用 `http://127.0.0.1:8000`；在客户端电脑运行的 Agent 使用
+`http://127.0.0.1:18000`。向导会询问 Agent 在哪一台机器运行。把对应的 `.env.client.env`
+安全复制到 Agent 所在机器并加载，检查 `POWERCONTEXT_CLIENT_SERVER_URL` 和各 Agent 的 URL。
+不要把包含模型 API key 的 Server `.env` 复制给客户端。Codex 的 MCP URL 还需与其 Hook URL 一致，
+具体见[Codex 连接步骤](../integrations/codex.md)。
+
+如果隧道启动提示端口被占用，选择空闲的本地端口，并同步修改浏览器和客户端地址。SSH 退出后转发停止，
+Server 在远端继续运行。仅在远端 tmux 中启动 Server，不会自动建立到 Mac 的端口转发。
+
+## 使用外部 HTTPS
+
+已经有 Nginx、Caddy、网关或负载均衡时，向导可选“使用 HTTPS 反向代理”，填写其实际对外的完整地址，
+例如 `https://memory.example.com`。同机代理的上游为 `http://127.0.0.1:8000`；跨机器代理需要配置相应监听地址和网络边界。
+
+证书、域名解析、TLS 和代理转发需在该外部组件完成，向导不会安装它们。
+`POWERCONTEXT_SERVER_PUBLIC_URL=https://...` 只声明外部访问地址，不给内置 Server 增加 TLS。
+代理需保留 `/mcp` 流式连接、`Authorization`，并正确传递外部 host 和 scheme，以便 Dashboard 登录检查。
+配置完成后，应从客户端检查外部地址的 `/health/ready`、Dashboard 登录及 MCP；不能只检查服务器本机端口。
+没有现成 HTTPS 服务时，先使用上一节完整的 SSH 流程。
+
 ## 从已安装工具运行
 
 按照[安装和运行](../get-started/install-and-run.md)安装 PowerContext，然后选择持久化数据目录：
@@ -96,7 +137,7 @@ powercontext server run --env-file /etc/powercontext/powercontext.env
 
 无论使用前台进程、Docker 还是个人服务安装，只要 generation 或 embedding model 未配置，启动或安装输出都会提示
 缺少 model 可能影响部分制品功能，具体影响范围及配置方式请参考
-[官网配置说明](https://powercontext.oceanbase.io/en/docs/reference/configuration/)；两类 model 都已配置时不输出该提示。
+[配置说明](configuration.md)；两类 model 都已配置时不输出该提示。
 
 ## 使用 Docker 运行
 
@@ -184,6 +225,9 @@ curl --fail \
 ```
 
 请求示例见 [HTTP API](../develop/http-api.md)，全部 Server 设置见[配置](configuration.md)。
+
+这些检查证明服务与依赖可用，不证明 Topic Memory 已生成。部署后继续完成
+[Source → Topic 演进 → 新会话召回](../get-started/quickstart.md#4-用普通对话验收-topic-memory)。
 
 ## 保护和备份数据
 

@@ -21,7 +21,8 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import typer
@@ -104,6 +105,29 @@ class WizardUI:
         """Print a section heading."""
         typer.echo()
         typer.secho(self.text(en, zh), bold=True, fg=typer.colors.CYAN)
+
+    def wait_for_activity(
+        self,
+        done: Callable[[], bool],
+        phase: Callable[[], str],
+        elapsed: Callable[[], float] | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        interval: float = 0.1,
+    ) -> None:
+        """Wait without escape sequences for redirected input, or animate one TTY line."""
+
+        frames = ("━╺━━━━━━━━━━━━━━━━━━", "━━━━╺━━━━━━━━━━━━━━━", "━━━━━━━━╺━━━━━━━━━━━", "━━━━━━━━━━━━╺━━━━━━━")
+        frame = 0
+        while not done():
+            if self.interactive:
+                seconds = 0 if elapsed is None else int(elapsed())
+                label = _activity_phase(self.language, phase())
+                typer.echo(f"\r{frames[frame % len(frames)]}  {label} · {seconds}s", nl=False)
+                frame += 1
+            sleep(interval)
+        if self.interactive:
+            typer.echo("\r" + " " * 72 + "\r", nl=False)
 
     def choose(self, en: str, zh: str, choices: Sequence[tuple[str, str, str]], default: str) -> str:
         """Return a stable choice identifier from a numeric or identifier answer."""
@@ -241,3 +265,16 @@ class WizardUI:
                     f"Enter an integer between {minimum} and {maximum}.",
                     f"请输入 {minimum} 到 {maximum} 之间的整数。",
                 )
+
+
+def _activity_phase(language: str, phase: str) -> str:
+    labels = {
+        "starting": ("starting", "准备中"),
+        "resolving": ("checking packages", "检查依赖"),
+        "resolving-mirror": ("checking mirror", "检查镜像"),
+        "installing": ("downloading and installing", "下载并安装中"),
+        "installing-mirror": ("downloading from mirror", "从镜像下载并安装"),
+        "validating": ("validating", "验证安装"),
+    }
+    en, zh = labels.get(phase, ("working", "处理中"))
+    return zh if language == "zh" else en

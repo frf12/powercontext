@@ -12,7 +12,7 @@ Clone the repository or use an existing source checkout that contains the
 integration package:
 
 ```bash
-git clone https://github.com/oceanbase/powercontext.git
+git clone --branch codex/guided-config https://github.com/frf12/powercontext.git
 cd powercontext
 ```
 

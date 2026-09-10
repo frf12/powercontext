@@ -1,9 +1,9 @@
-# seekDB Background Dependency Installation Design
+# seekdb Background Dependency Installation Design
 
 ## Goal
 
-When a user selects embedded seekDB in `powercontext config init`, start installing the current PowerContext release's
-seekDB dependency in the background while the user completes the remaining wizard. If installation is still running
+When a user selects embedded seekdb in `powercontext config init`, start installing the current PowerContext release's
+seekdb dependency in the background while the user completes the remaining wizard. If installation is still running
 after configuration files are saved, wait in the same terminal with an activity indicator. Do not require a separate
 status command.
 
@@ -13,7 +13,7 @@ This version only supports incremental dependency installation. It does not rein
 original `uv tool install` source, or offer the documented full-install command as an automatic recovery path.
 
 The wizard continues to generate configuration files and does not start Server, create a database, migrate data,
-create Scopes, or install Agent integrations. A user must explicitly approve the seekDB dependency installation because
+create Scopes, or install Agent integrations. A user must explicitly approve the seekdb dependency installation because
 it changes the Python environment and may download approximately 110–130 MB.
 
 ## Dependency source of truth
@@ -23,8 +23,8 @@ the requirement markers with `extra=seekdb` for the current platform and uses th
 resolver input. It does not duplicate the `pylibseekdb` version range in wizard source code.
 
 The installer must exclude a self-referential `powercontext[...]` requirement if one is present. Before starting, it
-checks that the non-seekDB requirements selected by the extra are already satisfied. The supported incremental path
-may add the missing seekDB distribution and its own dependencies, but it must not replace the running PowerContext
+checks that the non-seekdb requirements selected by the extra are already satisfied. The supported incremental path
+may add the missing seekdb distribution and its own dependencies, but it must not replace the running PowerContext
 distribution.
 
 If distribution metadata is unavailable, the extra is not declared, the current platform is unsupported, `uv` is
@@ -43,9 +43,9 @@ the Aliyun source. No HTTP mirror or insecure-host exception is used.
 
 ## Background task
 
-After the seekDB path is collected and the dependency is missing, the wizard explains the download size and asks:
+After the seekdb path is collected and the dependency is missing, the wizard explains the download size and asks:
 
-> Install the seekDB dependency in the background while you continue? [Yes]
+> Install the seekdb dependency in the background while you continue? [Yes]
 
 On confirmation it starts one supervised background worker. The worker runs `uv pip install` against `sys.executable`,
 captures output away from the prompt UI, and publishes its current phase and final result through a task object. Only
@@ -70,7 +70,7 @@ After the user confirms and the configuration files are saved, the wizard checks
 - If the platform has no compatible wheel, do not print a command that cannot succeed; recommend SQLite or OceanBase.
 
 The generated `.env` remains valid configuration after an installation failure, but the finish page states that Server
-must not be started with seekDB until the dependency is installed.
+must not be started with seekdb until the dependency is installed.
 
 ## Validation
 

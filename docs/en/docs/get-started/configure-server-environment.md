@@ -33,6 +33,10 @@ the Server, install Agent plugins, migrate databases, or probe remote storage an
 existing local SQLite metadata read-only, which does not prove deployment compatibility. Saving a full memory
 configuration does not verify that memory extraction works.
 
+If embedded seekdb dependencies are missing, the wizard asks for consent before installing them incrementally in the
+background. After saving, it displays activity and waits if installation is still running. On failure it prints a
+manual installation command. This does not start the service.
+
 To retain the basic model-free template instead of the wizard, use:
 
 ```bash
@@ -69,7 +73,18 @@ powercontext server run
 `--no-env-file` to disable file loading. CLI options take precedence, followed by process environment variables, the
 selected file, and defaults. The command prints the resolved file path without printing credentials.
 
-The Server starts with the configured capabilities. Use `powercontext ready` and `powercontext capabilities` to check
-its readiness and enabled features.
+Keep the Server running. In another terminal, return to the configuration directory and load the generated client
+configuration before checking the service:
+
+```bash
+set -a
+. ./.env.client.env
+set +a
+powercontext ready
+powercontext capabilities
+```
+
+This supplies the client address and Server Token without loading model API keys into the client environment.
+Follow `.env.next-steps.md` to create Scopes and install plugins, then verify real memory using the [quickstart](quickstart.md).
 
 For every variable, default, and precedence rule, see [Configuration](../operate/configuration.md).

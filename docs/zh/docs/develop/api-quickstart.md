@@ -16,7 +16,7 @@ description: 采集 Source、写入 Memory，并为应用准备上下文。
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)。
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
 powercontext server run
 ```
 

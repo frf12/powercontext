@@ -16,8 +16,8 @@ automatic context preparation, and optional event capture. Its API and behavior 
 Add the Client and adapter from the same ref to your application environment. The examples use OpenAI:
 
 ```bash
-uv add "powercontext[client] @ git+https://github.com/oceanbase/powercontext.git@master"
-uv add "powercontext-pydantic-ai @ git+https://github.com/oceanbase/powercontext.git@master#subdirectory=integrations/pydantic-ai"
+uv add "powercontext[client] @ git+https://github.com/frf12/powercontext.git@codex/guided-config"
+uv add "powercontext-pydantic-ai @ git+https://github.com/frf12/powercontext.git@codex/guided-config#subdirectory=integrations/pydantic-ai"
 uv add "pydantic-ai-slim[openai]>=2.29,<3"
 ```
 

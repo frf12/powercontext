@@ -29,6 +29,9 @@ Scope，或计划创建独立 Scope。独立 Scope 使用 `codex-<随机串>`、
 存储或模型端点。它可以只读检查已有本地 SQLite 元数据，但这不代表部署兼容性已经验证。
 保存完整记忆配置也不代表记忆提取已经跑通。
 
+选择嵌入式 seekdb 且缺少依赖时，向导会先征求同意，再在后台增量安装；保存配置后若安装尚未结束，会显示活动进度并等待。
+安装失败会给出手动安装命令。它不会因此自动启动服务。
+
 需要保留原来的无模型基础模板时，使用：
 
 ```bash
@@ -62,6 +65,17 @@ powercontext server run
 `server run` 会发现当前目录的 `.env`。使用 `--env-file <path>` 可选择其他文件，使用 `--no-env-file` 可禁用文件加载。
 配置优先级依次为 CLI 参数、进程环境变量、所选文件和默认值。命令会显示实际加载文件的绝对路径，但不会输出凭据。
 
-Server 会按配置启动对应能力。使用 `powercontext ready` 和 `powercontext capabilities` 查看就绪状态和已启用功能。
+保持 Server 运行，在另一个终端回到配置目录，加载向导生成的客户端配置后再检查：
+
+```bash
+set -a
+. ./.env.client.env
+set +a
+powercontext ready
+powercontext capabilities
+```
+
+这会为检查命令提供客户端地址和 Server Token；无需将模型 API key 加载到客户端环境。
+接下来按 `.env.next-steps.md` 创建 Scope、安装插件，并按[快速开始](quickstart.md)验收真实记忆。
 
 全部变量、默认值和优先级规则见[配置](../operate/configuration.md)。

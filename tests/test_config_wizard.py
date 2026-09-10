@@ -10,6 +10,7 @@ import powercontext.cli.config_wizard as config_wizard
 from powercontext.cli.config import app
 from powercontext.cli.config_wizard import CLIENT, Wizard
 from powercontext.cli.config_wizard_agents import AGENT_SPEC_BY_ID
+from powercontext.cli.config_wizard_seekdb import SeekDBDependency, SeekDBInstallPlan, SeekDBInstallResult
 from powercontext.cli.config_wizard_ui import WizardUI
 from powercontext.cli.env_file import parse_environment
 
@@ -52,7 +53,8 @@ def _agent_state(*answers: str | bool, advanced: bool = False) -> tuple[Wizard, 
     return state, ui
 
 
-def test_agent_menu_repeats_with_configured_agents_removed() -> None:
+def test_agent_menu_repeats_with_configured_agents_removed(monkeypatch) -> None:
+    monkeypatch.setattr(config_wizard, "preferred_agent", lambda agents: "codex")
     state, ui = _agent_state("codex", "default", "claude-code", "default", "none")
 
     config_wizard._agents(state)
@@ -91,6 +93,27 @@ def test_scope_choices_describe_planned_existing_and_unbound_outcomes() -> None:
     assert "Plan a new isolated Scope" in scope_labels[0]
     assert "I already have" in scope_labels[1]
     assert "unbound" in scope_labels[2]
+
+
+def test_remote_custom_access_defaults_to_all_interfaces_and_explains_external_https(monkeypatch) -> None:
+    state, ui = _agent_state()
+    state.scenario = "remote"
+    state.values[f"{config_wizard.SERVER}HTTP_HOST"] = "127.0.0.1"
+    defaults: list[str] = []
+
+    def ask(_en: str, _zh: str, *, default: str, required: bool = False, secret: bool = False) -> str:
+        defaults.append(default)
+        return default
+
+    monkeypatch.setattr(ui, "ask", ask)
+    monkeypatch.setattr(ui, "integer", lambda _en, _zh, *, default, maximum: default)
+    monkeypatch.setattr(config_wizard, "_server_url", lambda _ui, _default: "https://memory.example.com")
+
+    host, _, _ = config_wizard._custom_access(state, 8000)
+
+    assert host == "0.0.0.0"  # noqa: S104
+    assert defaults == ["0.0.0.0"]  # noqa: S104
+    assert any("does not provide HTTPS" in note for note in state.notes)
 
 
 def test_advanced_capture_opt_out_warns_for_topic_memory() -> None:
@@ -257,7 +280,89 @@ def test_eof_never_falls_back_to_a_template(tmp_path: Path) -> None:
     assert not output.exists()
 
 
-def test_dashboard_and_agent_files_hide_tokens_and_clear_old_bindings(tmp_path: Path) -> None:
+def test_seekdb_install_runs_behind_prompts_and_finishes_after_save(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "server.env"
+    events: list[str] = []
+
+    class Task:
+        def done(self) -> bool:
+            events.append("done")
+            return "wait" in events
+
+        def phase(self) -> str:
+            return "installing"
+
+        def elapsed_seconds(self) -> float:
+            return 2.0
+
+        def wait(self, timeout=None) -> SeekDBInstallResult:
+            events.append("wait")
+            return SeekDBInstallResult("ready", version="1.3.0")
+
+        def cancel(self) -> None:
+            events.append("cancel")
+
+    plan = SeekDBInstallPlan("uv", "/tool/bin/python", ("pylibseekdb<2,>=1.3",), prefer_aliyun=True)
+    monkeypatch.setattr(config_wizard, "inspect_seekdb_dependency", lambda: SeekDBDependency("installable", plan=plan))
+    monkeypatch.setattr(config_wizard, "start_seekdb_install", lambda _plan: Task())
+    monkeypatch.setattr(
+        WizardUI,
+        "wait_for_activity",
+        lambda self, done, phase, elapsed: (events.append("activity"), done(), phase(), elapsed()),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["init", "--language", "zh", "--output", str(output)],
+        input=f"seekdb\n{tmp_path / 'seekdb'}\ny\nlocal\nbase\nn\nnone\ny\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "在后台开始安装" in result.output
+    assert "阿里云镜像" in result.output
+    assert "seekdb 依赖安装完成，版本 1.3.0" in result.output  # noqa: RUF001
+    assert result.output.index("已保存") < result.output.index("seekdb 依赖安装完成")
+    assert "activity" in events
+    assert "wait" in events
+    assert "cancel" not in events
+
+
+def test_seekdb_install_failure_prints_one_manual_command(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "server.env"
+
+    class Task:
+        def done(self) -> bool:
+            return True
+
+        def phase(self) -> str:
+            return "failed"
+
+        def elapsed_seconds(self) -> float:
+            return 1.0
+
+        def wait(self, timeout=None) -> SeekDBInstallResult:
+            return SeekDBInstallResult(
+                "failed",
+                reason="dependency installation failed",
+                manual_command="uv pip install --python /tool/bin/python pylibseekdb",
+            )
+
+    plan = SeekDBInstallPlan("uv", "/tool/bin/python", ("pylibseekdb",))
+    monkeypatch.setattr(config_wizard, "inspect_seekdb_dependency", lambda: SeekDBDependency("installable", plan=plan))
+    monkeypatch.setattr(config_wizard, "start_seekdb_install", lambda _plan: Task())
+
+    result = CliRunner().invoke(
+        app,
+        ["init", "--language", "en", "--output", str(output)],
+        input=f"seekdb\n{tmp_path / 'seekdb'}\ny\nlocal\nbase\nn\nnone\ny\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "seekdb dependency installation failed" in result.output
+    assert result.output.count("uv pip install --python /tool/bin/python pylibseekdb") == 1
+
+
+def test_dashboard_finish_shows_new_token_once_and_clear_old_bindings(tmp_path: Path) -> None:
     output = tmp_path / "server.env"
     client = tmp_path / "server.env.client.env"
     client.write_text(
@@ -274,8 +379,13 @@ def test_dashboard_and_agent_files_hide_tokens_and_clear_old_bindings(tmp_path: 
     server_values = parse_environment(output.read_text())
     client_values = parse_environment(client.read_text())
     token = server_values["POWERCONTEXT_SERVER_AUTH_TOKEN"]
-    assert token not in result.output
+    saved_summary = result.output.split("Connection details", maxsplit=1)[1]
+    assert result.output.count(token) == 1
+    assert "Dashboard: http://127.0.0.1:8000/dashboard/home" in saved_summary
+    assert "shown only this time" in saved_summary
+    assert f"POWERCONTEXT_SERVER_AUTH_TOKEN in {output}" in saved_summary
     assert token not in output.with_name("server.env.next-steps.md").read_text()
+    assert f"`POWERCONTEXT_SERVER_AUTH_TOKEN` in `{output}`" in output.with_name("server.env.next-steps.md").read_text()
     assert server_values["POWERCONTEXT_SERVER_ACCESS_MODE"] == "enforced"
     assert client_values["POWERCONTEXT_CODEX_AUTHORIZATION"] == f"Bearer {token}"
     assert client_values["POWERCONTEXT_CLAUDE_AUTHORIZATION"] == f"Bearer {token}"
@@ -302,10 +412,15 @@ def test_full_memory_configuration_shares_provider_and_adds_profile_recall(tmp_p
     assert values[inference + "GENERATION_MODEL"] == "openai-chat:qwen-plus"
     assert values[inference + "EMBEDDING_MODEL"] == "openai:text-embedding-v4"
     assert values[inference + "GENERATION_HEADERS"] == values[inference + "EMBEDDING_HEADERS"]
+    assert values["POWERCONTEXT_SERVER_RUNTIME_MEMORY_SCHEDULE_SECONDS"] == "60"
+    assert values["POWERCONTEXT_SERVER_RUNTIME_TOPIC_MEMORY_SCHEDULE_SECONDS"] == "300"
+    assert values["POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS"] == "900"
     assert "example-test-key" not in result.output
     assert "Memory, Topic Memory, Profile, Experience, Skill" in result.output
     assert "Generation and Embedding" in result.output
-    assert "every 60 seconds" in result.output
+    assert "Memory every 1 minute" in result.output
+    assert "Topic Memory every 5 minutes" in result.output
+    assert "Experience every 15 minutes" in result.output
     assert "daily at 02:00" in result.output
     assert CliRunner().invoke(app, ["validate", "--env-file", str(output)]).exit_code == 0
     client = parse_environment(output.with_name("server.env.client.env").read_text())
@@ -330,7 +445,7 @@ def test_custom_topic_memory_does_not_require_embedding(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     values = parse_environment(output.read_text())
-    assert values["POWERCONTEXT_SERVER_RUNTIME_TOPIC_MEMORY_SCHEDULE_SECONDS"] == "60"
+    assert values["POWERCONTEXT_SERVER_RUNTIME_TOPIC_MEMORY_SCHEDULE_SECONDS"] == "300"
     assert "POWERCONTEXT_SERVER_RUNTIME_MEMORY_SCHEDULE_SECONDS" not in values
     assert "POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL" not in values
     assert "Embedding connection" not in result.output
@@ -362,9 +477,43 @@ def test_ssh_forwarding_configures_the_agent_on_the_other_computer(tmp_path: Pat
     assert values["POWERCONTEXT_SERVER_HTTP_PORT"] == "8000"
     client = parse_environment(output.with_name("server.env.client.env").read_text())
     assert "POWERCONTEXT_CODEX_SERVER_URL" not in client
+    assert client["POWERCONTEXT_CLIENT_SERVER_URL"] == "http://127.0.0.1:18000"
     steps = output.with_name("server.env.next-steps.md").read_text()
     assert '"url": "http://127.0.0.1:18000/mcp"' in steps
-    assert "ssh -N -L 18000:127.0.0.1:8000 t1" in steps
+    tunnel = "ssh -N -L 18000:127.0.0.1:8000 t1"
+    assert tunnel in steps
+    saved_summary = result.output.split("Connection details", maxsplit=1)[1]
+    assert tunnel in saved_summary
+    assert "Dashboard: http://127.0.0.1:18000/dashboard/home" in saved_summary
+    assert "MCP endpoint: http://127.0.0.1:18000/mcp" in saved_summary
+
+
+def test_finish_does_not_reveal_an_existing_server_token(tmp_path: Path) -> None:
+    output = tmp_path / "server.env"
+    existing_token = "existing-server-token"  # noqa: S105
+    output.write_text(
+        "POWERCONTEXT_SERVER_DATABASE_KIND=sqlite\n"
+        f"POWERCONTEXT_SERVER_DATABASE_URL=sqlite+aiosqlite:///{tmp_path / 'context.db'}\n"
+        "POWERCONTEXT_SERVER_HTTP_HOST=127.0.0.1\n"
+        "POWERCONTEXT_SERVER_HTTP_PORT=8000\n"
+        "POWERCONTEXT_SERVER_DASHBOARD_ENABLED=true\n"
+        "POWERCONTEXT_SERVER_MCP_ENABLED=true\n"
+        "POWERCONTEXT_SERVER_MCP_PATH=/mcp\n"
+        "POWERCONTEXT_SERVER_ACCESS_MODE=enforced\n"
+        f"POWERCONTEXT_SERVER_AUTH_TOKEN={existing_token}\n"
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["init", "--language", "en", "--output", str(output)],
+        input=f"sqlite\n{tmp_path / 'context.db'}\nreuse\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_summary = result.output.split("Connection details", maxsplit=1)[1]
+    assert existing_token not in result.output
+    assert "Dashboard: http://127.0.0.1:8000/dashboard/home" in saved_summary
+    assert f"POWERCONTEXT_SERVER_AUTH_TOKEN in {output}" in saved_summary
 
 
 def test_topic_rejects_unsupported_existing_request_settings_without_leaking_values(tmp_path: Path) -> None:
@@ -458,7 +607,8 @@ def test_processing_choice_says_selected_automatic_capabilities_are_already_enab
     )
     assert result.exit_code == 0, result.output
     assert "已启用自动处理" in result.output
-    assert "使用推荐周期" in result.output
+    assert "使用各 Artifact 推荐周期" in result.output
+    assert "Topic Memory 每 5 分钟" in result.output
     assert "逐项自定义周期" in result.output
     assert "关闭后台处理" not in result.output
 
