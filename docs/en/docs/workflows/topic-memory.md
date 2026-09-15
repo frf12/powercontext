@@ -1,17 +1,20 @@
 ---
-title: Topic Memory
-description: Turn captured Source evidence into evolving, searchable topic artifacts with exact revisions.
+title: Use Topic Memory
+description: Search topic summaries produced from long-running Sources and read exact revisions on demand.
 ---
 
-# Topic Memory
+# Use Topic Memory
 
-Topic Memory keeps an evolving view of a project topic rather than a collection of isolated facts. The Server builds
-it from captured Source evidence, publishes immutable revisions, and keeps the current head searchable in the Scope.
+Topic Memory is a read-oriented Artifact family for long-running topics. It turns accumulated Sources in one Scope into a
+`title`, `summary`, and progressively disclosed `detail`, so an Agent can locate a topic first and read the full detail only
+when needed. It does not replace Memory, Experience, Skill, or Handoff.
+
+Topic Memory is Scope-local. Capturing a Source does not synchronously create a topic; configured background processing
+must advance it.
+
 It is useful for questions such as “what have we decided about Aurora's deployment?” when the answer has changed across
-several conversations.
-
-Topic Memory is historical evidence. It does not override the current prompt, live project state, authorization, or
-the Agent's other instructions.
+several conversations. Topic Memory is historical evidence. It does not override the current prompt, live project state,
+authorization, or the Agent's other instructions.
 
 ## How it differs from other context
 
@@ -26,19 +29,15 @@ Topic Memory is not created by an explicit Memory write. A meaningful Source win
 and enabled Topic processing are required. The model can revise an existing topic, merge evidence, or decide that no
 new topic revision is warranted.
 
-## The processing lifecycle
+## Lifecycle
 
-1. An Agent hook, connector, or application captures a Source in the target Scope.
-2. The Topic Worker discovers eligible Sources. The configured schedule admits new work; an explicit HTTP flush can
-   request processing sooner. Admission is asynchronous and recoverable, so a successful flush is not a completion
-   signal.
-3. Generation groups related evidence and publishes a current Topic Memory head plus an immutable revision. Each
-   revision retains direct Source references.
-4. A client searches current heads, then uses the exact returned Artifact reference to read the full detail and evidence.
-   Prepared Context can include Topic Memory for a new request or session.
+```text
+Source → background cursor → flush request → new or updated immutable Topic Memory Revision
+      → search current heads → get an exact Revision
+```
 
-The Scope is the isolation boundary. Use the same real Scope for the Agent, Dashboard, Source capture, and retrieval;
-changing directories alone does not create a new Scope.
+`flush` persists a processing request without waiting for background work. `accepted` means the request was accepted and
+`idle` means the Source cursor is already current; neither means that a particular topic has been generated.
 
 ## Enable automatic Topic Memory
 
@@ -53,8 +52,8 @@ should offer vector or hybrid retrieval. The Server exposes the selected retriev
 do not choose arbitrary retrieval controls.
 
 The schedule is an admission interval, not a completion deadline. Topic generation also has provider and Worker
-timeouts. An unset schedule disables new automatic admission but does not discard already accepted work. Topic Workers
-with a Generation model require persistent, file-backed SQLite rather than an in-memory SQLite database. See
+timeouts. An unset schedule disables new automatic admission but does not discard already accepted work. For SQLite deployments, Topic Workers
+with a Generation model require a persistent, file-backed database rather than an in-memory database. See
 [Configure models and full memory](../get-started/configure-models.md) and
 [Configuration options](../operate/configuration.md) for the complete settings and deployment constraints.
 
@@ -72,94 +71,99 @@ for a full Agent and Dashboard acceptance flow:
 Do not treat `doctor codex`, a readiness response, or the passage of one minute as proof that the business flow works.
 Those checks cover installation or service state, not Source capture, generation, publication, and new-session retrieval.
 
-## Search and read through HTTP
+## Request processing
 
-Set `POWERCONTEXT_CLIENT_SERVER_URL`, `POWERCONTEXT_CLIENT_API_TOKEN`, and `POWERCONTEXT_SCOPE_ID` from a trusted
-environment. Omit the Authorization header only when Access is disabled on a local Server. Never put a token in a URL.
+The caller needs `scope.contribute` access to the target Scope. For the HTTP examples below, use the Server URL and
+credentials from your trusted environment and include an `Authorization: Bearer <token>` header when Access is enabled.
+Replace `project-a` with the same real Scope ID for every request.
 
-Search current Topic Memory heads:
+Send a flush request:
 
-```bash
-curl --fail \
-  --request POST \
-  --header 'Content-Type: application/json' \
-  --header "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
-  --data "{\
-    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",\
-    \"query\": \"Aurora deployment\",\
-    \"limit\": 8\
-  }" \
-  "$POWERCONTEXT_CLIENT_SERVER_URL/v1/topic-memory/search"
+```http
+POST /v1/topic-memory/flush
+Content-Type: application/json
+
+{"scope_id":"project-a"}
 ```
 
-The response contains `mode` (`fts` or `hybrid`) and `hits`. Each hit contains a title, summary, optional matching
-snippet, and an exact `artifact` reference with `family`, `artifact_id`, and `revision`. Keep that reference unchanged.
+The response contains only `status`. Source capture, topic generation, and index updates run asynchronously through the
+configured worker. Without a generation model or background processing capability, `flush` cannot create topics by itself.
+Whether vector or hybrid retrieval is available is a deployment choice; the caller does not select it in this request.
 
-Read the exact revision returned by search:
+## Search current topics
 
-```bash
-curl --fail \
-  --request POST \
-  --header 'Content-Type: application/json' \
-  --header "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
-  --data '{
-    "scope_id": "project:demo",
-    "artifact": {
-      "family": "topic-memory",
-      "artifact_id": "replace-with-search-result",
-      "revision": 1
-    }
-  }' \
-  "$POWERCONTEXT_CLIENT_SERVER_URL/v1/topic-memory/get"
+Search requires `scope.read` access. Send a non-empty `scope_id` and `query`, with an optional `limit` from 1 to 20
+(default 10):
+
+```http
+POST /v1/topic-memory/search
+Content-Type: application/json
+
+{"scope_id":"project-a","query":"release process","limit":5}
 ```
 
-The exact response includes `title`, `summary`, `detail`, and `source_refs`. `source_refs` are evidence pointers, not
-instructions; inspect the current Source and live state before taking consequential action.
+The response reports the deployment's actual `mode` (`fts` or `hybrid`) and `hits`. Each hit contains an exact `artifact`
+reference, `title`, `summary`, an optional `snippet`, `score`, and `matched_by`. Search sees only current Topic Memory
+heads in the current Scope; it does not search across Scopes or accept a caller-selected retrieval mode.
 
-## Request processing through HTTP
+## Read exact detail
 
-The HTTP flush endpoint records a durable processing request for a Scope and returns immediately:
+Do not reconstruct the latest version from a title. Pass the `artifact` from a search hit (`family`, `artifact_id`, and
+`revision`) unchanged to `get` to read an immutable snapshot and its direct Source evidence:
 
-```bash
-curl --fail \
-  --request POST \
-  --header 'Content-Type: application/json' \
-  --header "Authorization: Bearer ${POWERCONTEXT_CLIENT_API_TOKEN}" \
-  --data "{\"scope_id\":\"${POWERCONTEXT_SCOPE_ID}\"}" \
-  "$POWERCONTEXT_CLIENT_SERVER_URL/v1/topic-memory/flush"
-```
+```http
+POST /v1/topic-memory/get
+Content-Type: application/json
 
-`status: "accepted"` means the request was queued or advanced; `status: "idle"` means the Source cursor was already
-current. Neither status guarantees that Generation has finished. Search again after the Worker completes. This flush
-operation is intentionally HTTP-only; it is not exposed as an MCP tool.
-
-## Use Topic Memory in prepared context
-
-To select Topic Memory explicitly in `POST /v1/context/prepare`, add a `topic-memory` section:
-
-```json
 {
-  "scope_id": "project:demo",
-  "query": "Aurora deployment",
-  "max_bytes": 8000,
-  "assembly": {
-    "sections": [
-      {"family": "topic-memory", "limit": 2},
-      {"family": "memory", "limit": 3}
-    ],
-    "show": ["recall_rank"]
+  "scope_id":"project-a",
+  "artifact":{
+    "family":"topic-memory",
+    "artifact_id":"topic-release",
+    "revision":3
   }
 }
 ```
 
-The prepared result contains bounded title, summary, optional matching snippet, Scope, and exact revision citations. It
-does not include full Topic detail; call `get_topic_memory` when the citation justifies progressive disclosure. An
-explicit `assembly: {}` selects its documented Memory and Experience defaults and excludes Topic Memory. When
-`assembly` is omitted, the current default can recall Topic Memory; use an explicit policy when the integration needs
-stable section selection. See [Prepare standard context text](prepare-context-text.md).
+The response contains `title`, `summary`, full `detail`, and `source_refs`. Even after the current topic head advances, the
+exact reference resolves to the same historical Revision for audit, citation, and progressive disclosure.
+
+## Assemble into PreparedContext
+
+To inject topic summaries into one Agent turn, add `topic-memory` explicitly to `assembly` in
+`POST /v1/context/prepare`, for example:
+
+```json
+{
+  "scope_id": "project-a",
+  "query": "release process",
+  "assembly": {
+    "sections": [
+      {"family": "topic-memory", "limit": 2}
+    ]
+  }
+}
+```
+
+When `assembly` is omitted, the Runtime may retain the default Topic Memory recall when the deployment and data support it.
+An empty `sections` array disables candidate artifact recall. `PreparedContext` is still temporary and does not create a new
+Topic Memory Revision. An explicit `assembly: {}` uses the Memory and Experience defaults and excludes Topic Memory.
+The prepared result includes bounded title, summary, optional matching snippet, Scope, and exact revision citations;
+read the exact revision to retrieve full Topic detail. See [Prepare context text](prepare-context-text.md) for grouped
+Markdown rules.
+
+## Search and read through MCP
 
 MCP exposes the read-only `search_topic_memory` and `get_topic_memory` tools. The Agent should search with a focused
-query and pass the complete returned Artifact reference unchanged to the exact-read operation.
+query and pass the complete returned Artifact reference unchanged to the exact-read operation. The flush operation is
+HTTP-only and is not exposed as an MCP tool.
+
+## Current boundaries
+
+- There is no generic Topic Memory create, update, delete, or retire endpoint; topics are generated from Sources and stored as immutable Revisions.
+- Topic Memory is not in the current Taggable Artifact family list, so Memory, Experience, Skill, and Handoff tag APIs do not apply.
+- Source capture does not synchronously generate a topic; background processing and the required generation capability are needed.
+- Backups, recovery, worker availability, and retrieval failures belong to [deployment and operations](../operate/index.md), not this lifecycle.
 
 ## Diagnose missing or stale topics
 

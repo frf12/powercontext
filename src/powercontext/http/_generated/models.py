@@ -1723,6 +1723,13 @@ class PromptKey(StrEnum):
     EXPERIENCE_GENERATE = "experience.generate"
     SKILL_GENERATE = "skill.generate"
     HANDOFF_GENERATE = "handoff.generate"
+    TOPIC_MEMORY_PROBE = "topic_memory.probe"
+    TOPIC_MEMORY_GLOBAL = "topic_memory.global"
+    TOPIC_MEMORY_PLANNER = "topic_memory.planner"
+    TOPIC_MEMORY_EVOLVE = "topic_memory.evolve"
+    TOPIC_MEMORY_TEMPORARY = "topic_memory.temporary"
+    TOPIC_MEMORY_REDUCE = "topic_memory.reduce"
+    TOPIC_MEMORY_RECONCILE = "topic_memory.reconcile"
     PROFILE_GENERATE = "profile.generate"
 
 
@@ -1912,6 +1919,16 @@ class BaseArtifactFamily(StrEnum):
     HANDOFF = "handoff"
     PROFILE = "profile"
     PROMPT = "prompt"
+
+
+class ArtifactReadFamily(StrEnum):
+    MEMORY = "memory"
+    EXPERIENCE = "experience"
+    SKILL = "skill"
+    HANDOFF = "handoff"
+    PROFILE = "profile"
+    PROMPT = "prompt"
+    TOPIC_MEMORY = "topic-memory"
 
 
 class StatsPeriod(StrEnum):
@@ -2450,12 +2467,20 @@ class FlushProfileResponse(BaseModel):
 
 class ArtifactCollectionItem(BaseModel):
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
-    family: BaseArtifactFamily
+    family: ArtifactReadFamily
     artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
     revision: Annotated[StrictInt, Field(ge=1)]
     sources: list[SourceTypeReference]
     artifacts: list[ArtifactReference]
     content_digest: Annotated[StrictStr, Field(pattern="^sha256:[0-9a-f]{64}$")]
+    title: Annotated[StrictStr | None, Field(description="Family-provided display title when available.")] = None
+    summary: Annotated[StrictStr | None, Field(description="Family-provided display summary when available.")] = None
+    published_at: Annotated[
+        AwareDatetime | None, Field(description="Family-provided publication time when available.")
+    ] = None
+    source_count: Annotated[
+        StrictInt | None, Field(description="Family-provided number of direct Source inputs when available.", ge=0)
+    ] = None
 
 
 class ArtifactCreated(BaseModel):
@@ -2482,7 +2507,7 @@ class ArtifactRevisionPage(BaseModel):
 
 class ArtifactRevision(BaseModel):
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
-    family: BaseArtifactFamily
+    family: ArtifactReadFamily
     artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
     revision: Annotated[StrictInt, Field(ge=1)]
     content: dict[str, Any]

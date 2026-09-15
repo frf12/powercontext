@@ -20,7 +20,7 @@ import asyncio
 import json
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -112,6 +112,7 @@ from powercontext.builtin.persistence.artifact_governance import (
     ArtifactGovernanceRepository,
     ArtifactLifecycleState,
 )
+from powercontext.builtin.persistence.artifact_readers import TopicMemoryArtifactListReader
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.candidates import CandidateRepository
 from powercontext.builtin.persistence.connectors import ConnectorCheckpointRepository
@@ -168,7 +169,12 @@ from powercontext.builtin.runtime.models import (
     SubmitSourceObservation,
 )
 from powercontext.builtin.runtime.prepared_context import PreparedContextBuild
-from powercontext.builtin.runtime.protocols import BuiltinTriggers
+from powercontext.builtin.runtime.protocols import (
+    BuiltinTriggers,
+    RuntimeSpan,
+    RuntimeTracing,
+    TraceAttribute,
+)
 from powercontext.builtin.runtime.recall import RelationalRecallTokenEstimator
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics
 from powercontext.builtin.scope import ScopeApplication
@@ -234,6 +240,11 @@ ExperienceCommitHook = Callable[[AsyncConnection, tuple[ArtifactCandidate[Experi
 
 def _artifact_identity(ref: ArtifactRef) -> tuple[str, str, int]:
     return ref.family, ref.artifact_id, ref.revision
+
+
+_MEMORY_COMMIT_STAGE = "memory.commit"
+_MEMORY_COMMIT_MEMORY_CHANGED = "powercontext.memory.commit.memory_changed"
+_MEMORY_COMMIT_ENTRY_VERSION_COUNT = "powercontext.memory.commit.entry_version_count"
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,6 +491,7 @@ class RelationalContexts:
         memory_artifact_id: str = "memory",
         source_registry: SourceDefinitionRegistry | None = None,
         cursor_secret: bytes | None = None,
+        tracing: RuntimeTracing | None = None,
         prompt_registry: PromptRegistry | None = None,
         prompt_demonstrators: dict[str, DemonstrationGenerator] | None = None,
         handoff_verification_keys: tuple[bytes, ...] = (),
@@ -495,6 +507,7 @@ class RelationalContexts:
             (Handoff, Memory, Experience, Skill, Profile, Prompt, TopicMemory),
             sources=source_repository,
         )
+        topic_memory_repository = TopicMemoryRepository(artifacts=artifact_repository, index=self.topic_memory_index)
         self.repositories = _Repositories(
             sources=source_repository,
             artifacts=artifact_repository,
@@ -515,7 +528,7 @@ class RelationalContexts:
             processing_pending=ArtifactProcessingPendingRepository(),
             processing_leases=ArtifactProcessingLeaseRepository(),
             processing_binding_states=ArtifactProcessingBindingStateRepository(),
-            topic_memories=TopicMemoryRepository(artifacts=artifact_repository, index=self.topic_memory_index),
+            topic_memories=topic_memory_repository,
         )
         self._id_factory = _scoped_id_factory(memory_artifact_id, id_factory)
         self.prompt_registry = prompt_registry or PromptRegistry(
@@ -582,6 +595,11 @@ class RelationalContexts:
             cursor_secret=cursor_secret,
             processing_pending=self.repositories.processing_pending,
             source_processing_bindings=(TOPIC_MEMORY_SOURCE_WINDOW_BINDING,),
+            topic_memory_list_reader=TopicMemoryArtifactListReader(
+                database=database,
+                artifacts=artifact_repository,
+                topics=topic_memory_repository,
+            ),
         )
         self.publications = ArtifactPublicationApplication(
             database,
@@ -607,6 +625,7 @@ class RelationalContexts:
         self._memory_rerank_candidate_limit = memory_rerank_candidate_limit
         self._handoff_artifact_id = handoff_artifact_id
         self._memory_artifact_id = memory_artifact_id
+        self._tracing = tracing
         self._contexts: dict[
             str,
             PowerContext[BuiltinSources, BuiltinArtifacts, BuiltinTriggers],
@@ -1209,6 +1228,7 @@ class RelationalContexts:
         return await _RelationalTriggers(
             services=services,
             lock=self._activation_locks.setdefault(services.scope_id, asyncio.Lock()),
+            tracing=self._tracing,
         ).flush(limit=limit, processing=processing, authorize_snapshot=authorize_snapshot, on_commit=on_commit)
 
     async def incubate_experience(
@@ -1245,6 +1265,7 @@ class RelationalContexts:
         triggers: BuiltinTriggers = _RelationalTriggers(
             services=services,
             lock=self._activation_locks.setdefault(scope, asyncio.Lock()),
+            tracing=self._tracing,
         )
         context: PowerContext[BuiltinSources, BuiltinArtifacts, BuiltinTriggers] = PowerContext(
             sources=BuiltinSources(
@@ -1430,9 +1451,11 @@ class _RelationalTriggers:
         *,
         services: _ScopedServices,
         lock: asyncio.Lock,
+        tracing: RuntimeTracing | None = None,
     ) -> None:
         self._services = services
         self._lock = lock
+        self._tracing = tracing
         self._handoff_trigger = HandoffTrigger()
         self._prompt_context = ScopedPrompts(services.prompts, services.scope_id)
         self._trigger = SourceWindowTrigger()
@@ -1538,10 +1561,24 @@ class _RelationalTriggers:
                 )
 
             action = transition.actions[0]
-            if not sources:
+            prepared = (
+                None if not sources else await self._prepare_memory(sources, authorize_snapshot=authorize_snapshot)
+            )
+            commit = None if prepared is None else prepared.commit
+            with self._stage(
+                _MEMORY_COMMIT_STAGE,
+                attributes={
+                    _MEMORY_COMMIT_MEMORY_CHANGED: commit is not None,
+                    _MEMORY_COMMIT_ENTRY_VERSION_COUNT: 0 if commit is None else len(commit.entry_versions),
+                },
+            ):
                 async with self._services.database.transaction() as connection:
                     if processing is not None:
                         await processing.guard(connection)
+                    updated = None
+                    if prepared is not None:
+                        _, source_catalog = self._services.sources(connection)
+                        updated = await self._services.memory(source_catalog, connection).apply(prepared)
                     await self._services.repositories.cursors.save(
                         connection,
                         self._services.scope_id,
@@ -1549,33 +1586,11 @@ class _RelationalTriggers:
                         transition.state,
                         expected_generation=None if state_row is None else state_row.generation,
                     )
+                    if on_commit is not None and prepared is not None:
+                        before = prepared.result if prepared.commit is None else prepared.commit.base
+                        await on_commit(connection, before, updated)
                     if processing is not None:
                         await processing.complete(connection, remaining_work=action.through < high_watermark)
-                return MemoryFlushResult(
-                    previous_cursor=action.after,
-                    high_watermark=high_watermark,
-                    current_cursor=action.through,
-                    source_count=0,
-                    memory_ref=None,
-                )
-            prepared = await self._prepare_memory(sources, authorize_snapshot=authorize_snapshot)
-            async with self._services.database.transaction() as connection:
-                if processing is not None:
-                    await processing.guard(connection)
-                _, source_catalog = self._services.sources(connection)
-                updated = await self._services.memory(source_catalog, connection).apply(prepared)
-                await self._services.repositories.cursors.save(
-                    connection,
-                    self._services.scope_id,
-                    SOURCE_WINDOW_TRIGGER_NAME,
-                    transition.state,
-                    expected_generation=None if state_row is None else state_row.generation,
-                )
-                if on_commit is not None:
-                    before = prepared.result if prepared.commit is None else prepared.commit.base
-                    await on_commit(connection, before, updated)
-                if processing is not None:
-                    await processing.complete(connection, remaining_work=action.through < high_watermark)
             return MemoryFlushResult(
                 previous_cursor=action.after,
                 high_watermark=high_watermark,
@@ -1611,6 +1626,18 @@ class _RelationalTriggers:
         if authorize_snapshot is not None:
             await authorize_snapshot(current)
         return await service.plan_remember(memory=current, sources=sources, mode="extract")
+
+    def _stage(
+        self,
+        name: str,
+        *,
+        attributes: Mapping[str, TraceAttribute],
+    ) -> AbstractContextManager[RuntimeSpan | None]:
+        """Open one optional Runtime tracing stage around relational work."""
+
+        if self._tracing is None:
+            return nullcontext(None)
+        return self._tracing.stage(name, attributes=attributes)
 
 
 class _RelationalExperienceIncubator:

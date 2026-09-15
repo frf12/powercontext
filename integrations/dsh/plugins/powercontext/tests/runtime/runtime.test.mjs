@@ -28,7 +28,7 @@ test('documented setup installs the matched plugin, diagnoses the running host a
     assert.ok(installation.setup.includes('powercontext-dsh'))
     assert.equal(installation.doctor.checks.plugin.checks.registration, 'present')
     assert.equal(installation.doctor.checks.plugin.checks.running_host_configuration, 'not_observed')
-    const { instance, dshHome, doctor } = env.harness({ baseUrl: 'http://127.0.0.1:1' }, {
+    const { instance, dshHome, doctor, status } = env.harness({ baseUrl: 'http://127.0.0.1:1' }, {
       plugin: installation.plugin, commands: true,
       env: { POWERCONTEXT_DSH_BASE_URL: env.baseUrl },
     })
@@ -40,6 +40,13 @@ test('documented setup installs the matched plugin, diagnoses the running host a
     const memory = await env.api('/v1/memory/entries/list', { scope_id: env.scopeId })
     assert.ok(JSON.stringify(memory).includes(CANARY))
     const diagnosedAt = env.calls.length
+    const firstStatus = await status(first.sessionId)
+    assert.equal(firstStatus.freshness, 'current')
+    assert.equal(firstStatus.stages.prepare.state, 'empty')
+    assert.equal(firstStatus.stages.capture.state, 'accepted')
+    assert.equal(firstStatus.stages.flush.state, 'completed')
+    assert.equal(firstStatus.stages.injection.state, 'skipped')
+    assert.ok(!JSON.stringify(firstStatus).includes(CANARY))
     const report = await doctor(first.sessionId)
     assert.equal(report.ok, true, JSON.stringify(report))
     assert.equal(report.kind, 'success')
@@ -49,6 +56,10 @@ test('documented setup installs the matched plugin, diagnoses the running host a
     assert.equal(report.configuration.scope.source, 'default')
     assert.equal(report.checks.capabilities.code, 'extraction_enabled')
     assert.equal(report.checks.routes.code, 'routes_declared')
+    const afterDoctor = await status(first.sessionId)
+    assert.equal(afterDoctor.attempt, firstStatus.attempt)
+    assert.equal(afterDoctor.stages.prepare.state, 'empty')
+    assert.equal(afterDoctor.stages.prepare.observed_at, firstStatus.stages.prepare.observed_at)
     assert.ok(env.calls.slice(diagnosedAt).every(call => !['/v1/sources/content', '/v1/memory/flush'].includes(call.path)))
     env.setFault({ path: '/v1/scope-bindings/resolve', status: 401 })
     const denied = await doctor(first.sessionId)
@@ -57,6 +68,10 @@ test('documented setup installs the matched plugin, diagnoses the running host a
     assert.equal(denied.checks.scope.code, 'authentication_failed')
     assert.equal(denied.checks.scope.operation, 'resolve_scope_binding')
     assert.equal(denied.checks.prepare.state, 'skipped')
+    const unverified = await status(first.sessionId)
+    assert.equal(unverified.kind, 'error')
+    assert.equal(unverified.stale_reason, 'scope_unverified')
+    assert.equal(unverified.stages.capture.state, 'accepted')
     env.setFault(undefined)
     const capture = env.calls.find(call => call.path === '/v1/sources/content')
     const replay = await env.api('/v1/sources/content', capture.body)
@@ -64,6 +79,9 @@ test('documented setup installs the matched plugin, diagnoses the running host a
     const second = await instance.run('What is the aurora deployment color?')
     const messages = injected(second)
     assert.equal(messages.length, 1)
+    const secondStatus = await status(second.sessionId)
+    assert.equal(secondStatus.stages.prepare.state, 'ready')
+    assert.equal(secondStatus.stages.injection.state, 'appended')
     const message = messages[0]
     assert.equal(message.source.form, 'snapshot')
     assert.equal(message.source.sections[0].text, message.content[0].text)
@@ -119,7 +137,7 @@ test('prepare, capture and flush fail independently and recover across real host
   const env = await environment()
   try {
     await env.api('/v1/memory/remember', { scope_id: env.scopeId, kind: 'decision', text: CANARY })
-    const { instance } = env.harness()
+    const { instance, status } = env.harness({}, { commands: true })
     for (const path of ['/v1/context/prepare', '/v1/sources/content', '/v1/memory/flush']) {
       env.setFault({ path, status: 503 })
       const start = env.calls.length
@@ -130,6 +148,12 @@ test('prepare, capture and flush fail independently and recover across real host
       assert.equal(calls.filter(call => call.path === '/v1/sources/content').length, 1)
       if (path === '/v1/context/prepare') assert.ok(calls.some(call => call.path === '/v1/sources/content' && call.status === 202))
       if (path === '/v1/sources/content') assert.ok(!calls.some(call => call.path === '/v1/memory/flush'))
+      const observation = await status(run.sessionId)
+      const stage = path === '/v1/context/prepare' ? 'prepare' : path === '/v1/sources/content' ? 'capture' : 'flush'
+      assert.equal(observation.stages[stage].state, 'unavailable')
+      assert.equal(observation.stages[stage].http_status, 503)
+      if (stage !== 'capture') assert.equal(observation.stages.capture.state, 'accepted')
+      assert.equal(observation.stages.injection.state, stage === 'prepare' ? 'skipped' : 'appended')
     }
     env.setFault(undefined)
     const recovered = await instance.run('What is the aurora deployment color?')
@@ -140,6 +164,45 @@ test('prepare, capture and flush fail independently and recover across real host
     assert.equal(injected(await restarted.run('What is the aurora deployment color?')).length, 1)
     assert.equal(env.calls.slice(start).filter(call => call.path === '/v1/context/prepare').length, 1)
     assert.equal(env.calls.slice(start).filter(call => call.path === '/v1/sources/content').length, 1)
+  } finally { await env.close() }
+})
+
+test('real DSH distinguishes rejected writes from incomplete HTTP responses', { timeout: 120000 }, async () => {
+  const env = await environment()
+  try {
+    await env.api('/v1/memory/remember', { scope_id: env.scopeId, kind: 'decision', text: CANARY })
+    const { instance, status } = env.harness({ requestTimeoutMs: 1000, timeoutMs: 10000 }, { commands: true })
+    for (const path of ['/v1/sources/content', '/v1/memory/flush']) {
+      for (const holdBody of [false, true]) {
+        env.setFault({ path, status: 401, holdBody })
+        const run = await instance.run('What is the aurora deployment color?')
+        assert.ok(run.finalResponse)
+        const observation = await status(run.sessionId)
+        const stage = path === '/v1/sources/content' ? 'capture' : 'flush'
+        assert.equal(observation.stages[stage].code, 'authentication_failed')
+        assert.equal(observation.stages[stage].http_status, 401)
+        assert.equal(observation.stages[stage].confirmation, 'rejected')
+        if (holdBody) {
+          assert.equal(observation.stages[stage].request_id, 'req-runtime-body')
+          assert.equal(observation.stages[stage].response_body_error, 'request_timeout')
+          assert.equal(observation.stages[stage].failure_phase, 'response_body')
+        }
+        if (stage === 'flush') assert.equal(observation.stages.capture.state, 'accepted')
+        else assert.equal(observation.stages.flush.code, 'capture_rejected')
+        assert.equal(observation.stages.injection.state, 'appended')
+        assert.ok(!JSON.stringify(observation).includes('private-response-marker'))
+      }
+    }
+    env.setFault({ path: '/v1/sources/content', status: 202, holdBody: true })
+    const incomplete = await instance.run('What is the aurora deployment color?')
+    const observation = await status(incomplete.sessionId)
+    assert.equal(observation.stages.capture.http_status, 202)
+    assert.equal(observation.stages.capture.code, 'request_timeout')
+    assert.equal(observation.stages.capture.confirmation, 'unconfirmed')
+    assert.equal(observation.stages.flush.code, 'capture_not_confirmed')
+    env.setFault(undefined)
+    const recovered = await instance.run('What is the aurora deployment color?')
+    assert.equal((await status(recovered.sessionId)).stages.capture.state, 'accepted')
   } finally { await env.close() }
 })
 
