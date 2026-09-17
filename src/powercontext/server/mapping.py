@@ -831,6 +831,11 @@ def prepared_context_response(value: PreparedContext) -> TransportPreparedContex
         "status": PreparedContextStatus(value.status),
         "content": value.content,
         "content_bytes": value.content_bytes,
+        **(
+            {"learned_context": value.learned_context.model_dump(mode="json")}
+            if value.learned_context is not None
+            else {}
+        ),
     })
 
 
@@ -1000,6 +1005,7 @@ def skill_content(value: SkillProposal) -> SkillContent:
         compatibility=value.compatibility,
         metadata={} if value.metadata is None else value.metadata,
         allowed_tools=value.allowed_tools,
+        tool_dependencies=tuple(runtime_artifact_reference(ref) for ref in value.tool_dependencies),
     )
 
 
@@ -1014,6 +1020,7 @@ def skill_proposal(value: SkillContent) -> SkillProposal:
         compatibility=value.compatibility,
         metadata=value.metadata,
         allowed_tools=value.allowed_tools,
+        tool_dependencies=[artifact_reference(ref) for ref in value.tool_dependencies],
     )
 
 

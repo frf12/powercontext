@@ -1571,6 +1571,126 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/trace-learning:
+    post:
+      tags:
+      - trace-learning
+      summary: Learn reusable tools and methods from selected complete traces
+      operationId: import_trace_learning
+      x-powercontext-access:
+        action: scope.contribute
+        resource:
+          type: scope
+          scope-id-from: scope_id
+      parameters:
+      - name: scope_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: .*\S.*
+      responses:
+        '202':
+          description: The accepted or existing trace learning run.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningRun'
+        '200':
+          description: The accepted or existing trace learning run.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: The configured pending-work capacity was reached.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      description: Accept complete user-selected traces for asynchronous learning. The same principal and idempotency
+        key replay the original run. Queued or running work returns 202; completed work returns 200.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportTraceLearningRequest'
+  /v1/scopes/{scope_id}/trace-learning/{run_id}:
+    get:
+      tags:
+      - trace-learning
+      summary: Read one trace learning run
+      operationId: get_learning_run
+      x-powercontext-access:
+        resolver: path_scope_read_access
+      parameters:
+      - name: scope_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: .*\S.*
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      responses:
+        '200':
+          description: The requested trace learning run state.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/scopes/{scope_id}/dream:
     post:
       tags:
@@ -6678,6 +6798,10 @@ components:
       type: string
       enum: [handoff.generate]
     PreparedContext:
+      description: >-
+        Prepared text and optional structured learned context. A ready response may contain only
+        learned_context, with content null and content_bytes zero. Callers that do not opt into
+        learned_tools receive the existing text-only response shape.
       type: object
       additionalProperties: false
       required: [schema, status, content, content_bytes]
@@ -6692,6 +6816,11 @@ components:
         content_bytes:
           type: integer
           minimum: 0
+        learned_context:
+          allOf:
+            - $ref: "#/components/schemas/LearnedContext"
+          nullable: true
+          description: Included only for requests that opt into learned_tools; callable schemas are never truncated.
     EntryChange:
       type: object
       additionalProperties: false
@@ -6936,6 +7065,12 @@ components:
           minLength: 1
           maxLength: 2000
           nullable: true
+        tool_dependencies:
+          type: array
+          maxItems: 32
+          default: []
+          items:
+            $ref: "#/components/schemas/ArtifactReference"
     SkillPackageReference:
       type: object
       additionalProperties: false
@@ -8102,6 +8237,15 @@ components:
           default: 8000
         assembly:
           $ref: "#/components/schemas/ContextAssembly"
+        learned_tools:
+          type: boolean
+          default: false
+          description: Opt into complete learned tool contracts and their associated methods.
+        host_profile:
+          allOf:
+            - $ref: "#/components/schemas/TraceLearningHostProfile"
+          nullable: true
+          description: Required when learned_tools is true; identifies the Agent SQL execution environment.
     ContextAssemblySection:
       type: object
       additionalProperties: false
@@ -9277,7 +9421,7 @@ components:
       enum: [memory, experience, skill, handoff, profile, prompt]
     ArtifactReadFamily:
       type: string
-      enum: [memory, experience, skill, handoff, profile, prompt, topic-memory]
+      enum: [memory, experience, skill, handoff, profile, prompt, topic-memory, tool]
     StatsPeriod:
       type: string
       enum: [today, 7d, 30d]
@@ -9873,3 +10017,357 @@ components:
           items:
             $ref: "#/components/schemas/AccessAuditEvent"
         next_cursor: {type: string, maxLength: 2048, nullable: true}
+
+    CompleteTrace:
+      properties:
+        trace_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+        question:
+          type: string
+          maxLength: 64000
+          minLength: 1
+        tool_calls:
+          items:
+            $ref: '#/components/schemas/TraceToolCall'
+          type: array
+          maxItems: 256
+          minItems: 1
+        final_answer: {}
+        context:
+          additionalProperties: {}
+          type: object
+      additionalProperties: false
+      type: object
+      required:
+      - trace_id
+      - question
+      - tool_calls
+      - final_answer
+    TraceLearningHostProfile:
+      properties:
+        kind:
+          type: string
+          enum:
+          - datus
+          default: datus
+        dialect:
+          type: string
+          maxLength: 32
+          minLength: 1
+        database_name:
+          type: string
+          maxLength: 256
+          minLength: 1
+          nullable: true
+      additionalProperties: false
+      type: object
+      required:
+      - dialect
+    TraceToolCall:
+      properties:
+        call_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+        name:
+          type: string
+          maxLength: 256
+          minLength: 1
+        arguments:
+          additionalProperties: {}
+          type: object
+        result: {}
+        succeeded:
+          type: boolean
+          default: true
+      additionalProperties: false
+      type: object
+      required:
+      - call_id
+      - name
+      - arguments
+      - result
+    ImportTraceLearningRequest:
+      properties:
+        idempotency_key:
+          type: string
+          maxLength: 128
+          minLength: 1
+        traces:
+          items:
+            $ref: '#/components/schemas/CompleteTrace'
+          type: array
+          maxItems: 32
+          minItems: 1
+        host_profile:
+          $ref: '#/components/schemas/TraceLearningHostProfile'
+      additionalProperties: false
+      type: object
+      required:
+      - idempotency_key
+      - traces
+      - host_profile
+    LearningBudget:
+      properties:
+        max_model_calls:
+          type: integer
+          maximum: 10.0
+          minimum: 1.0
+          default: 3
+        max_output_tokens:
+          type: integer
+          maximum: 64000.0
+          minimum: 1024.0
+          default: 16000
+        max_input_chars:
+          type: integer
+          maximum: 4194304.0
+          minimum: 1024.0
+          default: 400000
+        timeout_seconds:
+          type: number
+          maximum: 3600.0
+          exclusiveMinimum: 0.0
+          default: 300
+        previous_artifact_limit:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          default: 30
+        max_pending_per_scope:
+          type: integer
+          maximum: 1000.0
+          minimum: 1.0
+          default: 32
+      type: object
+    LearningUsage:
+      properties:
+        model_calls:
+          type: integer
+          minimum: 0.0
+          default: 0
+        input_tokens:
+          type: integer
+          minimum: 0.0
+          nullable: true
+        output_tokens:
+          type: integer
+          minimum: 0.0
+          nullable: true
+      type: object
+    ValidationReport:
+      properties:
+        covered_path_verified:
+          type: boolean
+          default: false
+        live_execution_verified:
+          type: boolean
+          default: false
+        checked_examples:
+          type: integer
+          default: 0
+        method:
+          type: string
+          enum:
+          - recorded_sql_ast_equivalence
+          default: recorded_sql_ast_equivalence
+        detail:
+          type: string
+          default: Checks parameter binding against recorded successful SQL; does not rerun a live database.
+      type: object
+    LearningRun:
+      properties:
+        scope_id:
+          type: string
+        run_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          default: queued
+        stage:
+          type: string
+          enum:
+          - imported
+          - generating
+          - validating
+          - saving
+          - complete
+          default: imported
+        sources:
+          items:
+            $ref: '#/components/schemas/TraceLearningSourceReference'
+          type: array
+          default: []
+        artifacts:
+          items:
+            $ref: '#/components/schemas/ArtifactReference'
+          type: array
+          default: []
+        host_profile:
+          $ref: '#/components/schemas/TraceLearningHostProfile'
+        input_digest:
+          type: string
+        accepted_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        attempt_count:
+          type: integer
+          default: 0
+        prompt_version:
+          type: string
+          default: powercontext.trace-learning.v1
+        model_config_id:
+          type: string
+          nullable: true
+        usage:
+          $ref: '#/components/schemas/LearningUsage'
+        budget:
+          $ref: '#/components/schemas/LearningBudget'
+        validation:
+          allOf:
+          - $ref: '#/components/schemas/ValidationReport'
+          nullable: true
+        error:
+          type: string
+          nullable: true
+      type: object
+      required:
+      - scope_id
+      - run_id
+      - host_profile
+      - input_digest
+      - accepted_at
+    LearnedExperience:
+      properties:
+        ref:
+          $ref: '#/components/schemas/ArtifactReference'
+        text:
+          type: string
+      additionalProperties: false
+      type: object
+      required:
+      - ref
+      - text
+    LearnedSkill:
+      properties:
+        ref:
+          $ref: '#/components/schemas/ArtifactReference'
+        instructions:
+          type: string
+        tool_dependencies:
+          items:
+            $ref: '#/components/schemas/ArtifactReference'
+          type: array
+          default: []
+      additionalProperties: false
+      type: object
+      required:
+      - ref
+      - instructions
+    LearnedTool:
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-zA-Z][a-zA-Z0-9_-]*$
+        description:
+          type: string
+          maxLength: 2000
+          minLength: 1
+        input_schema:
+          additionalProperties: {}
+          type: object
+        output_schema:
+          additionalProperties: {}
+          type: object
+        implementation:
+          $ref: '#/components/schemas/SqlToolImplementation'
+        ref:
+          $ref: '#/components/schemas/ArtifactReference'
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - description
+      - input_schema
+      - output_schema
+      - implementation
+      - ref
+    SqlToolImplementation:
+      properties:
+        kind:
+          type: string
+          enum:
+          - parameterized_sql
+          default: parameterized_sql
+        sql:
+          type: string
+          maxLength: 131072
+          minLength: 1
+        parameter_order:
+          items:
+            type: string
+          type: array
+          maxItems: 128
+        dialect:
+          type: string
+          maxLength: 64
+          minLength: 1
+          default: sqlite
+        database_name:
+          type: string
+          maxLength: 256
+          minLength: 1
+          nullable: true
+      additionalProperties: false
+      type: object
+      required:
+      - sql
+      - parameter_order
+      description: One read-only SQL statement with positional, explicitly ordered values.
+    LearnedContext:
+      properties:
+        experiences:
+          items:
+            $ref: '#/components/schemas/LearnedExperience'
+          type: array
+          default: []
+        skills:
+          items:
+            $ref: '#/components/schemas/LearnedSkill'
+          type: array
+          default: []
+        tools:
+          items:
+            $ref: '#/components/schemas/LearnedTool'
+          type: array
+          default: []
+      additionalProperties: false
+      type: object
+    TraceLearningSourceReference:
+      properties:
+        source_type:
+          type: string
+        source_id:
+          type: string
+      type: object
+      required:
+      - source_type
+      - source_id
+      description: A stable reference to one Source in the current catalog view.

@@ -46,6 +46,7 @@ from powercontext.builtin.runtime.composition import open_builtin_runtime
 from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import processing_capabilities
 from powercontext.builtin.sources import CONTENT_SOURCE_NAME
+from powercontext.builtin.trace_learning.generation import TraceLearningGenerator
 from powercontext.http import (
     Capabilities,
     MemorySearchMode,
@@ -80,6 +81,7 @@ from powercontext.server.metrics import CONTENT_TYPE_LATEST, HttpMetricsMiddlewa
 from powercontext.server.middleware import AuthenticationMiddleware
 from powercontext.server.processing_security import build_worker_security
 from powercontext.server.settings import MissingAuthenticationProviderError, ServerSettings
+from powercontext.server.trace_learning_access import TraceLearningAccess
 from powercontext.server.tracing import HttpTracingMiddleware, ServerTracing
 
 logger = logging.getLogger(__name__)
@@ -128,6 +130,7 @@ def create_server_app(  # noqa: C901
     profile_generator: ProfileGenerator | None = None,
     skill_generator: SkillGenerator | None = None,
     dream_generator: DreamGenerator | None = None,
+    trace_learning_generator: TraceLearningGenerator | None = None,
     external_skill_provider: ExternalSkillProvider | None = None,
     handoff_pipeline: HandoffGenerationPipeline | None = None,
     embedding_model: EmbeddingModel | None = None,
@@ -194,6 +197,7 @@ def create_server_app(  # noqa: C901
                 if resolved.access.mode == "enforced" and isinstance(active_access_control, AccessControlService)
                 else None
             )
+            trace_learning_access = None if dream_access is None else TraceLearningAccess(dream_access.access)
             worker_security = build_worker_security(
                 resolved,
                 active_access_control,
@@ -211,6 +215,16 @@ def create_server_app(  # noqa: C901
                     profile_generator=profile_generator,
                     skill_generator=skill_generator,
                     dream_generator=dream_generator,
+                    trace_learning_generator=trace_learning_generator,
+                    trace_learning_authorizer=None
+                    if trace_learning_access is None
+                    else trace_learning_access.authorize,
+                    trace_learning_authorization_context=nullcontext
+                    if trace_learning_access is None
+                    else trace_learning_access.access.defer_decision_audit,
+                    trace_learning_artifact_attester=None
+                    if trace_learning_access is None
+                    else trace_learning_access.attest_artifact,
                     dream_authorizer=None if dream_access is None else dream_access.authorize,
                     dream_authorization_context=nullcontext
                     if dream_access is None
@@ -241,6 +255,8 @@ def create_server_app(  # noqa: C901
                 )
             )
             _bind_dream_access(dream_access, runtime)
+            if trace_learning_access is not None:
+                trace_learning_access.bind(runtime)
             if active_access_control is not None:
                 migrated, unresolved = await runtime._records().migrate_handoff_receipts(
                     active_access_control.committed_receipt_identity,
@@ -597,7 +613,7 @@ async def _server_capabilities(runtime: BuiltinRuntime) -> Capabilities:
     capabilities = await runtime.capabilities()
     return Capabilities(
         source_types=[CONTENT_SOURCE_NAME],
-        artifact_families=["memory", "topic-memory", "experience", "skill", "handoff", "profile", "prompt"],
+        artifact_families=["memory", "topic-memory", "experience", "skill", "handoff", "profile", "prompt", "tool"],
         prompts={
             key: PromptCapability.model_validate_json(value.model_dump_json())
             for key, value in capabilities.prompts.items()

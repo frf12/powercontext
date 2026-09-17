@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from powercontext.artifacts import Artifact, ArtifactDraft
+from powercontext.artifacts import Artifact, ArtifactDraft, ArtifactRef
 
 MAX_SKILL_NAME_LENGTH = 128
 MAX_SKILL_DESCRIPTION_LENGTH = 2_000
@@ -33,6 +33,20 @@ SkillName = Annotated[str, Field(min_length=1, max_length=MAX_SKILL_NAME_LENGTH)
 SkillDescription = Annotated[str, Field(min_length=1, max_length=MAX_SKILL_DESCRIPTION_LENGTH)]
 SkillInstructions = Annotated[str, Field(max_length=MAX_SKILL_INSTRUCTIONS_LENGTH)]
 SkillValidationItem = Annotated[str, Field(min_length=1, max_length=MAX_SKILL_VALIDATION_ITEM_LENGTH)]
+
+
+def _validate_tool_dependencies(values: tuple[ArtifactRef, ...]) -> tuple[ArtifactRef, ...]:
+    if any(ref.family != "tool" for ref in values):
+        raise ValueError("Skill tool dependencies must reference exact Tool revisions")  # noqa: TRY003
+    identities = [(ref.artifact_id, ref.revision) for ref in values]
+    if len(set(identities)) != len(identities):
+        raise ValueError("Skill tool dependencies must not repeat an exact Tool revision")  # noqa: TRY003
+    return values
+
+
+SkillToolDependencies = Annotated[
+    tuple[ArtifactRef, ...], Field(max_length=32), AfterValidator(_validate_tool_dependencies)
+]
 
 
 class SkillPackageRef(BaseModel):
@@ -59,6 +73,7 @@ class SkillContent(BaseModel):
     compatibility: str | None = Field(default=None, min_length=1, max_length=MAX_SKILL_COMPATIBILITY_LENGTH)
     metadata: dict[str, str] = Field(default_factory=dict)
     allowed_tools: str | None = Field(default=None, min_length=1, max_length=2_000)
+    tool_dependencies: SkillToolDependencies = ()
 
     @field_validator("name", "description")
     @classmethod
@@ -138,4 +153,5 @@ __all__ = [
     "SkillContent",
     "SkillDraft",
     "SkillPackageRef",
+    "SkillToolDependencies",
 ]

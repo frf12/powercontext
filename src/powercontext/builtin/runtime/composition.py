@@ -143,6 +143,8 @@ from powercontext.builtin.sources import (
     BUILTIN_SOURCE_REGISTRY,
     TEXT_EVIDENCE_PROJECTION_KEY,
 )
+from powercontext.builtin.trace_learning.generation import TraceLearningGenerator, open_trace_learning_generator
+from powercontext.builtin.trace_learning.models import TRACE_LEARNING_BINDING
 from powercontext.errors import InvalidSourceProjectionError, SourceProjectionNotFoundError
 from powercontext.sources import Source, SourceDefinitionRegistry, SourceProjectionKey
 
@@ -153,6 +155,7 @@ if TYPE_CHECKING:
     from pydantic_ai.settings import ModelSettings
 
     from powercontext.builtin.inference.pydantic_ai import InferenceLimits
+    from powercontext.builtin.trace_learning.service import ArtifactAttester, TraceLearningAuthorizer
 
 ValueT = TypeVar("ValueT")
 logger = logging.getLogger(__name__)
@@ -264,6 +267,10 @@ async def open_builtin_runtime(
     dream_authorizer: DreamAuthorizer | None = None,
     dream_authorization_context: AuthorizationContext = nullcontext,
     dream_candidate_attester: CandidateAttester | None = None,
+    trace_learning_generator: TraceLearningGenerator | None = None,
+    trace_learning_authorizer: TraceLearningAuthorizer | None = None,
+    trace_learning_authorization_context: AuthorizationContext = nullcontext,
+    trace_learning_artifact_attester: ArtifactAttester | None = None,
     external_skill_provider: ExternalSkillProvider | None = None,
     handoff_pipeline: HandoffGenerationPipeline | None = None,
     embedding_model: EmbeddingModel | None = None,
@@ -283,6 +290,8 @@ async def open_builtin_runtime(
     handoff_verification_keys: tuple[bytes, ...] = (),
 ) -> AsyncIterator[BuiltinRuntime]:
     """Open the selected database, inference adapters, and built-in runtime."""
+
+    from powercontext.builtin.trace_learning.service import TraceLearningService
 
     async with AsyncExitStack() as resources:
         configured_source_registry = source_registry or BUILTIN_SOURCE_REGISTRY
@@ -377,6 +386,12 @@ async def open_builtin_runtime(
             )
         )
         contexts.profiles.generator = generated_profile if profile_generator is None else profile_generator
+        configured_trace_generator = await _configured_trace_learning_generator(
+            config,
+            trace_learning_generator,
+            resources,
+            instrumentation,
+        )
         contexts.profiles.max_sources = config.runtime.profile_max_sources_per_window
         if scheduled_profile_runner is not None:
 
@@ -412,6 +427,7 @@ async def open_builtin_runtime(
                 "experience": experience_pipeline if experience_pipeline is not None else dream_generator,
                 "profile": profile_generator,
                 "skill": dream_generator,
+                "tool": trace_learning_generator,
             },
             worker_security=worker_security,
             source_registry=configured_source_registry,
@@ -483,6 +499,24 @@ async def open_builtin_runtime(
                     attest_candidate=dream_candidate_attester,
                 ),
                 generation_concurrency=config.runtime.generation_concurrency,
+                trace_learning_service=TraceLearningService(
+                    contexts=contexts,
+                    generator=configured_trace_generator,
+                    budget=config.runtime.trace_learning_budget,
+                    authorize=trace_learning_authorizer,
+                    authorization_context=trace_learning_authorization_context,
+                    attest_artifact=trace_learning_artifact_attester,
+                    enabled=config.runtime.trace_learning_enabled
+                    and (
+                        "tool" in {binding.artifact_family for binding in processing_bindings}
+                        or (
+                            config.runtime.artifact_processing_role == "api"
+                            and "tool" in processing_capabilities(config)
+                        )
+                    ),
+                )
+                if config.runtime.trace_learning_enabled
+                else None,
                 experience_recall=contexts.search_experience,
                 skill_recall=contexts.search_skills,
                 skill_lister=contexts.list_skills,
@@ -532,6 +566,26 @@ async def open_builtin_runtime(
         yield runtime
 
 
+async def _configured_trace_learning_generator(
+    config: BuiltinConfig,
+    injected: TraceLearningGenerator | None,
+    resources: AsyncExitStack,
+    instrumentation: InstrumentationSettings | None,
+) -> TraceLearningGenerator | None:
+    if (
+        injected is not None
+        or not config.runtime.trace_learning_enabled
+        or config.runtime.artifact_processing_role == "api"
+    ):
+        return injected
+    return await open_trace_learning_generator(
+        config.inference,
+        config.runtime.trace_learning_budget,
+        resources,
+        instrumentation,
+    )
+
+
 def _validate_processing_source_registry(
     config: BuiltinConfig,
     bindings: Sequence[ArtifactProcessingBinding],
@@ -570,7 +624,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
     configured = list(bindings)
     _validate_processing_registrations(configured)
     capabilities = processing_capabilities(config)
-    canonical = {**FAMILY_BINDINGS, "topic-memory": TOPIC_MEMORY_SOURCE_WINDOW_BINDING}
+    canonical = {**FAMILY_BINDINGS, "topic-memory": TOPIC_MEMORY_SOURCE_WINDOW_BINDING, "tool": TRACE_LEARNING_BINDING}
     registered = {binding.artifact_family for binding in configured}
     declared = set(capabilities)
     if declared - (set(canonical) | registered):
@@ -581,6 +635,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
         "experience": config.runtime.experience_schedule_seconds,
         "profile": config.runtime.profile_schedule_enabled or None,
         "skill": None,
+        "tool": None,
     }
     for family, schedule in automatic.items():
         if schedule is not None and family not in declared | registered:
@@ -623,6 +678,16 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
             entrypoint = partial(
                 run_topic_memory_worker, TopicMemoryWorkerSpec(config=config, worker_security=worker_security)
             )
+        elif family == "tool":
+            from powercontext.builtin.runtime.trace_learning_processing import (
+                TraceLearningWorkerSpec,
+                run_trace_learning_worker,
+            )
+
+            entrypoint = partial(
+                run_trace_learning_worker,
+                TraceLearningWorkerSpec(config=config, worker_security=worker_security),
+            )
         else:
             entrypoint = partial(run_family_worker, FamilyWorkerSpec(config=config, worker_security=worker_security))
         interval = None if family == "profile" else automatic[family]
@@ -640,7 +705,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
                 else None,
                 timezone=config.runtime.profile_timezone if family == "profile" else "Asia/Shanghai",
                 pending_provider=None
-                if family == "skill"
+                if family in {"skill", "tool"}
                 else SourceProcessingPendingProvider(contexts.database, binding, family),
                 automatic_scope_filter=enabled_profile_scopes if family == "profile" else None,
             )

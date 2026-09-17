@@ -24,6 +24,7 @@ from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WIND
 from powercontext.builtin.dream.bindings import DREAM_PROVIDERS, SKILL_DREAM_BINDING
 from powercontext.builtin.dream.models import DreamOperation
 from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.trace_learning.models import TRACE_LEARNING_BINDING
 from powercontext.builtin.triggers import SOURCE_WINDOW_TRIGGER_NAME
 
 # Provisional per-Family recommendations for operator-facing setup tools. Runtime
@@ -58,6 +59,8 @@ def processing_capabilities(config: BuiltinConfig) -> tuple[str, ...]:
         families.append("topic-memory")
     if config.runtime.dream_enabled and config.inference.generation_model.split(":", 1)[0] in DREAM_PROVIDERS:
         families.append("skill")
+    if config.runtime.trace_learning_enabled:
+        families.append("tool")
     return tuple(sorted(families))
 
 
@@ -92,15 +95,18 @@ def canonical_processing_manifest(config: BuiltinConfig) -> dict[str, Any]:
         automatic.append(EXPERIENCE_INCUBATION_CURSOR_NAME)
     if runtime.profile_schedule_enabled:
         automatic.append(PROFILE_SOURCE_WINDOW_BINDING)
+    bindings = {
+        SOURCE_WINDOW_TRIGGER_NAME: "memory",
+        TOPIC_MEMORY_SOURCE_WINDOW_BINDING: "topic-memory",
+        EXPERIENCE_INCUBATION_CURSOR_NAME: "experience",
+        PROFILE_SOURCE_WINDOW_BINDING: "profile",
+        SKILL_DREAM_BINDING: "skill",
+    }
+    if runtime.trace_learning_enabled:
+        bindings[TRACE_LEARNING_BINDING] = "tool"
     return {
         "mode": runtime.artifact_processing_supervisor_mode,
         "capabilities": list(processing_capabilities(config)),
-        "bindings": {
-            SOURCE_WINDOW_TRIGGER_NAME: "memory",
-            TOPIC_MEMORY_SOURCE_WINDOW_BINDING: "topic-memory",
-            EXPERIENCE_INCUBATION_CURSOR_NAME: "experience",
-            PROFILE_SOURCE_WINDOW_BINDING: "profile",
-            SKILL_DREAM_BINDING: "skill",
-        },
+        "bindings": bindings,
         "legacy_automatic_bindings": sorted(automatic),
     }

@@ -102,6 +102,17 @@ ARTIFACT_FAMILY_PROFILES: dict[str, ArtifactFamilyAccessProfile] = {
         selector="forbidden",
         mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
+    "tool": ArtifactFamilyAccessProfile(
+        family="tool",
+        enabled=True,
+        share_unit="artifact",
+        shareable_states=frozenset({"committed"}),
+        base_action=AccessAction.ARTIFACT_READ,
+        additional_actions=frozenset(),
+        grantable_roles=frozenset({AccessRole.ARTIFACT_VIEWER}),
+        selector="forbidden",
+        mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
+    ),
     "profile": ArtifactFamilyAccessProfile(
         family="profile",
         enabled=True,

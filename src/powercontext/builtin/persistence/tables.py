@@ -33,6 +33,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.mysql import BINARY, MEDIUMBLOB, MEDIUMTEXT, VARCHAR
 
+from powercontext.builtin.persistence.trace_learning_schema import create_trace_learning_runs_table
 from powercontext.limits import (
     MAX_ARTIFACT_FAMILY_LENGTH,
     MAX_ARTIFACT_ID_LENGTH,
@@ -1091,11 +1092,17 @@ RECEIPT_MIGRATION_REVIEW_TABLE = Table(
     Column("reason", String(64), nullable=False),
 )
 
+TRACE_LEARNING_RUNS_TABLE = create_trace_learning_runs_table(
+    SHARED_METADATA,
+    identity_string,
+    _canonical_payload_type(),
+)
+
 BUILTIN_TABLES = (
     SCOPE_TABLES
     + SHARED_TABLES
     + TOPIC_MEMORY_TABLES
     + MEMORY_TABLES
     + STATISTICS_TABLES
-    + (ARTIFACT_TAGS_TABLE, DREAM_RUNS_TABLE, RECEIPT_MIGRATION_REVIEW_TABLE)
+    + (ARTIFACT_TAGS_TABLE, DREAM_RUNS_TABLE, TRACE_LEARNING_RUNS_TABLE, RECEIPT_MIGRATION_REVIEW_TABLE)
 )

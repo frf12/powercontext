@@ -50,8 +50,10 @@ from powercontext.builtin.review import (
     CandidateStatus,
 )
 from powercontext.builtin.review.generation import SkillGenerationOrigin
+from powercontext.builtin.runtime.learned_context import LearnedContext
 from powercontext.builtin.sources import ExternalSkillImportMode
 from powercontext.builtin.tags import TagFilter
+from powercontext.builtin.trace_learning.models import TraceLearningHostProfile
 from powercontext.sources import ConnectorBinding, SourceObservation, SourceRef
 
 PreparedContextSchema: TypeAlias = Literal["powercontext.prepared-context.v1"]
@@ -227,6 +229,14 @@ class PrepareContextRequest(_PreparedContextModel):
     query: Annotated[str, Field(min_length=1, max_length=8192)]
     max_bytes: Annotated[int, Field(ge=512, le=32768)] = 8000
     assembly: ContextAssembly | None = None
+    learned_tools: bool = False
+    host_profile: TraceLearningHostProfile | None = None
+
+    @model_validator(mode="after")
+    def require_learned_tool_host(self) -> PrepareContextRequest:
+        if self.learned_tools and self.host_profile is None:
+            raise ValueError("host_profile is required when learned_tools is enabled")  # noqa: TRY003
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -250,12 +260,20 @@ class PreparedContext(_PreparedContextModel):
     status: PreparedContextStatus
     content: str | None
     content_bytes: Annotated[int, Field(ge=0)]
+    learned_context: LearnedContext | None = None
 
     @model_validator(mode="after")
     def validate_content(self) -> PreparedContext:
         if self.status == "empty":
             if self.content is not None or self.content_bytes != 0:
                 raise ValueError("empty prepared context must not contain content")  # noqa: TRY003
+            return self
+        if (
+            self.content is None
+            and self.content_bytes == 0
+            and self.learned_context is not None
+            and self.learned_context.refs
+        ):
             return self
         if self.content is None or not self.content.strip():
             raise ValueError("ready prepared context must contain content")  # noqa: TRY003

@@ -1922,6 +1922,7 @@ class ArtifactReadFamily(StrEnum):
     PROFILE = "profile"
     PROMPT = "prompt"
     TOPIC_MEMORY = "topic-memory"
+    TOOL = "tool"
 
 
 class StatsPeriod(StrEnum):
@@ -2445,6 +2446,109 @@ class AccessAuditPage(BaseModel):
     next_cursor: Annotated[StrictStr | None, Field(max_length=2048)]
 
 
+class Kind3(StrEnum):
+    DATUS = "datus"
+
+
+class TraceLearningHostProfile(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Kind3 = Kind3.DATUS
+    dialect: Annotated[StrictStr, Field(max_length=32, min_length=1)]
+    database_name: Annotated[StrictStr | None, Field(max_length=256, min_length=1)] = None
+
+
+class TraceToolCall(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    call_id: Annotated[StrictStr, Field(max_length=256, min_length=1)]
+    name: Annotated[StrictStr, Field(max_length=256, min_length=1)]
+    arguments: dict[str, Any]
+    result: Any
+    succeeded: StrictBool = True
+
+
+class LearningBudget(BaseModel):
+    max_model_calls: Annotated[StrictInt, Field(ge=1, le=10)] = 3
+    max_output_tokens: Annotated[StrictInt, Field(ge=1024, le=64000)] = 16000
+    max_input_chars: Annotated[StrictInt, Field(ge=1024, le=4194304)] = 400000
+    timeout_seconds: Annotated[StrictFloat, Field(gt=0.0, le=3600.0)] = 300
+    previous_artifact_limit: Annotated[StrictInt, Field(ge=0, le=100)] = 30
+    max_pending_per_scope: Annotated[StrictInt, Field(ge=1, le=1000)] = 32
+
+
+class LearningUsage(BaseModel):
+    model_calls: Annotated[StrictInt, Field(ge=0)] = 0
+    input_tokens: Annotated[StrictInt | None, Field(ge=0)] = None
+    output_tokens: Annotated[StrictInt | None, Field(ge=0)] = None
+
+
+class Method(StrEnum):
+    RECORDED_SQL_AST_EQUIVALENCE = "recorded_sql_ast_equivalence"
+
+
+class ValidationReport(BaseModel):
+    covered_path_verified: StrictBool = False
+    live_execution_verified: StrictBool = False
+    checked_examples: StrictInt = 0
+    method: Method = Method.RECORDED_SQL_AST_EQUIVALENCE
+    detail: StrictStr = "Checks parameter binding against recorded successful SQL; does not rerun a live database."
+
+
+class Status3(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class Stage(StrEnum):
+    IMPORTED = "imported"
+    GENERATING = "generating"
+    VALIDATING = "validating"
+    SAVING = "saving"
+    COMPLETE = "complete"
+
+
+class LearnedExperience(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    ref: ArtifactReference
+    text: StrictStr
+
+
+class LearnedSkill(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    ref: ArtifactReference
+    instructions: StrictStr
+    tool_dependencies: Annotated[list[ArtifactReference], Field(validate_default=True)] = []
+
+
+class Kind4(StrEnum):
+    PARAMETERIZED_SQL = "parameterized_sql"
+
+
+class SqlToolImplementation(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Kind4 = Kind4.PARAMETERIZED_SQL
+    sql: Annotated[StrictStr, Field(max_length=131072, min_length=1)]
+    parameter_order: Annotated[list[StrictStr], Field(max_length=128)]
+    dialect: Annotated[StrictStr, Field(max_length=64, min_length=1)] = "sqlite"
+    database_name: Annotated[StrictStr | None, Field(max_length=256, min_length=1)] = None
+
+
+class TraceLearningSourceReference(BaseModel):
+    source_type: StrictStr
+    source_id: StrictStr
+
+
 class FlushProfileResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -2724,16 +2828,6 @@ class HandoffGenerationMetadata(BaseModel):
     edit_status: EditStatus
 
 
-class PreparedContext(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    schema_: Annotated[PreparedContextSchema, Field(alias="schema")]
-    status: PreparedContextStatus
-    content: Annotated[StrictStr | None, Field(...)]
-    content_bytes: Annotated[StrictInt, Field(ge=0)]
-
-
 class EntryChange(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -2776,6 +2870,7 @@ class SkillProposal(BaseModel):
     compatibility: Annotated[StrictStr | None, Field(max_length=500, min_length=1)] = None
     metadata: Annotated[dict[str, StrictStr] | None, Field(max_length=64)] = None
     allowed_tools: Annotated[StrictStr | None, Field(max_length=2000, min_length=1)] = None
+    tool_dependencies: Annotated[list[ArtifactReference], Field(max_length=32, validate_default=True)] = []
 
 
 class RemoteSkillTargetStatus(BaseModel):
@@ -3334,6 +3429,68 @@ class ListAccessAuditRequest(BaseModel):
     limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
 
 
+class CompleteTrace(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    trace_id: Annotated[StrictStr, Field(max_length=256, min_length=1)]
+    question: Annotated[StrictStr, Field(max_length=64000, min_length=1)]
+    tool_calls: Annotated[list[TraceToolCall], Field(max_length=256, min_length=1)]
+    final_answer: Any
+    context: dict[str, Any] | None = None
+
+
+class ImportTraceLearningRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    idempotency_key: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+    traces: Annotated[list[CompleteTrace], Field(max_length=32, min_length=1)]
+    host_profile: TraceLearningHostProfile
+
+
+class LearningRun(BaseModel):
+    scope_id: StrictStr
+    run_id: StrictStr
+    status: Status3 = Status3.QUEUED
+    stage: Stage = Stage.IMPORTED
+    sources: Annotated[list[TraceLearningSourceReference], Field(validate_default=True)] = []
+    artifacts: Annotated[list[ArtifactReference], Field(validate_default=True)] = []
+    host_profile: TraceLearningHostProfile
+    input_digest: StrictStr
+    accepted_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+    completed_at: AwareDatetime | None = None
+    attempt_count: StrictInt = 0
+    prompt_version: StrictStr = "powercontext.trace-learning.v1"
+    model_config_id: StrictStr | None = None
+    usage: LearningUsage | None = None
+    budget: LearningBudget | None = None
+    validation: ValidationReport | None = None
+    error: StrictStr | None = None
+
+
+class LearnedTool(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[StrictStr, Field(max_length=64, min_length=1, pattern="^[a-zA-Z][a-zA-Z0-9_-]*$")]
+    description: Annotated[StrictStr, Field(max_length=2000, min_length=1)]
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    implementation: SqlToolImplementation
+    ref: ArtifactReference
+
+
+class LearnedContext(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    experiences: Annotated[list[LearnedExperience], Field(validate_default=True)] = []
+    skills: Annotated[list[LearnedSkill], Field(validate_default=True)] = []
+    tools: Annotated[list[LearnedTool], Field(validate_default=True)] = []
+
+
 class CreateSubjectSourceResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3491,6 +3648,22 @@ class PrepareHandoffRequest(BaseModel):
     max_bytes: Annotated[StrictInt, Field(ge=512, le=32768)] = 8000
 
 
+class PreparedContext(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    schema_: Annotated[PreparedContextSchema, Field(alias="schema")]
+    status: PreparedContextStatus
+    content: Annotated[StrictStr | None, Field(...)]
+    content_bytes: Annotated[StrictInt, Field(ge=0)]
+    learned_context: Annotated[
+        LearnedContext | None,
+        Field(
+            description="Included only for requests that opt into learned_tools; callable schemas are never truncated."
+        ),
+    ] = None
+
+
 class SkillArtifact(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3551,6 +3724,13 @@ class PrepareContextRequest(BaseModel):
     query: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern=".*\\S.*")]
     max_bytes: Annotated[StrictInt, Field(ge=512, le=32768)] = 8000
     assembly: ContextAssembly | None = None
+    learned_tools: Annotated[
+        StrictBool, Field(description="Opt into complete learned tool contracts and their associated methods.")
+    ] = False
+    host_profile: Annotated[
+        TraceLearningHostProfile | None,
+        Field(description="Required when learned_tools is true; identifies the Agent SQL execution environment."),
+    ] = None
 
 
 class GeneratedCandidateResponse(BaseModel):

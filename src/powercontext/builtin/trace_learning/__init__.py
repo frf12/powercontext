@@ -12,24 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[project]
-name = "powercontext-langchain"
-version = "0.0.1"
-description = "LangChain middleware for PowerContext durable memory."
-readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
-requires-python = ">=3.11,<4.0"
-dependencies = [
-    "powercontext[client]>=0.0.2,<2",
-    "langchain>=1.3,<2",
-    "langchain-core>=1,<2",
-    "pydantic-settings>=2.7,<3",
-]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/powercontext_langchain"]
+"""Explicit user-imported trace learning."""

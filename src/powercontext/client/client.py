@@ -103,6 +103,8 @@ from powercontext.http import (
     HandoffResolution,
     HealthResponse,
     ImportExternalSkillRequest,
+    ImportTraceLearningRequest,
+    LearningRun,
     ListAccessAuditRequest,
     ListAccessBindingsRequest,
     ListAccessResourcesRequest,
@@ -237,6 +239,7 @@ from powercontext.http._generated.operations import (
     GET_DREAM_RUN,
     GET_EXPERIENCE,
     GET_HANDOFF_REPORT,
+    GET_LEARNING_RUN,
     GET_LIVENESS,
     GET_MEMORY_ENTRY,
     GET_MEMORY_ENTRY_TAGS,
@@ -251,6 +254,7 @@ from powercontext.http._generated.operations import (
     GET_TOPIC_MEMORY,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
+    IMPORT_TRACE_LEARNING,
     LIST_ACCESS_AUDIT,
     LIST_ACCESS_BINDINGS,
     LIST_ACCESS_RESOURCES,
@@ -582,6 +586,14 @@ class PowerContextClient:
         """List data-minimized authorization and relationship audit events."""
 
         return await self._request(LIST_ACCESS_AUDIT, request)
+
+    async def import_trace_learning(self, scope_id: str, request: ImportTraceLearningRequest) -> LearningRun:
+        """Import selected complete traces or replay their existing learning run."""
+        return await self._request(IMPORT_TRACE_LEARNING, request, path_parameters={"scope_id": scope_id})
+
+    async def get_learning_run(self, scope_id: str, run_id: str) -> LearningRun:
+        """Read the current learning result without starting new work."""
+        return await self._request(GET_LEARNING_RUN, path_parameters={"scope_id": scope_id, "run_id": run_id})
 
     async def create_dream_run(self, scope_id: str, request: CreateDreamRunRequest) -> DreamRun:
         """Accept a Dream or replay its original queued/terminal result."""

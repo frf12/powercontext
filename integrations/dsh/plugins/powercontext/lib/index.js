@@ -598,6 +598,28 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
+	import_trace_learning: {
+		method: "POST",
+		path: "/v1/scopes/{scope_id}/trace-learning",
+		location: "body",
+		scopeMode: "none",
+		pathParameters: ["scope_id"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [202, 200],
+		emptyStatuses: []
+	},
+	get_learning_run: {
+		method: "GET",
+		path: "/v1/scopes/{scope_id}/trace-learning/{run_id}",
+		location: null,
+		scopeMode: "none",
+		pathParameters: ["scope_id", "run_id"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
 	list_dream_runs: {
 		method: "GET",
 		path: "/v1/scopes/{scope_id}/dream",

@@ -711,6 +711,7 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                     "experience",
                     "profile",
                     "skill",
+                    "tool",
                     "prompt",
                 }
                 roles = await admin.post(

@@ -151,6 +151,7 @@ from powercontext.builtin.runtime._scope_cache import (
     ScopeEvictor,
 )
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
+from powercontext.builtin.runtime.learned_context import prepare_learned_context
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
@@ -238,6 +239,7 @@ from powercontext.builtin.statistics import (
 )
 from powercontext.builtin.statistics.aggregation import aggregate_statistics
 from powercontext.builtin.tags import ArtifactTagSet, TagFilter, TagQuery, TagQueryPage, TagTarget
+from powercontext.builtin.trace_learning.application import TraceLearningApplication
 from powercontext.builtin.work import (
     HANDOFF_BOUNDARY_SOURCE_KIND,
     HANDOFF_RECEIPT_SOURCE_KIND,
@@ -268,6 +270,7 @@ if TYPE_CHECKING:
 
     from powercontext.builtin.handoff_report.application import HandoffReportApplication
     from powercontext.builtin.runtime.artifact_processing import ArtifactProcessingSupervisors
+    from powercontext.builtin.trace_learning.service import TraceLearningService
 
 TopicMemorySearch = Callable[..., Awaitable[TopicMemorySearchResult]]
 TopicMemoryGet = Callable[[str, ArtifactRef], Awaitable[PublishedTopicMemory]]
@@ -711,6 +714,7 @@ class ScopedContextApplication:
         /,
         *,
         authorize_scopes: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+        authorize_artifacts: Callable[[tuple[ArtifactRef, ...]], Awaitable[None]] | None = None,
     ) -> PreparedContext:
         if (
             request.assembly is not None
@@ -718,13 +722,46 @@ class ScopedContextApplication:
         ):
             raise InvalidRuntimeRequestError("context-assembly-entry-limit")
         async with self._runtime._scope_operation(self.scope_id) as scope:
-            if request.assembly is not None and not request.assembly.sections:
+            if request.assembly is not None and not request.assembly.sections and not request.learned_tools:
                 return PreparedContextBuilder().empty()
             if authorize_scopes is not None:
                 await authorize_scopes((self.scope_id, *scope.context_references))
-            return await self._prepare(request, scope)
+            service = self._runtime._trace_learning_service
+            if not request.learned_tools or request.host_profile is None or service is None:
+                return await self._prepare(request, scope)
+            async with service.database.transaction() as connection:
+                artifacts = await service.learned_artifacts(connection, self.scope_id)
+            learned = prepare_learned_context(
+                artifacts,
+                query=request.query,
+                dialect=request.host_profile.dialect,
+                database_name=request.host_profile.database_name,
+                max_bytes=request.max_bytes,
+            )
+            if not learned.refs:
+                return await self._prepare(request, scope)
+            if authorize_artifacts is not None:
+                await authorize_artifacts(learned.refs)
+            remaining = request.max_bytes - len(learned.model_dump_json().encode("utf-8"))
+            prepared = await self._prepare(
+                request.model_copy(update={"max_bytes": remaining}),
+                scope,
+                exclude_experiences=frozenset(
+                    (item.ref.artifact_id, item.ref.revision) for item in learned.experiences
+                ),
+            )
+            return PreparedContext(
+                status="ready", content=prepared.content, content_bytes=prepared.content_bytes, learned_context=learned
+            )
 
-    async def _prepare(self, request: PrepareContextRequest, scope: ScopeDescriptor, /) -> PreparedContext:
+    async def _prepare(
+        self,
+        request: PrepareContextRequest,
+        scope: ScopeDescriptor,
+        /,
+        *,
+        exclude_experiences: frozenset[tuple[str, int]] = frozenset(),
+    ) -> PreparedContext:
         builder = PreparedContextBuilder()
         scope_ids = [self.scope_id, *scope.context_references]
         families = (
@@ -743,7 +780,7 @@ class ScopedContextApplication:
                 experience_limit=builder.experience_candidate_limit if "experience" in families else 0,
             )
             memory_candidates.append(memory)
-            experience_candidates.append(experiences)
+            experience_candidates.append(_without_learned_experiences(experiences, self.scope_id, exclude_experiences))
         memory_candidates = _limit_memory_candidates(memory_candidates, builder.memory_candidate_limit)
         experience_candidates = _limit_experience_candidates(
             experience_candidates,
@@ -909,6 +946,19 @@ class ScopedContextApplication:
             if span is not None:
                 span.set_attributes({"powercontext.topic_memory.search.result_count": len(hits)})
             return hits
+
+
+def _without_learned_experiences(
+    candidates: PreparedExperienceCandidates, current_scope_id: str, excluded: frozenset[tuple[str, int]]
+) -> PreparedExperienceCandidates:
+    if candidates.scope_id != current_scope_id or not excluded:
+        return candidates
+    return PreparedExperienceCandidates(
+        scope_id=candidates.scope_id,
+        hits=tuple(
+            hit for hit in candidates.hits if (hit.artifact_ref.artifact_id, hit.artifact_ref.revision) not in excluded
+        ),
+    )
 
 
 def _limit_memory_candidates(
@@ -2235,6 +2285,7 @@ class BuiltinRuntime:
         scheduled_experience_runner: ScheduledExperienceRunner | None = None,
         remote_ingestion: RemoteIngestion | None = None,
         dream_service: DreamService | None = None,
+        trace_learning_service: TraceLearningService | None = None,
         generation_concurrency: int = 4,
     ) -> None:
         if source_window_limit < 1:
@@ -2250,6 +2301,7 @@ class BuiltinRuntime:
         self.subject_sources = subject_sources
         self._generation_service = generation_service
         self._dream_service = dream_service
+        self._trace_learning_service = trace_learning_service
         self._review_evidence_authorizer: ScopedEvidenceAuthorizer | None = None
         self._review_authorization_context: AuthorizationContext = nullcontext
         self._generation_slots = asyncio.Semaphore(generation_concurrency)
@@ -2308,6 +2360,7 @@ class BuiltinRuntime:
         self.context = ContextApplication(self)
         self.experience = ExperienceApplication(self)
         self.dream = DreamApplication(self)
+        self.trace_learning = TraceLearningApplication(self)
         self.external_skills = ExternalSkillApplication(self)
         self.handoff = HandoffApplication(self)
         self.work = WorkApplication(self)

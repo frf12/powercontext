@@ -31,11 +31,12 @@ import zipfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from powercontext.builtin.artifacts.skill.models import SkillContent, SkillPackageRef
+from powercontext.builtin.artifacts.skill.models import SkillContent, SkillPackageRef, SkillToolDependencies
 
 MAX_SKILL_PACKAGE_FILES = 256
 MAX_SKILL_PACKAGE_BYTES = 4 * 1024 * 1024
@@ -44,6 +45,7 @@ MAX_SKILL_MANIFEST_BYTES = 128 * 1024
 MAX_SKILL_PATH_BYTES = 512
 MAX_SKILL_ENTRYPOINT_BYTES = 128 * 1024
 SKILL_ENTRYPOINT = "SKILL.md"
+_TOOL_DEPENDENCIES_PATH = "powercontext/tool-dependencies.json"
 _CANONICAL_TREE_DOMAIN = b"powercontext.skill-package-tree.v1\0"
 _FORBIDDEN_COMPONENTS = frozenset({".env", ".git", "node_modules"})
 SKILL_NAME_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
@@ -104,6 +106,15 @@ class SkillPackageMetadata(BaseModel):
     allowed_tools: str | None = Field(default=None, min_length=1, max_length=2_000)
 
 
+class _SkillToolDependenciesManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["powercontext.skill-tool-dependencies.v1"] = Field(
+        default="powercontext.skill-tool-dependencies.v1", alias="schema"
+    )
+    tool_dependencies: SkillToolDependencies
+
+
 @dataclass(frozen=True)
 class SkillPackageSnapshot:
     """Canonical archive plus deterministic metadata needed by storage and Review."""
@@ -113,6 +124,7 @@ class SkillPackageSnapshot:
     metadata: SkillPackageMetadata
     instructions: str
     archive_bytes: bytes
+    tool_dependencies: SkillToolDependencies = ()
 
     @property
     def manifest_bytes(self) -> bytes:
@@ -133,6 +145,7 @@ class SkillPackageSnapshot:
             compatibility=self.metadata.compatibility,
             metadata=self.metadata.metadata,
             allowed_tools=self.metadata.allowed_tools,
+            tool_dependencies=self.tool_dependencies,
         )
 
 
@@ -206,7 +219,7 @@ def materialize_skill_package(snapshot: SkillPackageSnapshot, destination: Path,
 
 
 def build_instruction_skill_package(content: SkillContent, /) -> SkillPackageSnapshot:
-    """Convert legacy or generated instruction content into a one-file standard package."""
+    """Convert instruction content and optional exact Tool dependencies into a standard package."""
 
     if content.package is not None:
         raise SkillPackageError("package-backed Skill content cannot be rebuilt from cached fields")
@@ -228,7 +241,13 @@ def build_instruction_skill_package(content: SkillContent, /) -> SkillPackageSna
         body = f"{body}\n\n## Validation\n\n{validation}" if body else f"## Validation\n\n{validation}"
     manifest = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False).rstrip()
     skill_markdown = f"---\n{manifest}\n---\n\n{body}\n".encode()
-    return _canonical_snapshot((_PackageFile(SKILL_ENTRYPOINT, skill_markdown, 0o644),), expected_name=content.name)
+    files = [_PackageFile(SKILL_ENTRYPOINT, skill_markdown, 0o644)]
+    if content.tool_dependencies:
+        dependencies = _SkillToolDependenciesManifest(tool_dependencies=content.tool_dependencies)
+        files.append(
+            _PackageFile(_TOOL_DEPENDENCIES_PATH, dependencies.model_dump_json(by_alias=True).encode("utf-8"), 0o644)
+        )
+    return _canonical_snapshot(files, expected_name=content.name)
 
 
 def _directory_files(root: Path) -> tuple[_PackageFile, ...]:  # noqa: C901
@@ -367,10 +386,21 @@ def _canonical_snapshot(
         metadata=metadata,
         instructions=instructions,
         archive_bytes=archive_bytes,
+        tool_dependencies=_package_tool_dependencies(files),
     )
     if len(snapshot.manifest_bytes) > MAX_SKILL_MANIFEST_BYTES:
         raise SkillPackageError("Agent Skill package manifest exceeds the supported size")
     return snapshot
+
+
+def _package_tool_dependencies(files: tuple[_PackageFile, ...]) -> SkillToolDependencies:
+    for value in files:
+        if value.path == _TOOL_DEPENDENCIES_PATH:
+            try:
+                return _SkillToolDependenciesManifest.model_validate_json(value.content).tool_dependencies
+            except ValidationError as error:
+                raise SkillPackageError("Agent Skill Tool dependency manifest is invalid") from error
+    return ()
 
 
 def _parse_skill_markdown(  # noqa: C901

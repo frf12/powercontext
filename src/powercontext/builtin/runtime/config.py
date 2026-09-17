@@ -46,6 +46,7 @@ from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime._scope_cache import DEFAULT_SCOPE_CACHE_SIZE
+from powercontext.builtin.trace_learning.models import LearningBudget
 
 _HTTP_FIELD_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 
@@ -115,6 +116,7 @@ class RuntimeConfig(BaseModel):
         "topic_memory_max_workers",
         "experience_max_workers",
         "skill_max_workers",
+        "tool_max_workers",
         "profile_max_workers",
         "profile_max_concurrency",
         "artifact_processing_max_workers",
@@ -158,6 +160,10 @@ class RuntimeConfig(BaseModel):
     dream_max_pending_per_scope: int = Field(default=32, ge=1, le=1000)
     generation_concurrency: int = Field(default=4, ge=1, le=64)
     dream_budget: DreamBudget = Field(default_factory=DreamBudget)
+    trace_learning_enabled: bool = False
+    trace_learning_budget: LearningBudget = Field(default_factory=LearningBudget)
+    tool_max_workers: int = Field(default=1, ge=1)
+    tool_worker_timeout_seconds: float = Field(default=600, gt=0)
     topic_memory_schedule_seconds: float | None = Field(default=None, gt=0)
     topic_memory_source_window_limit: int = Field(default=10, ge=1)
     topic_memory_history_max_candidates: int = Field(default=20, ge=1, le=MAX_TOPIC_MEMORY_SEARCH_LIMIT)

@@ -81,6 +81,8 @@ from powercontext.http._generated.models import (
     HandoffResolution,
     HealthResponse,
     ImportExternalSkillRequest,
+    ImportTraceLearningRequest,
+    LearningRun,
     ListAccessAuditRequest,
     ListAccessBindingsRequest,
     ListAccessResourcesRequest,
@@ -1359,6 +1361,72 @@ LIST_MEMORY_CHANGES = Operation[ListMemoryChangesRequest, ListMemoryChangesRespo
         500: {"$ref": "#/components/responses/InternalError"},
     },
     access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
+)
+
+IMPORT_TRACE_LEARNING = Operation[ImportTraceLearningRequest, LearningRun](
+    method="POST",
+    path="/v1/scopes/{scope_id}/trace-learning",
+    operation_id="import_trace_learning",
+    request_type=ImportTraceLearningRequest,
+    request_location="body",
+    path_parameters=("scope_id",),
+    response_type=LearningRun,
+    success_status=202,
+    summary="Learn reusable tools and methods from selected complete traces",
+    tags=("trace-learning",),
+    scope_mode="none",
+    responses={
+        202: {
+            "description": "The accepted or existing trace learning run.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        200: {
+            "description": "The accepted or existing trace learning run.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+        429: {
+            "description": "The configured pending-work capacity was reached.",
+            "headers": {"Retry-After": {"schema": {"type": "integer", "minimum": 1.0}}},
+        },
+    },
+    access=AccessRequirement(
+        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
+    ),
+)
+
+GET_LEARNING_RUN = Operation[None, LearningRun](
+    method="GET",
+    path="/v1/scopes/{scope_id}/trace-learning/{run_id}",
+    operation_id="get_learning_run",
+    request_type=None,
+    request_location=None,
+    path_parameters=("scope_id", "run_id"),
+    response_type=LearningRun,
+    success_status=200,
+    summary="Read one trace learning run",
+    tags=("trace-learning",),
+    scope_mode="none",
+    responses={
+        200: {
+            "description": "The requested trace learning run state.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="path_scope_read_access"),
 )
 
 LIST_DREAM_RUNS = Operation[ListDreamRunsRequest, DreamRunPage](

@@ -342,6 +342,16 @@ from powercontext.builtin.tags import (
 from powercontext.builtin.tags import (
     TagFilter as RuntimeTagFilter,
 )
+from powercontext.builtin.trace_learning.application import TraceLearningApplication
+from powercontext.builtin.trace_learning.models import (
+    GetLearningRunRequest as RuntimeGetLearningRunRequest,
+)
+from powercontext.builtin.trace_learning.models import (
+    ImportTraceLearningRequest as RuntimeImportTraceLearningRequest,
+)
+from powercontext.builtin.trace_learning.models import (
+    TraceLearningError,
+)
 from powercontext.builtin.work import (
     AcknowledgeHandoff as RuntimeAcknowledgeHandoff,
 )
@@ -454,6 +464,8 @@ from powercontext.http import (
     HandoffSelection,
     HealthResponse,
     ImportExternalSkillRequest,
+    ImportTraceLearningRequest,
+    LearningRun,
     ListAccessAuditRequest,
     ListAccessBindingsRequest,
     ListAccessResourcesRequest,
@@ -671,6 +683,7 @@ from powercontext.http._generated.operations import (
     GET_DREAM_RUN,
     GET_EXPERIENCE,
     GET_HANDOFF_REPORT,
+    GET_LEARNING_RUN,
     GET_LIVENESS,
     GET_MEMORY_ENTRY,
     GET_MEMORY_ENTRY_TAGS,
@@ -685,6 +698,7 @@ from powercontext.http._generated.operations import (
     GET_TOPIC_MEMORY,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
+    IMPORT_TRACE_LEARNING,
     LIST_ACCESS_AUDIT,
     LIST_ACCESS_BINDINGS,
     LIST_ACCESS_RESOURCES,
@@ -791,6 +805,7 @@ from powercontext.server.context import (
     reset_request_id,
 )
 from powercontext.server.dream_access import DreamAccess, principal_identity
+from powercontext.server.trace_learning_access import TraceLearningAccess
 from powercontext.server.tracing import request_id_from_span
 from powercontext.sources import ConnectorBinding as RuntimeConnectorBinding
 from powercontext.sources import SourceDefinitionManifest as RuntimeSourceDefinitionManifest
@@ -910,6 +925,7 @@ class _ScopedContextApplication(Protocol):
         /,
         *,
         authorize_scopes: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+        authorize_artifacts: Callable[[tuple[ArtifactRef, ...]], Awaitable[None]] | None = None,
     ) -> RuntimePreparedContext: ...
 
 
@@ -1209,6 +1225,7 @@ class ServerApplication(Protocol):
     subject_sources: Any
 
     dream: DreamApplication
+    trace_learning: TraceLearningApplication
     scopes: ScopeApplication | None
     publications: ArtifactPublicationApplication | None
     sources: _SourceApplication
@@ -1346,6 +1363,8 @@ def create_app(
         response.headers[REQUEST_ID_HEADER] = request_id
         return response
 
+    _add_route(app, IMPORT_TRACE_LEARNING, import_trace_learning)
+    _add_route(app, GET_LEARNING_RUN, get_learning_run)
     _add_route(app, CREATE_DREAM_RUN, create_dream_run)
     _add_route(app, GET_DREAM_RUN, get_dream_run)
     _add_route(app, LIST_DREAM_RUNS, list_dream_runs)
@@ -1638,7 +1657,7 @@ async def _query_authorized_resources(
     application = _require_application(request)
     access = _require_access_control(request)
     scope_ids = await _authorized_scope_ids(request, authorized.parent_constraints)
-    families = (family,) if family is not None else ("handoff", "memory", "experience", "skill", "profile")
+    families = (family,) if family is not None else ("handoff", "memory", "experience", "skill", "profile", "tool")
     for scope_id in scope_ids:
         if resource_type is AccessResourceType.SCOPE:
             resource = ResourceRef.scope(scope_id)
@@ -1689,11 +1708,11 @@ async def _discover_scope_artifact_resources(
             )
             for entry in entries.entries
         )
-    if family in {"experience", "skill", "profile"}:
+    if family in {"experience", "skill", "profile", "tool"}:
         return await _committed_artifact_resources(
             application,
             scope_id,
-            cast(Literal["experience", "skill", "profile"], family),
+            cast(Literal["experience", "skill", "profile", "tool"], family),
         )
     raise AccessInvalidRequestError("artifact-family")
 
@@ -1701,7 +1720,7 @@ async def _discover_scope_artifact_resources(
 async def _committed_artifact_resources(
     application: ServerApplication,
     scope_id: str,
-    family: Literal["experience", "skill", "profile"],
+    family: Literal["experience", "skill", "profile", "tool"],
 ) -> tuple[ResourceRef, ...]:
     resources: list[ResourceRef] = []
     cursor: str | None = None
@@ -2881,7 +2900,7 @@ async def prepare_context(
     request: PrepareContextRequest,
     application: Annotated[ServerApplication, Depends(_require_application)],
     http_request: Request,
-) -> PreparedContext:
+) -> PreparedContext | Response:
     prepared_request = mapping.prepare_context_request(request)
     scoped = application.context.for_scope(request.scope_id)
     access = access_control_for_mode(
@@ -2901,8 +2920,34 @@ async def prepare_context(
             for scope_id in scope_ids[1:]:
                 await require_scope_content_ready(http_request, scope_id)
 
-        result = await scoped.prepare(prepared_request, authorize_scopes=authorize_scopes)
-    return mapping.prepared_context_response(result)
+        async def authorize_artifacts(refs: tuple[ArtifactRef, ...]) -> None:
+            await access.require_all(
+                _require_principal(),
+                tuple(
+                    (
+                        AccessAction.ARTIFACT_READ,
+                        ResourceRef.artifact(
+                            request.scope_id,
+                            family=ref.family,
+                            artifact_id=ref.artifact_id,
+                        ),
+                    )
+                    for ref in refs
+                ),
+                context=_access_audit_context(PREPARE_CONTEXT.operation_id),
+            )
+
+        if prepared_request.learned_tools:
+            result = await scoped.prepare(
+                prepared_request, authorize_scopes=authorize_scopes, authorize_artifacts=authorize_artifacts
+            )
+        else:
+            result = await scoped.prepare(prepared_request, authorize_scopes=authorize_scopes)
+    response = mapping.prepared_context_response(result)
+    # Strict older SDKs reject any new field, even a null default.
+    if not prepared_request.learned_tools:
+        return JSONResponse(response.model_dump(mode="json", by_alias=True, exclude={"learned_context"}))
+    return response
 
 
 async def create_work_contract(
@@ -3117,6 +3162,7 @@ def _bind_evidence_access(
 ) -> None:
     if mode == "enforced" and isinstance(access, AccessControlService) and isinstance(application, BuiltinRuntime):
         DreamAccess(access).bind(application)
+        TraceLearningAccess(access).bind(application)
 
 
 def _dream_principal(request: Request) -> str:
@@ -3124,6 +3170,32 @@ def _dream_principal(request: Request) -> str:
         return "runtime"
     principal = _require_principal()
     return principal_identity(principal)
+
+
+async def import_trace_learning(
+    scope_id: str,
+    request: ImportTraceLearningRequest,
+    response: Response,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+    http_request: Request,
+) -> LearningRun:
+    result = await application.trace_learning.for_scope(
+        scope_id, principal_id=_dream_principal(http_request)
+    ).import_traces(RuntimeImportTraceLearningRequest.model_validate_json(request.model_dump_json(exclude_unset=True)))
+    response.status_code = 200 if result.terminal else 202
+    return LearningRun.model_validate_json(result.model_dump_json())
+
+
+async def get_learning_run(
+    scope_id: str,
+    run_id: str,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+    http_request: Request,
+) -> LearningRun:
+    result = await application.trace_learning.for_scope(scope_id, principal_id=_dream_principal(http_request)).get(
+        RuntimeGetLearningRunRequest(run_id=run_id)
+    )
+    return LearningRun.model_validate_json(result.model_dump_json())
 
 
 async def create_dream_run(
@@ -3680,11 +3752,11 @@ async def _validate_shareable_resource(application: ServerApplication | None, re
         if selector.entry_id not in _memory_manifest_entry_ids(memory):
             raise MemoryEntryNotFoundError(selector.entry_id)
         return
-    if profile.family in {"experience", "skill", "profile"}:
+    if profile.family in {"experience", "skill", "profile", "tool"}:
         await _validate_shareable_managed_artifact(
             application,
             resource.scope_id,
-            cast(Literal["experience", "skill", "profile"], profile.family),
+            cast(Literal["experience", "skill", "profile", "tool"], profile.family),
             artifact,
         )
         return
@@ -3694,7 +3766,7 @@ async def _validate_shareable_resource(application: ServerApplication | None, re
 async def _validate_shareable_managed_artifact(
     application: ServerApplication,
     scope_id: str,
-    family: Literal["experience", "skill", "profile"],
+    family: Literal["experience", "skill", "profile", "tool"],
     artifact: ArtifactRef,
 ) -> None:
     if family == "experience":
@@ -3702,7 +3774,7 @@ async def _validate_shareable_managed_artifact(
     elif family == "skill":
         await application.skill.for_scope(scope_id).get(RuntimeGetSkillRequest(artifact=artifact))
     else:
-        await application.records.for_scope(scope_id).get_artifact("profile", artifact.artifact_id)
+        await application.records.for_scope(scope_id).get_artifact(family, artifact.artifact_id)
 
 
 async def _establish_created_owner(
@@ -4635,7 +4707,9 @@ def _path_artifact_access(
     *,
     action: AccessAction,
 ) -> tuple[tuple[AccessAction, ResourceRef], ...]:
-    family = _path_artifact_family(payload)
+    family = (
+        _path_artifact_read_family(payload) if action is AccessAction.ARTIFACT_READ else _path_artifact_family(payload)
+    )
     return (
         (
             action,
@@ -5080,7 +5154,7 @@ def _validation_error_details(error: RequestValidationError | PydanticValidation
 
 
 def _set_error_headers(response: Response, error: Exception) -> None:
-    if isinstance(error, DreamError) and error.code == "capacity_exceeded":
+    if isinstance(error, (DreamError, TraceLearningError)) and error.code == "capacity_exceeded":
         response.headers["Retry-After"] = "1"
     if isinstance(error, RemoteTargetAuthenticationError):
         response.headers["WWW-Authenticate"] = "Bearer"
@@ -5090,11 +5164,13 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
     access_error = _map_access_error(error)
     if access_error is not None:
         return access_error
-    if isinstance(error, (DreamError, EvidenceResolutionError)):
+    if isinstance(error, (DreamError, TraceLearningError, EvidenceResolutionError)):
         statuses = {
             "idempotency_conflict": 409,
             "artifact_conflict": 409,
             "dream_not_found": 404,
+            "learning_run_not_found": 404,
+            "run_not_found": 404,
             "scope_not_found": 404,
             "reference_not_found": 404,
             "access_revoked": 403,
@@ -5102,7 +5178,14 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
             "access_unavailable": 503,
             "capacity_exceeded": 429,
         }
-        return statuses.get(error.code, 422), error.code, "The Dream request could not be completed.", None
+        return (
+            statuses.get(error.code, 422),
+            error.code,
+            "The trace learning request could not be completed."
+            if isinstance(error, TraceLearningError)
+            else "The Dream request could not be completed.",
+            None,
+        )
     service_error = _map_service_error(error)
     return _map_domain_error(error) if service_error is None else service_error
 

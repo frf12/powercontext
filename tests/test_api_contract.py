@@ -470,8 +470,21 @@ def test_prepared_context_is_a_generic_typed_operation_outside_the_mcp_memory_to
 
     contract = yaml.safe_load(CONTRACT_PATH.read_text())
     schemas = contract["components"]["schemas"]
-    assert set(schemas["PrepareContextRequest"]["properties"]) == {"scope_id", "query", "max_bytes", "assembly"}
-    assert set(schemas["PreparedContext"]["properties"]) == {"schema", "status", "content", "content_bytes"}
+    assert set(schemas["PrepareContextRequest"]["properties"]) == {
+        "scope_id",
+        "query",
+        "max_bytes",
+        "assembly",
+        "learned_tools",
+        "host_profile",
+    }
+    assert set(schemas["PreparedContext"]["properties"]) == {
+        "schema",
+        "status",
+        "content",
+        "content_bytes",
+        "learned_context",
+    }
     assert not {"memory", "mode", "selection"} & set(schemas["PreparedContext"]["properties"])
 
 
@@ -518,6 +531,7 @@ def test_experience_skill_and_review_operations_are_typed_and_family_routed() ->
         "compatibility",
         "metadata",
         "allowed_tools",
+        "tool_dependencies",
     }
     assert schemas["ListArtifactCandidatesRequest"]["properties"]["limit"] == {
         "type": "integer",
