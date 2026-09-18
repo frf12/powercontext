@@ -9009,10 +9009,12 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "LearningBudget": {
                 "properties": {
-                    "max_model_calls": {"type": "integer", "maximum": 10.0, "minimum": 1.0, "default": 3},
+                    "max_model_calls": {"type": "integer", "maximum": 1024.0, "minimum": 1.0, "default": 128},
+                    "max_candidates_per_family": {"type": "integer", "maximum": 128.0, "minimum": 1.0, "default": 32},
+                    "max_candidate_repair_rounds": {"type": "integer", "maximum": 8.0, "minimum": 0.0, "default": 2},
                     "max_output_tokens": {"type": "integer", "maximum": 64000.0, "minimum": 1024.0, "default": 16000},
                     "max_input_chars": {"type": "integer", "maximum": 4194304.0, "minimum": 1024.0, "default": 400000},
-                    "timeout_seconds": {"type": "number", "maximum": 3600.0, "exclusiveMinimum": 0.0, "default": 300},
+                    "timeout_seconds": {"type": "number", "maximum": 7200.0, "exclusiveMinimum": 0.0, "default": 1800},
                     "previous_artifact_limit": {"type": "integer", "maximum": 100.0, "minimum": 0.0, "default": 30},
                     "max_pending_per_scope": {"type": "integer", "maximum": 1000.0, "minimum": 1.0, "default": 32},
                 },
@@ -9020,6 +9022,23 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "LearningUsage": {
                 "properties": {
+                    "reserved_model_calls": {
+                        "type": "integer",
+                        "minimum": 0.0,
+                        "description": "Unconfirmed "
+                        "reservations "
+                        "included "
+                        "in "
+                        "model_calls; "
+                        "confirmed "
+                        "requests "
+                        "are "
+                        "model_calls "
+                        "minus "
+                        "this "
+                        "value.",
+                        "default": 0,
+                    },
                     "model_calls": {"type": "integer", "minimum": 0.0, "default": 0},
                     "input_tokens": {"type": "integer", "minimum": 0.0, "nullable": True},
                     "output_tokens": {"type": "integer", "minimum": 0.0, "nullable": True},
@@ -9052,6 +9071,31 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "type": "object",
             },
+            "LearningCandidateOutcome": {
+                "properties": {
+                    "family": {"type": "string", "enum": ["experience", "tool", "skill"]},
+                    "key": {"type": "string"},
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "planned",
+                            "generating",
+                            "reviewing",
+                            "repairing",
+                            "ready",
+                            "published",
+                            "rejected",
+                            "deferred",
+                        ],
+                        "default": "planned",
+                    },
+                    "reason": {"type": "string", "nullable": True},
+                    "repair_rounds": {"type": "integer", "default": 0},
+                    "review_rounds": {"type": "integer", "default": 0},
+                },
+                "type": "object",
+                "required": ["family", "key"],
+            },
             "LearningRun": {
                 "properties": {
                     "scope_id": {"type": "string"},
@@ -9063,7 +9107,15 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     },
                     "stage": {
                         "type": "string",
-                        "enum": ["imported", "generating", "validating", "saving", "complete"],
+                        "enum": [
+                            "imported",
+                            "discovering",
+                            "generating",
+                            "reviewing",
+                            "validating",
+                            "saving",
+                            "complete",
+                        ],
                         "default": "imported",
                     },
                     "sources": {
@@ -9082,11 +9134,16 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "started_at": {"type": "string", "format": "date-time", "nullable": True},
                     "completed_at": {"type": "string", "format": "date-time", "nullable": True},
                     "attempt_count": {"type": "integer", "default": 0},
-                    "prompt_version": {"type": "string", "default": "powercontext.trace-learning.v1"},
+                    "prompt_version": {"type": "string", "default": "powercontext.trace-learning.v3"},
                     "model_config_id": {"type": "string", "nullable": True},
                     "usage": {"$ref": "#/components/schemas/LearningUsage"},
                     "budget": {"$ref": "#/components/schemas/LearningBudget"},
                     "validation": {"allOf": [{"$ref": "#/components/schemas/ValidationReport"}], "nullable": True},
+                    "candidate_outcomes": {
+                        "items": {"$ref": "#/components/schemas/LearningCandidateOutcome"},
+                        "type": "array",
+                        "default": [],
+                    },
                     "error": {"type": "string", "nullable": True},
                 },
                 "type": "object",

@@ -1,18 +1,19 @@
 ---
 title: Learn Experience, Skills and Tools from correct traces
-description: Explicitly import complete correct traces and reuse executable SQL through the existing Supervisor.
+description: Explicitly import complete correct traces and build independently validated artifacts through the Supervisor.
 ---
 
 # Learn Experience, Skills and Tools from correct traces
 
-This experimental workflow learns from complete, correct traces explicitly selected by a user.
-Experience, Skill and Tool share the existing Artifact tables. A Skill contains usage instructions
-and references exact Tool revisions. A Tool contains its callable contract and parameterized SQL program.
+This workflow accepts complete, correct traces explicitly selected by the caller. PowerContext uses the existing
+Artifact Processing Supervisor to build reusable Experience, Skills and read-only SQL Tools. Each published artifact
+keeps its exact Artifact revision, source lineage, and permission boundary.
+All three families use the existing shared Artifact storage; learning does not create separate artifact tables.
 
 ## Enable an isolated pilot
 
-Set the following Server Runtime configuration, with a configured generation model, its credentials,
-and an independent persistence database:
+Set the following Server Runtime configuration together with a generation model, its credentials, and a persistent
+database:
 
 ```json
 {
@@ -20,66 +21,118 @@ and an independent persistence database:
   "artifact_processing_families": ["tool"],
   "dream_enabled": false,
   "tool_max_workers": 1,
-  "tool_worker_timeout_seconds": 600
+  "tool_worker_timeout_seconds": 1860
 }
 ```
 
-Existing deployments retain their processing capability and binding manifest migration requirements.
-Split API/background deployments must declare matching Tool capabilities and share persistence.
-The `tool.trace-learning.v1` binding uses the existing ArtifactProcessingSupervisor for scheduling,
-worker subprocesses, quotas and fencing. LearningRun stores domain progress and checkpoints.
-Ordinary Source ingestion does not trigger Tool learning.
+The default trace-learning deadline is 1,800 seconds. A 1,860-second Tool Worker timeout leaves a small amount of
+time for worker startup and checkpoint acknowledgement around that deadline. The `tool.trace-learning.v1` binding
+uses the existing Supervisor for scheduling, subprocess isolation, leases, quotas, and fencing. Ordinary Source
+ingestion does not trigger trace learning.
 
-## Import and inspect
+## Import a trace
 
-Use `POST /v1/scopes/{scope_id}/trace-learning` with an `idempotency_key`, a Datus `host_profile`
-(actual SQL dialect and database name), and `traces`. Each trace preserves its ID, question,
-final answer, context, and every tool call's ID, name, arguments, result and success flag.
-An ultimately correct trace may include failed intermediate attempts.
+Call `POST /v1/scopes/{scope_id}/trace-learning` with an `idempotency_key`, a Datus `host_profile` containing the
+actual SQL dialect and database name, and `traces`. Every trace keeps its `trace_id`, question, final answer, context,
+and every tool call's ID, name, arguments, result, and success flag. A complete correct trace may contain failed
+intermediate attempts; correctness is an admission premise supplied by the caller.
 
-Preserve Datus `read_queries` arguments and result artifacts. Do not invent split call identities.
-Generated examples select an original query with `query_index`; their `arguments` are values for the
-generated Tool's input schema. Complete correctness is an admission premise supplied by the caller,
-not inferred from a completion label.
+Preserve Datus `read_queries` arguments and result artifacts. Do not invent split call identities. A generated Tool
+example points to an original call with `trace_id`, `call_id`, and `query_index`; its `arguments` are values for the
+generated Tool's input schema, never a copy of the source call's `queries` or `database_name` fields.
 
-Accepted imports return 202. Poll `GET /v1/scopes/{scope_id}/trace-learning/{run_id}` for completion.
-Identical repeated submissions reuse the Run; conflicting contents under one key are rejected.
-Successful runs return exact E/S/Tool references. Later explicit imports can reuse stable generated
-keys and update artifact revisions after checking the original user's permissions and expected heads.
+Accepted imports return `202`. Poll `GET /v1/scopes/{scope_id}/trace-learning/{run_id}` for progress. Repeating the
+same idempotency key and content reuses the Run; conflicting content is rejected. Successful work returns exact
+Experience, Skill, and Tool references. A later explicit import can reuse a stable key and revise the corresponding
+Artifact after checking permissions and the expected head revision.
 
-Validation binds example parameters and compares the generated SQL AST with a successful recorded
-query. This checks covered paths without rerunning changing production data. It does not claim that
-all parameter values are correct or set `live_execution_verified=true`. A failed run preserves the
-previously published pool. Assess execution and effectiveness separately in the host environment.
+## Understand the candidate workflow
 
-When a generated SQL template does not reproduce a recorded example, the same Run can send the
-rejected candidate and exact comparison feedback to the model for correction. Rejected candidates
-remain in the Run checkpoint and are never published as Artifacts. Every attempt consumes the Run's
-`max_model_calls` budget (three by default) and shares its original deadline, including after a Worker
-restart. `max_output_tokens` limits each generation request; reported usage accumulates all attempts.
-Corrections must still pass the full validation, including previously verified examples. Permission,
-trace completeness and other validation failures do not enter this SQL correction loop.
+The Supervisor first asks the model for a bounded inventory. It then processes candidates independently in Experience,
+Tool, and Skill order. `max_candidates_per_family` limits the inventory for each family. A dependent Skill is generated
+after the Tool candidates it names, so its `tool_keys` can refer to validated candidates in the same Run.
+
+Each candidate has its own saved model messages, revisions, review findings, validation result, repair count, and
+outcome. On a Worker restart, the next attempt resumes the saved conversation and candidate checkpoint. Already
+published candidates are skipped; the Worker does not regenerate them.
+
+Tool review is deliberately independent. The reviewer receives only the candidate's `ToolContent`: it cannot see the
+trace, question, reference answer, examples, or the generating conversation. The candidate generator receives the
+original saved `messages` when it repairs a candidate. It must answer every finding exactly once with `accept`,
+`partial`, or `reject` and a reason. Review suggestions are advisory. Deterministic validation errors, including hard
+SQL validation, cannot be waived by a review decision.
+
+Candidate failures are isolated. A rejected or deferred candidate does not roll back candidates that were already
+published. A Run with `status=succeeded` means that at least one candidate produced a publishable artifact; it does not
+mean that every planned candidate finished. Inspect `candidate_outcomes` to determine whether all candidates are
+`published` or whether any are `rejected` or `deferred`. A budget or deadline stop can leave partial publications and
+still records the reason that the remaining work was stopped in the Run error state.
+
+## Inspect validation and budget
+
+Validation binds each Tool example's parameters and compares its generated SQL AST with the successful recorded query.
+This proves only the covered recorded path. It does not rerun changing production data, prove every parameter value, or
+set `live_execution_verified=true`. Historical SQL AST checks remain required even when a reviewer accepts a finding.
+Evaluate live execution and answer quality separately in the host environment.
+
+The Run budget is shared by inventory, candidate generation, Tool review, structured-output format repairs, quality
+repairs, and any later model request made by the workflow:
+
+| Budget field | Default | Maximum | Meaning |
+| --- | ---: | ---: | --- |
+| `max_model_calls` | `128` | `1024` | Total provider requests for the Run |
+| `max_candidates_per_family` | `32` | `128` | Inventory candidates per Experience, Tool, or Skill family |
+| `max_candidate_repair_rounds` | `2` | `8` | Additional quality-repair rounds for one candidate |
+| `max_output_tokens` | `16000` | `64000` | Output-token limit for each provider request |
+| `max_input_chars` | `400000` | `4194304` | Serialized input and saved message budget |
+| `timeout_seconds` | `1800` | `7200` | Overall Run deadline |
+| `previous_artifact_limit` | `30` | `100` | Number of reusable previous artifact heads selected after retrieval |
+| `max_pending_per_scope` | `32` | `1000` | Queued and running trace-learning Runs in one Scope |
+
+The Supervisor reserves the next request before dispatching it. If a Worker loses a response or exits during a model
+call, that reservation is retained; a restart cannot spend it again. `max_output_tokens` applies per request while the
+Run's reported usage accumulates all requests.
+
+For ordinary structured generation, `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS=2` means one initial
+request plus one repair request. Setting it to `3` permits one initial request plus two repairs. This per-operation
+limit is still subject to the trace-learning Run budget.
+
+`usage.reserved_model_calls` identifies unconfirmed reservations included in `usage.model_calls`. Subtract it to obtain confirmed requests. A known pre-request configuration failure releases its reservation; uncertain calls retain theirs and are not reported as confirmed model usage.
 
 ## Prepare one inference turn
 
-Opt into `POST /v1/context/prepare` with `learned_tools=true` and the actual `host_profile`.
-Use `assembly: {"sections": []}` for a learned-only request. The returned `learned_context` contains
-Experience text, Skill instructions and complete executable Tool descriptors. Inject the text before
-the model call, expose Tool names/descriptions/input schemas, and bind implementations in the host.
+Opt into `POST /v1/context/prepare` with `learned_tools=true` and the actual `host_profile`:
 
-A structured-only response is ready with `content=null` and `content_bytes=0`. Legacy requests omit
-the new field. Preparation prioritizes complete Skill/Tool dependencies within the byte budget, uses
-remaining space for ordinary text, and deduplicates Experience references. Incompatible hosts or
-missing exact dependencies do not expose a partial Skill. Tool contracts are never truncated.
+```json
+{
+  "scope_id": "your-scope",
+  "query": "How many stations are in CZE?",
+  "max_bytes": 16000,
+  "assembly": {"sections": []},
+  "learned_tools": true,
+  "host_profile": {"kind": "datus", "dialect": "mysql", "database_name": "your-db"}
+}
+```
 
-Datus binds parameters separately and executes read-only SQL through the current request's Data Gateway,
-which retains datasource permissions and result limits. There is no hidden model call inside the Tool.
-Count fallback and final-answer requests when evaluating total model calls.
+The response's `learned_context` contains selected Experience text, Skill instructions, and complete Tool descriptors.
+When only learned context is requested, `status=ready`, `content=null`, and `content_bytes=0`. Legacy requests omit
+the new field. Preparation keeps Skill dependencies complete and applies the byte budget before adding Experience text;
+it never exposes a Skill with a missing exact Tool revision.
+
+Retrieval reads Runs with published candidates in pages, collects all active heads, and then ranks related artifacts by the query and
+the available byte budget. It uses lexical matching in the current Scope, not a semantic vector index. It is therefore
+not limited to the latest thirty Runs with published candidates, although the Run budget still bounds the number of previous heads
+selected for generation.
+
+For Datus, `output_schema` is appended to the Tool description supplied to the LLM, while `args_schema` is passed
+through unchanged. Bind Tool parameters separately and execute the fixed read-only SQL through the current request's
+Data Gateway. The Gateway retains datasource permissions, result limits, and current data access. No hidden model call
+occurs inside a Tool; count fallback and final-answer requests when evaluating the host's total model calls.
+
+Individually published candidates are eligible for recall even while their Run is still processing other candidates. Draft, rejected and deferred candidates are never recalled.
 
 ## Scope
 
-The initial host is Datus with MySQL/PostgreSQL-compatible parameterized read-only SQL. Agent decisions
-handle ordinary sequential calls. Dynamic DAGs, general code sandboxes, cross-host MCP execution and
-automatic log ingestion are outside this workflow. Retrieval uses a bounded recent successful-Run
-catalog and lexical matching in the current Scope, rather than a full historical semantic Tool index.
-Tools support Artifact read operations without generic create/replace endpoints.
+The initial host is Datus with MySQL/PostgreSQL-compatible parameterized read-only SQL. The workflow supports ordinary
+sequential model tool calls. Dynamic DAGs, general code sandboxes, cross-host MCP execution, and automatic raw-log
+ingestion are outside this workflow. Tool reads use Artifact permissions; there is no generic Tool create/replace API.

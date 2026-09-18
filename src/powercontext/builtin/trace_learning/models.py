@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 import sqlglot
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
@@ -32,7 +32,7 @@ from powercontext.errors import PowerContextError
 from powercontext.sources import SourceRef
 
 TRACE_LEARNING_BINDING = "tool.trace-learning.v1"
-TRACE_LEARNING_PROMPT_VERSION = "powercontext.trace-learning.v2"
+TRACE_LEARNING_PROMPT_VERSION = "powercontext.trace-learning.v3"
 
 
 class TraceLearningError(PowerContextError, ValueError):
@@ -104,17 +104,20 @@ class ImportTraceLearningRequest(BaseModel):
 
 
 class LearningBudget(BaseModel):
-    max_model_calls: int = Field(default=3, ge=1, le=10)
+    max_model_calls: int = Field(default=128, ge=1, le=1024)
+    max_candidates_per_family: int = Field(default=32, ge=1, le=128)
+    max_candidate_repair_rounds: int = Field(default=2, ge=0, le=8)
     # Per generation request; LearningUsage.output_tokens remains cumulative across the Run.
     max_output_tokens: int = Field(default=16_000, ge=1024, le=64_000)
     max_input_chars: int = Field(default=400_000, ge=1024, le=4 * 1024 * 1024)
-    timeout_seconds: float = Field(default=300, gt=0, le=3600)
+    timeout_seconds: float = Field(default=1800, gt=0, le=7200)
     previous_artifact_limit: int = Field(default=30, ge=0, le=100)
     max_pending_per_scope: int = Field(default=32, ge=1, le=1000)
 
 
 class LearningUsage(BaseModel):
     model_calls: int = Field(default=0, ge=0)
+    reserved_model_calls: int = Field(default=0, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
 
@@ -172,9 +175,9 @@ class GeneratedSkill(BaseModel):
 class GeneratedTraceLearningBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    experiences: tuple[GeneratedExperience, ...] = Field(min_length=1, max_length=8)
-    tools: tuple[GeneratedTool, ...] = Field(min_length=1, max_length=8)
-    skills: tuple[GeneratedSkill, ...] = Field(min_length=1, max_length=8)
+    experiences: tuple[GeneratedExperience, ...] = Field(default=(), max_length=128)
+    tools: tuple[GeneratedTool, ...] = Field(default=(), max_length=128)
+    skills: tuple[GeneratedSkill, ...] = Field(default=(), max_length=128)
 
     @model_validator(mode="after")
     def unique_keys(self):
@@ -182,6 +185,92 @@ class GeneratedTraceLearningBundle(BaseModel):
             if len({item.key for item in group}) != len(group):
                 raise TraceLearningError("duplicate_generated_key")
         return self
+
+
+ArtifactFamily = Literal["experience", "tool", "skill"]
+GeneratedCandidate = GeneratedExperience | GeneratedTool | GeneratedSkill
+CandidateT = TypeVar("CandidateT")
+
+
+class CandidateSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    family: ArtifactFamily
+    key: str = Field(min_length=1, max_length=128)
+    purpose: str = Field(min_length=1, max_length=2000)
+    trace_ids: tuple[str, ...] = Field(min_length=1, max_length=32)
+    tool_keys: tuple[str, ...] = Field(default=(), max_length=16)
+
+
+class CandidateInventory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    candidates: tuple[CandidateSpec, ...] = Field(default=(), max_length=384)
+
+    @model_validator(mode="after")
+    def unique_candidates(self):
+        if len({(item.family, item.key) for item in self.candidates}) != len(self.candidates):
+            raise ValueError("Candidate family/key pairs must be unique")  # noqa: TRY003
+        return self
+
+
+class ReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+    category: Literal["input_contract", "output_contract", "parameterization", "applicability", "implementation"]
+    comment: str = Field(min_length=1, max_length=3000)
+    suggestion: str = Field(min_length=1, max_length=3000)
+
+
+class ToolReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    findings: tuple[ReviewFinding, ...] = Field(default=(), max_length=32)
+
+    @model_validator(mode="after")
+    def unique_findings(self):
+        if len({item.id for item in self.findings}) != len(self.findings):
+            raise ValueError("Review finding IDs must be unique")  # noqa: TRY003
+        return self
+
+
+class ReviewDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    finding_id: str
+    decision: Literal["accept", "partial", "reject"]
+    reason: str = Field(min_length=1, max_length=3000)
+
+
+class CandidateResponse(BaseModel, Generic[CandidateT]):
+    model_config = ConfigDict(extra="forbid")
+    candidate: CandidateT
+    decisions: tuple[ReviewDecision, ...] = Field(default=(), max_length=32)
+
+
+class CandidateFeedback(BaseModel):
+    validation_errors: tuple[str, ...] = ()
+    review: ToolReview | None = None
+
+
+class CandidateOutcome(BaseModel):
+    family: ArtifactFamily
+    key: str
+    status: Literal["planned", "generating", "reviewing", "repairing", "ready", "published", "rejected", "deferred"] = (
+        "planned"
+    )
+    reason: str | None = None
+    repair_rounds: int = 0
+    review_rounds: int = 0
+
+
+class LearningCandidate(BaseModel):
+    spec: CandidateSpec
+    outcome: CandidateOutcome
+    messages: tuple[dict[str, JsonValue], ...] = ()
+    revisions: tuple[CandidateResponse[GeneratedCandidate], ...] = ()
+    reviews: tuple[ToolReview, ...] = ()
+    review_messages: tuple[tuple[dict[str, JsonValue], ...], ...] = ()
+    reviewed_revision: int = 0
+    review_resolved: bool = False
+    feedback: CandidateFeedback | None = None
+    validation: ValidationReport | None = None
 
 
 class PreviousLearningArtifact(BaseModel):
@@ -244,7 +333,9 @@ class LearningRun(BaseModel):
     scope_id: str
     run_id: str
     status: Literal["queued", "running", "succeeded", "failed"] = "queued"
-    stage: Literal["imported", "generating", "validating", "saving", "complete"] = "imported"
+    stage: Literal["imported", "discovering", "generating", "reviewing", "validating", "saving", "complete"] = (
+        "imported"
+    )
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
     host_profile: TraceLearningHostProfile
@@ -259,6 +350,7 @@ class LearningRun(BaseModel):
     budget: LearningBudget = Field(default_factory=LearningBudget)
     validation: ValidationReport | None = None
     error: str | None = None
+    candidate_outcomes: tuple[CandidateOutcome, ...] = ()
 
     @property
     def terminal(self) -> bool:
@@ -281,3 +373,9 @@ class LearningRecord(BaseModel):
     generated_output_tokens: int | None = None
     rejected_candidates: tuple[RejectedLearningCandidate, ...] = ()
     artifact_keys: dict[str, ArtifactRef] = Field(default_factory=dict)
+    candidate_plan_ready: bool = False
+    discovery_messages: tuple[dict[str, JsonValue], ...] = ()
+    candidates: tuple[LearningCandidate, ...] = ()
+
+
+LearningCandidate.model_rebuild()

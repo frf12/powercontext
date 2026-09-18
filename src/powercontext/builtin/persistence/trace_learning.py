@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.evidence.models import content_digest
@@ -117,18 +117,42 @@ class TraceLearningRepository:
         connection: AsyncConnection,
         scope_id: str,
         *,
-        limit: int = 30,
+        limit: int | None = 30,
+        include_partial: bool = False,
     ) -> tuple[LearningRecord, ...]:
-        rows = await connection.scalars(
-            select(RUNS.c.payload)
-            .where(
-                RUNS.c.scope_id == scope_id,
-                RUNS.c.status == "succeeded",
-            )
-            .order_by(RUNS.c.accepted_at.desc(), RUNS.c.run_id.desc())
-            .limit(max(0, min(limit, 100)))
-        )
-        return tuple(_decode(row) for row in rows)
+        """Page through completed runs; an explicit limit bounds the caller's catalog, not recall."""
+        if limit is not None and limit <= 0:
+            return ()
+        result = []
+        cursor = None
+        while limit is None or len(result) < limit:
+            query = select(RUNS.c.payload, RUNS.c.accepted_at, RUNS.c.run_id).where(RUNS.c.scope_id == scope_id)
+            if not include_partial:
+                query = query.where(RUNS.c.status == "succeeded")
+            if cursor is not None:
+                query = query.where(
+                    or_(
+                        RUNS.c.accepted_at < cursor[0],
+                        and_(
+                            RUNS.c.accepted_at == cursor[0],
+                            RUNS.c.run_id < cursor[1],
+                        ),
+                    )
+                )
+            size = 100 if limit is None else min(100, limit - len(result))
+            rows = (
+                await connection.execute(query.order_by(RUNS.c.accepted_at.desc(), RUNS.c.run_id.desc()).limit(size))
+            ).all()
+            if not rows:
+                break
+            for row in rows:
+                record = _decode(row.payload)
+                if record.run.status == "succeeded" or (
+                    include_partial and record.candidate_plan_ready and record.run.artifacts
+                ):
+                    result.append(record)
+            cursor = rows[-1].accepted_at, rows[-1].run_id
+        return tuple(result)
 
     async def claim(self, connection: AsyncConnection, record: LearningRecord) -> LearningRecord:
         claimed = record.model_copy(update={"generation": record.generation + 1})

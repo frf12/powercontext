@@ -89,6 +89,10 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_RUNTIME_DREAM_ENABLED` | `true` | 接受已声明 Experience/Skill Family 的显式 Dream 请求；不自动挑选制品 |
 | `POWERCONTEXT_SERVER_RUNTIME_DREAM_MAX_PENDING_PER_SCOPE` | `32` | 同 Scope 排队和执行中的 DreamRun 总上限 |
 | `POWERCONTEXT_SERVER_RUNTIME_DREAM_BUDGET` | `{}` | JSON 预算，可收紧证据上限、最多 2 次模型调用和首次执行起 120 秒总时间 |
+| `POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_ENABLED` | `false` | 开启显式 trace-learning Run 和 Tool processing binding |
+| `POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_BUDGET` | `{}` | JSON `LearningBudget`；控制整个 inventory、候选、review、修复和校验 Run |
+| `POWERCONTEXT_SERVER_RUNTIME_TOOL_MAX_WORKERS` | `1` | trace-learning Tool Worker 额度 |
+| `POWERCONTEXT_SERVER_RUNTIME_TOOL_WORKER_TIMEOUT_SECONDS` | `600` | trace-learning Tool Worker Scope 调用总超时 |
 | `POWERCONTEXT_SERVER_RUNTIME_GENERATION_CONCURRENCY` | `4` | Runtime 前台同步生成并发；后台 Worker 使用各 Family 额度 |
 | `POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_WORKERS` | `4` | Profile 独立 Worker 额度；别名 `PROFILE_MAX_CONCURRENCY` |
 | `POWERCONTEXT_SERVER_RUNTIME_MEMORY_WORKER_TIMEOUT_SECONDS` | `600` | Memory Scope 总超时 |
@@ -99,7 +103,8 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_HEADERS` | `{}` | generation client 静态 header JSON object；value 按 secret 处理 |
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL_SETTINGS` | `{}` | Pydantic AI generation model settings JSON object |
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_TIMEOUT_SECONDS` | `30` | 单次结构化 generation 操作的超时秒数 |
-| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS` | `2` | 单次结构化 generation 操作最多发起的 provider 请求数，包含重试 |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS` | `2` | 每次结构化 generation 为 initial 1 次加 repair 1 次；设为 `3` 可额外修复 2 次 |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_ALLOW_PYTHON_LITERALS` | `true` | 在正常 schema 校验前接受有界 Python literal 语法的兼容输入；设为 `false` 可关闭 |
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL_CONTEXT_WINDOW_TOKENS` | `125000` | Topic 处理预算使用的 generation model 总上下文窗口 |
 | `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL` | 未设置 | Pydantic AI embedding model；必须同时设置 profile ID 和 dimension |
 | `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_BASE_URL` | provider 默认值 | 自定义 OpenAI-compatible embeddings base URL |
@@ -118,6 +123,40 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_INFERENCE_RERANK_MAX_REQUESTS` | generation request limit | 单次 rerank operation 的最大 model request 数量 |
 | `POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` | 未设置 | Experience 自动准入间隔；未设置时保留已接受工作，停止新的自动准入 |
 | `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | 自动生成本机项目 target | 覆盖默认值的 host identity 和显式 Agent Skill targets JSON object |
+
+## Trace learning
+
+Trace learning 是显式开启的能力。配置 generation model 和持久化数据库后，再启用 Tool processing Family。Worker 超时应覆盖
+Run 截止时间，并为 Worker 启动和检查点确认预留时间：
+
+```bash
+export POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_ENABLED=true
+export POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_FAMILIES='["tool"]'
+export POWERCONTEXT_SERVER_RUNTIME_TOOL_MAX_WORKERS=1
+export POWERCONTEXT_SERVER_RUNTIME_TOOL_WORKER_TIMEOUT_SECONDS=1860
+export POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_BUDGET='{"max_model_calls":128,"max_candidates_per_family":32,"max_candidate_repair_rounds":2,"max_output_tokens":16000,"timeout_seconds":1800}'
+```
+
+`trace_learning_budget` 是一个 JSON object，默认值和上限如下：
+
+| 字段 | 默认值 | 上限 |
+| --- | ---: | ---: |
+| `max_model_calls` | `128` | `1024` |
+| `max_candidates_per_family` | `32` | `128` |
+| `max_candidate_repair_rounds` | `2` | `8` |
+| `max_output_tokens` | `16000` | `64000` |
+| `max_input_chars` | `400000` | `4194304` |
+| `timeout_seconds` | `1800` | `7200` |
+| `previous_artifact_limit` | `30` | `100` |
+| `max_pending_per_scope` | `32` | `1000` |
+
+`max_model_calls` 是整个 Run 的请求额度，包含 Supervisor inventory、逐候选 generation、只看 Tool 的 reviewer、结构化输出格式重试和
+质量修复。Supervisor 在 dispatch 前预留请求；Worker 丢失响应时不会退回该额度。Worker 重启后，候选 messages 检查点和已发布 outcome
+会保留。
+
+`POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS=2` 表示每次结构化 generation 为 initial 1 次加 repair 1 次；设为 `3` 表示
+initial 1 次加额外 2 次 repair。`POWERCONTEXT_SERVER_INFERENCE_GENERATION_ALLOW_PYTHON_LITERALS` 默认 `true`，只接受有界且兼容
+JSON 的 Python literal 语法；正常 output schema 校验仍然执行。设为 `false` 可拒绝这条兼容路径。
 
 Topic Worker 对尚未推进的 Scope Cursor 强制使用持久额度：跨全部重试最多 3 次尝试、512 次预留 provider 请求和
 64,000,000 个估算 token 容量单位。Window 的 canonical evidence（包含 metadata）最多 4,194,304 个字符，并限制

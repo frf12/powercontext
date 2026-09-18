@@ -22,6 +22,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from powercontext.builtin.inference.errors import InferenceError
 from powercontext.builtin.inference.models import EmbeddingResult, GenerationResult, InferenceUsage
 from powercontext.builtin.inference.protocols import EmbeddingModel, StructuredGenerator
 from powercontext.builtin.statistics import ModelUsageOperation, ModelUsagePurpose
@@ -77,6 +78,11 @@ async def _report(operation: ModelUsageOperation, usage: InferenceUsage) -> None
         await binding.reporter(purpose, operation, usage)
 
 
+async def report_generation_usage(usage: InferenceUsage) -> None:
+    """Attribute completed or failed generation requests to the bound scope."""
+    await _report(ModelUsageOperation.GENERATION, usage)
+
+
 class UsageReportingStructuredGenerator(Generic[InputT, OutputT]):
     """Report successful structured-generation usage to the current scope."""
 
@@ -84,8 +90,13 @@ class UsageReportingStructuredGenerator(Generic[InputT, OutputT]):
         self._delegate = delegate
 
     async def generate(self, value: InputT, /) -> GenerationResult[OutputT]:
-        result = await self._delegate.generate(value)
-        await _report(ModelUsageOperation.GENERATION, result.usage)
+        try:
+            result = await self._delegate.generate(value)
+        except InferenceError as error:
+            if error.usage is not None:
+                await report_generation_usage(error.usage)
+            raise
+        await report_generation_usage(result.usage)
         return result
 
 

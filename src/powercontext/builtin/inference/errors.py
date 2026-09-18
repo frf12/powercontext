@@ -16,11 +16,17 @@
 
 from __future__ import annotations
 
+from pydantic import JsonValue
+
+from powercontext.builtin.inference.models import InferenceUsage
 from powercontext.errors import PowerContextError
 
 
 class InferenceError(PowerContextError):
     """Base exception for stable PowerContext inference failures."""
+
+    usage: InferenceUsage | None = None
+    messages: tuple[dict[str, JsonValue], ...] = ()
 
 
 class InferenceConfigurationError(InferenceError, RuntimeError):

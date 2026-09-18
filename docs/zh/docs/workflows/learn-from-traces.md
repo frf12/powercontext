@@ -1,17 +1,17 @@
 ---
 title: 从正确轨迹学习经验、Skill 和 Tool
-description: 用户显式导入完整正确的轨迹，通过 Supervisor 学习并向 Datus 提供可执行 SQL 工具。
+description: 显式导入完整正确的轨迹，通过 Supervisor 独立生成并校验可复用产物。
 ---
 
 # 从正确轨迹学习经验、Skill 和 Tool
 
-此实验能力接受用户选定的完整、正确执行轨迹。PowerContext 从实际调用参数和结果中生成
-Experience、Skill 和参数化 SQL Tool，保存在共用的 Artifact 表中。Skill 引用 Tool 的精确版本；
-Tool 保存执行接口和 SQL 程序，Skill 保存如何使用工具的说明。
+此流程接受调用方显式选择的完整、正确轨迹。PowerContext 通过现有 Artifact Processing Supervisor 生成可复用的
+Experience、Skill 和只读 SQL Tool。每个已发布产物保留精确的 Artifact revision、Source lineage 和权限边界。
+三类产物共用现有 Artifact 存储，不为学习单独新增制品表。
 
 ## 开启独立试验环境
 
-在 Server 的 Runtime 配置中设置：
+在 Server Runtime 中配置生成模型、对应认证和持久化数据库：
 
 ```json
 {
@@ -19,52 +19,80 @@ Tool 保存执行接口和 SQL 程序，Skill 保存如何使用工具的说明�
   "artifact_processing_families": ["tool"],
   "dream_enabled": false,
   "tool_max_workers": 1,
-  "tool_worker_timeout_seconds": 600
+  "tool_worker_timeout_seconds": 1860
 }
 ```
 
-同时配置可用的 `inference.generation_model`、对应认证及数据库。首轮试验使用独立数据库；
-已有部署的 processing capabilities 和 binding manifest 仍受现有部署迁移规则约束。
-API 与后台拆分部署时，两侧必须声明相同的 Tool 能力并共用持久化数据库。
+Trace learning 的 Run 默认截止时间为 1800 秒。示例中的 1860 秒为 Tool Worker 启动和检查点确认预留少量时间。
+`tool.trace-learning.v1` 复用现有 Supervisor 的调度、子进程隔离、Lease、额度和 fencing。普通 Source 写入不会触发
+trace learning。
 
-`tool.trace-learning.v1` 复用 ArtifactProcessingSupervisor 的排队、子进程、并发额度和任期校验。
-LearningRun 保存学习阶段、模型用量和检查点。普通 Source 写入没有 Tool 扫描器，也不会触发此学习。
+## 导入轨迹
 
-## 导入与观察结果
+调用 `POST /v1/scopes/{scope_id}/trace-learning`，传入 `idempotency_key`、包含实际 SQL 方言和数据库名称的 Datus
+`host_profile`，以及 `traces`。每条轨迹保留 `trace_id`、问题、最终答案、上下文和每次工具调用的 ID、名称、参数、结果
+及成功标记。完整正确是调用方选择轨迹时应满足的前提；轨迹可以包含失败的中间尝试。
 
-调用 `POST /v1/scopes/{scope_id}/trace-learning`，传入：
+保留 Datus `read_queries` 的原始参数和结果制品，不要伪造拆分后的调用身份。生成 Tool 的示例用 `trace_id`、`call_id` 和
+`query_index` 指向原始调用；示例 `arguments` 是生成 Tool 的 input schema 参数值，不能复制源调用中的 `queries` 或
+`database_name`。
 
-- `idempotency_key`：同一导入的稳定标识。
-- `host_profile`：`kind=datus`、实际 SQL 方言和数据库名称。
-- `traces`：每条包含 `trace_id`、`question`、`final_answer`、`context` 和完整 `tool_calls`。
-- 每次调用保留 `call_id`、`name`、`arguments`、`result`、`succeeded`。最终正确的轨迹可以包含失败的中间尝试。
+初次接受返回 `202`。通过 `GET /v1/scopes/{scope_id}/trace-learning/{run_id}` 读取进度。相同幂等键和相同内容会复用 Run；
+相同幂等键对应不同内容会被拒绝。成功的工作返回精确的 Experience、Skill 和 Tool 引用。后续显式导入可以沿用稳定 key
+更新对应 Artifact，但写入前会校验权限和预期 head revision。
 
-保留 Datus `read_queries` 的原始参数和结果制品；不要把多条查询伪装成新调用。
-生成工具的验证示例使用 `query_index` 指向原调用中的查询，`arguments` 是生成工具的参数。
-完成标签不用于替代正确性判断：完整正确是调用方选择轨迹时应满足的前提。
+## 理解候选工作流
 
-初次接受返回 202。通过 `GET /v1/scopes/{scope_id}/trace-learning/{run_id}` 读取状态。
-重复提交相同标识和内容复用已有 Run；相同标识对应不同内容会被拒绝。成功返回 E/S/Tool 的精确引用。
-同一方法再次导入时，生成器可沿用已有 key 更新版本；写入检查原用户权限与预期 revision。
+Supervisor 先让模型生成有界的候选 inventory，然后按 Experience、Tool、Skill 顺序逐候选处理。
+`max_candidates_per_family` 分别限制每个 Family 的候选数量。依赖 Tool 的 Skill 会在它引用的 Tool 候选完成校验后生成，
+因此同一 Run 中的 `tool_keys` 可以引用已校验候选。
 
-验证目前将生成工具绑定示例参数后的 SQL AST 与已记录成功查询比较，检查受覆盖路径的一致性。
-它不重放生产数据，也不要求当前结果等于历史数值。`live_execution_verified` 不因此变为 true。
-工具的实际效果需要在 Datus 的当前数据源上执行并独立评测。失败 Run 不替换已发布的可用产物。
+每个候选都有独立保存的模型 `messages`、revision、review finding、validation 结果、修复次数和 outcome。Worker 重启后，
+从已保存的 conversation 和候选检查点继续；已经发布的候选会跳过，不会重新生成。
 
-生成 SQL 无法重现记录示例时，同一个 Run 可以将失败候选和精确差异反馈给模型修正。
-失败候选保留在 Run 检查点中，不发布为 Artifact。每次尝试都消耗 `max_model_calls` 额度
-（默认共三次），共享原有截止时间，Worker 重启也不会重置额度。`max_output_tokens` 限制每次生成请求，
-用量统计累计全部尝试。修正结果仍须通过完整校验，包括此前已经验证的示例。
-权限、轨迹完整性及其他验证错误不进入这条 SQL 纠错循环。
+Tool reviewer 完全独立：只接收候选的 `ToolContent`，看不到 trace、question、参考答案、examples 或生成 conversation。
+候选生成器在修复时沿保存的原始 `messages` 继续。它必须对每条 finding 恰好返回一次 `accept`、`partial` 或 `reject`，并给出
+理由。review 建议只是质量反馈；确定性的校验错误（包括硬 SQL 校验）不能靠 review decision 豁免。
 
-## 将三类产物用于一次推理
+候选失败相互隔离。被拒绝或延期的候选不会回滚已经发布的候选。Run 的 `status=succeeded` 只表示至少有一个候选产出了可发布
+产物，并不表示所有计划候选都完成。检查 `candidate_outcomes`，确认候选是否全部为 `published`，以及是否存在 `rejected` 或
+`deferred`。预算或截止时间中止时可以保留部分已发布产物，同时在 Run 的 error 状态中保留剩余工作被中止的原因。
 
-向 `POST /v1/context/prepare` 增加显式选项：
+## 检查校验和预算
+
+校验会绑定每个 Tool 示例的参数，并把生成 SQL 的 AST 与已记录的成功查询比较。这只证明被示例覆盖的路径：不会重放变化中的
+生产数据，不证明所有参数值，也不会因此把 `live_execution_verified` 设为 `true`。即使 reviewer 接受 finding，历史 SQL AST 校验仍然
+必须通过。实际执行和答案效果需要在宿主环境中独立评测。
+
+一次 Run 的预算由候选 inventory、候选生成、Tool review、结构化输出格式修复、质量修复以及后续模型请求共同消耗：
+
+| 预算字段 | 默认值 | 上限 | 含义 |
+| --- | ---: | ---: | --- |
+| `max_model_calls` | `128` | `1024` | 整个 Run 的 provider 请求总数 |
+| `max_candidates_per_family` | `32` | `128` | 每个 Experience、Tool 或 Skill Family 的 inventory 候选数 |
+| `max_candidate_repair_rounds` | `2` | `8` | 单个候选额外质量修复轮数 |
+| `max_output_tokens` | `16000` | `64000` | 每次 provider 请求的输出 token 上限 |
+| `max_input_chars` | `400000` | `4194304` | 序列化输入和保存 messages 的预算 |
+| `timeout_seconds` | `1800` | `7200` | Run 的总截止时间 |
+| `previous_artifact_limit` | `30` | `100` | 召回后选择的可复用历史 Artifact head 数量 |
+| `max_pending_per_scope` | `32` | `1000` | 单个 Scope 排队和执行中的 trace-learning Run 数 |
+
+Supervisor 在发起模型请求前保守预留下一次额度。Worker 在模型调用中丢失响应或退出时，已预留额度不会退回，重启也不能再次消费。
+`max_output_tokens` 按请求计算，而 Run 的 usage 会累计所有请求。
+
+普通结构化 generation 的 `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS=2` 表示 initial 1 次加 repair 1 次；改为 `3`
+表示 initial 1 次加额外 2 次 repair。该单次 operation 限制仍受 trace-learning Run 总预算约束。
+
+`usage.reserved_model_calls` 表示计入 `usage.model_calls` 的未确认预留；两者相减得到已确认请求数。已知在请求前发生的配置错误会释放预留；响应未知的请求保留额度，不冒充已确认模型用量。
+
+## 准备一次推理
+
+向 `POST /v1/context/prepare` 显式传入 `learned_tools=true` 和实际 `host_profile`：
 
 ```json
 {
   "scope_id": "your-scope",
-  "query": "当前用户问题",
+  "query": "CZE 有多少个站点？",
   "max_bytes": 16000,
   "assembly": {"sections": []},
   "learned_tools": true,
@@ -72,20 +100,20 @@ LearningRun 保存学习阶段、模型用量和检查点。普通 Source 写入
 }
 ```
 
-`learned_context` 同时返回经验文本、Skill 正文及完整 Tool 描述。调用方在模型请求前注入文本，
-把 Tool 的名称、说明和参数 schema 注册给模型，把实现交给执行适配器。
-只返回结构化上下文时，`status=ready`、`content=null`、`content_bytes=0`；旧请求不出现新增字段。
+返回的 `learned_context` 包含选中的 Experience 文本、Skill 指令和完整 Tool 描述。只请求 learned context 时，返回
+`status=ready`、`content=null`、`content_bytes=0`；旧请求不会出现新增字段。准备阶段保证 Skill 与精确 Tool revision 的依赖完整，
+再在字节预算内加入 Experience，不会暴露缺少依赖的 Skill。
 
-准备阶段先为完整 Skill 及其精确 Tool 依赖分配字节预算，再装配普通文本；同一 Experience 不重复注入。
-不匹配实际方言/数据库或缺少必要 Tool 版本的 Skill 不会暴露。接口不会截断一半后交给模型。
+召回会分页读取含已发布候选的 Run 的全部 active head，再按 query 相关性和剩余字节预算选择。当前使用 Scope 内的词法匹配，不使用语义向量索引，
+因此不再只看最近 30 个含已发布候选的 Run；生成阶段仍受 Run budget 对历史 head 数量的限制。
 
-Datus 适配器通过当前请求的 Data Gateway 执行固定只读 SQL，参数单独绑定。
-数据库访问权限、结果限制和当前数据源继续由 Gateway 控制。Tool 内没有额外模型请求。
-工具出错时 Agent 可以回退普通工具；评测需要把回退及最终答案请求计入总模型请求数。
+对 Datus，传给 LLM 的 Tool description 会追加 `output_schema`，`args_schema` 保持原样。Tool 参数单独绑定，固定只读 SQL 通过当前请求的
+Data Gateway 执行；数据源权限、结果限制和当前数据继续由 Gateway 控制。Tool 内没有隐藏的模型调用；评估宿主总模型请求数时，应计入
+回退和最终答案请求。
+
+候选一旦独立发布，即使同一 Run 仍在处理其他候选，也可以参与召回；草稿、拒绝及暂缓的候选不会被召回。
 
 ## 当前范围
 
-当前宿主为 Datus，执行器为 MySQL/PostgreSQL 兼容的参数化只读 SQL。Skill 可以引用多个工具，
-普通顺序调用由 Agent 决策。动态 DAG、通用代码沙箱、跨宿主 MCP 执行和自动收集普通日志不在此能力中。
-召回采用当前 Scope 中近期成功 Run 的有限目录和词法匹配；它不等价于完整历史工具池的语义索引。
-Tool 可通过 Artifact 读取接口读取，但不开放通用创建/替换写接口。
+当前宿主为 Datus，执行器为 MySQL/PostgreSQL 兼容的参数化只读 SQL，支持普通顺序的模型工具调用。动态 DAG、通用代码沙箱、跨宿主
+MCP 执行和自动收集普通日志不在此流程中。Tool 读取受 Artifact 权限控制，没有通用 Tool 创建/替换接口。

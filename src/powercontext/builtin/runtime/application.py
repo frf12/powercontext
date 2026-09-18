@@ -730,7 +730,9 @@ class ScopedContextApplication:
             if not request.learned_tools or request.host_profile is None or service is None:
                 return await self._prepare(request, scope)
             async with service.database.transaction() as connection:
-                artifacts = await service.learned_artifacts(connection, self.scope_id)
+                artifacts = await service.learned_artifacts(
+                    connection, self.scope_id, host_profile=request.host_profile
+                )
             learned = prepare_learned_context(
                 artifacts,
                 query=request.query,

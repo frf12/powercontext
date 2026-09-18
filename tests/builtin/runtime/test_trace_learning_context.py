@@ -209,3 +209,15 @@ def test_joint_http_context_deduplicates_experience_and_obeys_combined_budget(tm
             assert joint["content_bytes"] + typed_bytes <= payload["max_bytes"]
 
     asyncio.run(scenario())
+
+
+def test_skill_without_tool_dependencies_can_still_supply_a_method():
+    from powercontext.builtin.runtime.learned_context import prepare_learned_context
+
+    _, skill, _ = _learned_artifacts()
+    skill = skill.model_copy(update={"content": skill.content.model_copy(update={"tool_dependencies": ()})})
+    result = prepare_learned_context(
+        (skill,), query="count gas stations by country", dialect="mysql", database_name="debit_card", max_bytes=8000
+    )
+    assert result.skills and result.skills[0].ref == skill.as_ref()
+    assert not result.tools

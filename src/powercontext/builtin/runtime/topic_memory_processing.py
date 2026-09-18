@@ -1527,6 +1527,7 @@ async def _open_topic_memory_processor(spec: TopicMemoryWorkerSpec, scope_id: st
     limits = InferenceLimits(
         timeout_seconds=inference.generation_timeout_seconds,
         max_requests=inference.generation_max_requests,
+        allow_python_literals=inference.generation_allow_python_literals,
         max_output_tokens_per_request=budget.max_output_tokens_per_request,
         output_tokens_limit=budget.output_tokens_limit,
         allow_continuations=False,

@@ -88,6 +88,100 @@ TEST_PROFILE = EmbeddingProfile(
 )
 
 
+def test_python_literal_output_is_normalized_without_an_extra_request():
+    async def scenario():
+        generator = PydanticAIStructuredGenerator(
+            model=TestModel(custom_output_text="{'value': \"customer's balance\"}"),
+            instructions="Return the answer.",
+            input_type=Question,
+            output_type=Answer,
+            limits=InferenceLimits(max_requests=1),
+        )
+        result = await generator.generate_conversation(Question("balance"))
+        assert result.output.value == "customer's balance"
+        assert result.usage.requests == 1
+        metadata = [message.get("metadata") for message in result.messages]
+        assert any(isinstance(item, dict) and item.get("structured_output_original") for item in metadata)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{'value': 'first', 'value': 'second'}",
+        "{'value': str(42)}",
+        "{'value': ('tuple',)}",
+        "{'value': true}",
+        "{'value': 1e999}",
+    ],
+)
+def test_ambiguous_or_non_json_python_values_still_require_model_repair(raw):
+    async def scenario():
+        generator = PydanticAIStructuredGenerator(
+            model=TestModel(custom_output_text=raw),
+            instructions="Return the answer.",
+            input_type=Question,
+            output_type=Answer,
+            limits=InferenceLimits(max_requests=1),
+        )
+        with pytest.raises(InvalidInferenceOutputError):
+            await generator.generate(Question("answer"))
+
+    asyncio.run(scenario())
+
+
+def test_python_literal_compatibility_can_be_disabled():
+    async def scenario():
+        generator = PydanticAIStructuredGenerator(
+            model=TestModel(custom_output_text="{'value': 'answer'}"),
+            instructions="Return the answer.",
+            input_type=Question,
+            output_type=Answer,
+            limits=InferenceLimits(max_requests=1, allow_python_literals=False),
+        )
+        with pytest.raises(InvalidInferenceOutputError):
+            await generator.generate(Question("answer"))
+
+    asyncio.run(scenario())
+
+
+def test_failed_repairs_preserve_usage_and_can_resume_the_conversation():
+    async def scenario():
+        calls = 0
+
+        def respond(messages, info):
+            nonlocal calls
+            calls += 1
+            if calls <= 2:
+                return ModelResponse(parts=[TextPart("{'candidates': [{'text': 'method'}]}")])
+            assert any(isinstance(part, RetryPromptPart) for msg in messages for part in msg.parts)
+            return ModelResponse(parts=[TextPart('{"candidates":[{"text":"method","intent":"reuse"}]}')])
+
+        generator = PydanticAIStructuredGenerator(
+            model=FunctionModel(respond),
+            instructions="Return candidates.",
+            input_type=Question,
+            output_type=Proposal,
+            limits=InferenceLimits(max_requests=3),
+        )
+        with pytest.raises(InvalidInferenceOutputError) as failed:
+            await generator.generate_conversation(Question("answer"), max_requests=2)
+        assert failed.value.usage is not None
+        assert failed.value.usage.requests == 2
+        assert failed.value.messages
+        result = await generator.generate_conversation(
+            Question("Fix the missing intent."),
+            messages=failed.value.messages,
+            max_requests=1,
+        )
+        assert result.output.candidates[0].intent == "reuse"
+        assert result.usage.requests == 1
+        assert len(result.messages) > len(failed.value.messages)
+
+    asyncio.run(scenario())
+
+
 class ResultEmbeddingModel(PydanticAIEmbeddingModelBase):
     def __init__(
         self,
@@ -579,5 +673,28 @@ def test_embedding_adapter_maps_empty_provider_data_to_unavailable() -> None:
 
         with pytest.raises(InferenceUnavailableError):
             await adapter.embed(("bounded text",))
+
+    asyncio.run(scenario())
+
+
+def test_provider_cannot_publish_output_exceeding_per_request_token_limit():
+    async def scenario():
+        def respond(messages, info):
+            return ModelResponse(
+                parts=[TextPart('{"value":"too long"}')], usage=RequestUsage(input_tokens=2, output_tokens=6)
+            )
+
+        generator = PydanticAIStructuredGenerator(
+            model=FunctionModel(respond),
+            instructions="Return an answer.",
+            input_type=Question,
+            output_type=Answer,
+            limits=InferenceLimits(max_requests=2, max_output_tokens_per_request=5),
+        )
+        with pytest.raises(InvalidInferenceOutputError) as failed:
+            await generator.generate(Question("answer"))
+        assert failed.value.usage is not None
+        assert failed.value.usage.requests == 1 and failed.value.usage.output_tokens == 6
+        assert any(message["kind"] == "response" for message in failed.value.messages)
 
     asyncio.run(scenario())

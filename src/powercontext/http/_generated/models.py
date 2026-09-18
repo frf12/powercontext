@@ -2471,15 +2471,24 @@ class TraceToolCall(BaseModel):
 
 
 class LearningBudget(BaseModel):
-    max_model_calls: Annotated[StrictInt, Field(ge=1, le=10)] = 3
+    max_model_calls: Annotated[StrictInt, Field(ge=1, le=1024)] = 128
+    max_candidates_per_family: Annotated[StrictInt, Field(ge=1, le=128)] = 32
+    max_candidate_repair_rounds: Annotated[StrictInt, Field(ge=0, le=8)] = 2
     max_output_tokens: Annotated[StrictInt, Field(ge=1024, le=64000)] = 16000
     max_input_chars: Annotated[StrictInt, Field(ge=1024, le=4194304)] = 400000
-    timeout_seconds: Annotated[StrictFloat, Field(gt=0.0, le=3600.0)] = 300
+    timeout_seconds: Annotated[StrictFloat, Field(gt=0.0, le=7200.0)] = 1800
     previous_artifact_limit: Annotated[StrictInt, Field(ge=0, le=100)] = 30
     max_pending_per_scope: Annotated[StrictInt, Field(ge=1, le=1000)] = 32
 
 
 class LearningUsage(BaseModel):
+    reserved_model_calls: Annotated[
+        StrictInt,
+        Field(
+            description="Unconfirmed reservations included in model_calls; confirmed requests are model_calls minus this value.",
+            ge=0,
+        ),
+    ] = 0
     model_calls: Annotated[StrictInt, Field(ge=0)] = 0
     input_tokens: Annotated[StrictInt | None, Field(ge=0)] = None
     output_tokens: Annotated[StrictInt | None, Field(ge=0)] = None
@@ -2497,7 +2506,33 @@ class ValidationReport(BaseModel):
     detail: StrictStr = "Checks parameter binding against recorded successful SQL; does not rerun a live database."
 
 
+class Family7(StrEnum):
+    EXPERIENCE = "experience"
+    TOOL = "tool"
+    SKILL = "skill"
+
+
 class Status3(StrEnum):
+    PLANNED = "planned"
+    GENERATING = "generating"
+    REVIEWING = "reviewing"
+    REPAIRING = "repairing"
+    READY = "ready"
+    PUBLISHED = "published"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+
+
+class LearningCandidateOutcome(BaseModel):
+    family: Family7
+    key: StrictStr
+    status: Status3 = Status3.PLANNED
+    reason: StrictStr | None = None
+    repair_rounds: StrictInt = 0
+    review_rounds: StrictInt = 0
+
+
+class Status4(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -2506,7 +2541,9 @@ class Status3(StrEnum):
 
 class Stage(StrEnum):
     IMPORTED = "imported"
+    DISCOVERING = "discovering"
     GENERATING = "generating"
+    REVIEWING = "reviewing"
     VALIDATING = "validating"
     SAVING = "saving"
     COMPLETE = "complete"
@@ -3452,7 +3489,7 @@ class ImportTraceLearningRequest(BaseModel):
 class LearningRun(BaseModel):
     scope_id: StrictStr
     run_id: StrictStr
-    status: Status3 = Status3.QUEUED
+    status: Status4 = Status4.QUEUED
     stage: Stage = Stage.IMPORTED
     sources: Annotated[list[TraceLearningSourceReference], Field(validate_default=True)] = []
     artifacts: Annotated[list[ArtifactReference], Field(validate_default=True)] = []
@@ -3462,11 +3499,12 @@ class LearningRun(BaseModel):
     started_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
     attempt_count: StrictInt = 0
-    prompt_version: StrictStr = "powercontext.trace-learning.v1"
+    prompt_version: StrictStr = "powercontext.trace-learning.v3"
     model_config_id: StrictStr | None = None
     usage: LearningUsage | None = None
     budget: LearningBudget | None = None
     validation: ValidationReport | None = None
+    candidate_outcomes: Annotated[list[LearningCandidateOutcome], Field(validate_default=True)] = []
     error: StrictStr | None = None
 
 

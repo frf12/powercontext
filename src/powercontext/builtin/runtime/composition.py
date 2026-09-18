@@ -972,7 +972,9 @@ async def _dream_generator(
         input_type=DreamGenerationInput,
         output_type=DreamPlan,
         limits=InferenceLimits(
-            timeout_seconds=min(settings.generation_timeout_seconds, budget.timeout_seconds), max_requests=1
+            timeout_seconds=min(settings.generation_timeout_seconds, budget.timeout_seconds),
+            max_requests=1,
+            allow_python_literals=settings.generation_allow_python_literals,
         ),
         model_settings=model_settings,
         name="artifact_dreaming",
@@ -1069,6 +1071,7 @@ async def _generation_pipelines(
         generation_limits = InferenceLimits(
             timeout_seconds=settings.generation_timeout_seconds,
             max_requests=settings.generation_max_requests,
+            allow_python_literals=settings.generation_allow_python_literals,
         )
         _register_prompt_demonstrators(
             prompt_demonstrators,
@@ -1214,6 +1217,7 @@ async def _generation_pipelines(
                 limits=InferenceLimits(
                     timeout_seconds=settings.rerank_timeout_seconds or settings.generation_timeout_seconds,
                     max_requests=settings.rerank_max_requests or settings.generation_max_requests,
+                    allow_python_literals=settings.generation_allow_python_literals,
                 ),
                 model_settings=rerank_request_settings,
                 name="memory_rerank",
@@ -1227,6 +1231,7 @@ async def _generation_pipelines(
                 InferenceLimits(
                     timeout_seconds=settings.rerank_timeout_seconds or settings.generation_timeout_seconds,
                     max_requests=settings.rerank_max_requests or settings.generation_max_requests,
+                    allow_python_literals=settings.generation_allow_python_literals,
                 ),
                 rerank_request_settings,
             )

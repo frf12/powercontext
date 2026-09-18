@@ -125,6 +125,131 @@ class Generator:
         )
 
 
+def test_candidate_workflow_blind_review_repairs_with_history_and_keeps_other_artifacts(tmp_path):
+    async def scenario():
+        from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
+        from pydantic_ai.models.function import FunctionModel
+
+        from powercontext.builtin.inference.pydantic_ai import InferenceLimits
+        from powercontext.builtin.trace_learning.generation import CandidateLearningGenerator
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        reviewed = []
+        repaired = []
+        source = bundle_data()
+
+        def respond(messages, info):
+            prompt = next(
+                part.content for msg in reversed(messages) for part in msg.parts if isinstance(part, UserPromptPart)
+            )
+            value = json.loads(prompt)
+            if "tool" in value:
+                assert set(value) == {"tool"}
+                assert "trace-1" not in str(messages)
+                assert "How many stations" not in str(messages)
+                reviewed.append(value)
+                findings = (
+                    []
+                    if value["tool"]["input_schema"]["properties"]["country"].get("description")
+                    else [
+                        {
+                            "id": "input-meaning",
+                            "category": "input_contract",
+                            "comment": "Parameter meaning is unspecified.",
+                            "suggestion": "Describe accepted values.",
+                        }
+                    ]
+                )
+                return ModelResponse(parts=[TextPart(json.dumps({"findings": findings}))])
+            if value["phase"] == "discover":
+                return ModelResponse(
+                    parts=[
+                        TextPart(
+                            json.dumps({
+                                "candidates": [
+                                    {
+                                        "family": "experience",
+                                        "key": "station-country",
+                                        "purpose": "Current counts",
+                                        "trace_ids": ["trace-1"],
+                                    },
+                                    {
+                                        "family": "tool",
+                                        "key": "count-country",
+                                        "purpose": "Count by country",
+                                        "trace_ids": ["trace-1"],
+                                    },
+                                    {
+                                        "family": "tool",
+                                        "key": "bad-count",
+                                        "purpose": "Broken candidate",
+                                        "trace_ids": ["trace-1"],
+                                    },
+                                    {
+                                        "family": "skill",
+                                        "key": "count-stations",
+                                        "purpose": "Counting workflow",
+                                        "trace_ids": ["trace-1"],
+                                        "tool_keys": ["count-country"],
+                                    },
+                                ]
+                            })
+                        )
+                    ]
+                )
+            spec = value["candidate"]
+            item = json.loads(
+                json.dumps(source[{"experience": "experiences", "tool": "tools", "skill": "skills"}[spec["family"]]][0])
+            )
+            item["key"] = spec["key"]
+            decisions = []
+            if spec["key"] == "bad-count":
+                item["content"]["implementation"]["sql"] = "SELECT COUNT(*) AS total FROM stations WHERE country != ?"
+            if value.get("feedback") and spec["key"] == "count-country":
+                assert "trace-1" in str(messages[:-1])
+                repaired.append(value)
+                item["content"]["input_schema"]["properties"]["country"]["description"] = (
+                    "Country code stored in stations.country."
+                )
+                decisions = [
+                    {
+                        "finding_id": "input-meaning",
+                        "decision": "accept",
+                        "reason": "Makes the parameter usable without the trace.",
+                    }
+                ]
+            return ModelResponse(parts=[TextPart(json.dumps({"candidate": item, "decisions": decisions}))])
+
+        budget = LearningBudget(max_candidate_repair_rounds=1, max_model_calls=30)
+        generator = CandidateLearningGenerator(
+            model=FunctionModel(respond), limits=InferenceLimits(max_requests=2), config_id="candidate-test"
+        )
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = budget
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert {ref.family for ref in done.artifacts} == {"experience", "tool", "skill"}
+            assert len(done.artifacts) == 3
+            assert reviewed and repaired
+            outcomes = {item.key: item for item in done.candidate_outcomes}
+            assert outcomes["bad-count"].status == "rejected"
+            assert outcomes["count-country"].status == "published"
+            async with service.database.transaction() as connection:
+                record = await service.repository.get(connection, "learning", run.run_id)
+            candidate = next(item for item in record.candidates if item.spec.key == "count-country")
+            assert candidate.messages and len(candidate.revisions) == 2
+            assert candidate.revisions[-1].decisions[0].decision == "accept"
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
 def learned_request(tool, key="learned", trace_id="trace-2"):
     value = request_data(key, trace_id, "SVK")
     result = {"columns": [{"name": "total"}], "rows": [{"total": 8}], "truncated": False}
@@ -396,7 +521,11 @@ async def setup_service(tmp_path, generator):
     await ScopeApplication(contexts.database, id_factory=lambda: "learning").create(
         ScopeDraft(title="Learning", summary="Trace learning tests", idempotency_key="learning-scope")
     )
-    return manager, TraceLearningService(contexts=contexts, generator=generator)
+    from powercontext.builtin.trace_learning.models import LearningBudget
+
+    return manager, TraceLearningService(
+        contexts=contexts, generator=generator, budget=LearningBudget(max_model_calls=3)
+    )
 
 
 def test_import_preserves_complete_trace_and_replay_is_idempotent(tmp_path):
@@ -858,7 +987,32 @@ def test_real_supervisor_spawn_worker_learns_through_model_http(tmp_path, monkey
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(request)
+            value = json.loads(
+                next(message["content"] for message in reversed(request["messages"]) if message["role"] == "user")
+            )
+            bundle = bundle_data()
+            if value.get("phase") == "discover":
+                output = {
+                    "candidates": [
+                        {
+                            "family": family,
+                            "key": item["key"],
+                            "purpose": "Reusable station capability",
+                            "trace_ids": ["trace-1"],
+                            "tool_keys": item.get("tool_keys", []),
+                        }
+                        for family, group in (("experience", "experiences"), ("tool", "tools"), ("skill", "skills"))
+                        for item in bundle[group]
+                    ]
+                }
+            elif "tool" in value:
+                output = {"findings": []}
+            else:
+                family = value["candidate"]["family"]
+                group = {"experience": "experiences", "tool": "tools", "skill": "skills"}[family]
+                output = {"candidate": bundle[group][0], "decisions": []}
             body = json.dumps({
                 "id": "trace-learning-test",
                 "object": "chat.completion",
@@ -870,7 +1024,7 @@ def test_real_supervisor_spawn_worker_learns_through_model_http(tmp_path, monkey
                         "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
-                            "content": json.dumps(bundle_data()),
+                            "content": json.dumps(output),
                         },
                     }
                 ],
@@ -930,10 +1084,10 @@ def test_real_supervisor_spawn_worker_learns_through_model_http(tmp_path, monkey
                         break
                     await asyncio.sleep(0.05)
             assert run.status == "succeeded", run.error
-            assert run.usage.model_calls == 1 and len(run.artifacts) == 3
-            assert len(requests) == 1
+            assert run.usage.model_calls == len(requests) and len(run.artifacts) == 3
+            assert len(requests) >= 5
             assert "trace-1" in json.dumps(requests[0])
-            assert "Historical data" in json.dumps(requests[0])
+            assert any("Historical data" in json.dumps(request) for request in requests)
             from powercontext.builtin.runtime.models import PrepareContextRequest
 
             prepared = await runtime.context.for_scope(scope.scope_id).prepare(
@@ -957,3 +1111,375 @@ def test_real_supervisor_spawn_worker_learns_through_model_http(tmp_path, monkey
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def candidate_generator_for(specs, *, findings=(), reject_review=False):
+    from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from powercontext.builtin.inference.pydantic_ai import InferenceLimits
+    from powercontext.builtin.trace_learning.generation import CandidateLearningGenerator
+
+    seen = []
+
+    def respond(messages, info):
+        value = json.loads(
+            next(part.content for msg in reversed(messages) for part in msg.parts if isinstance(part, UserPromptPart))
+        )
+        seen.append(value)
+        if "tool" in value:
+            output = {"findings": list(findings)}
+        elif value["phase"] == "discover":
+            output = {"candidates": specs}
+        else:
+            family = value["candidate"]["family"]
+            item = bundle_data()[{"experience": "experiences", "tool": "tools", "skill": "skills"}[family]][0]
+            item["key"] = value["candidate"]["key"]
+            decisions = []
+            if value.get("feedback") and reject_review:
+                decisions = [
+                    {
+                        "finding_id": finding["id"],
+                        "decision": "reject",
+                        "reason": "Table identifiers are intentionally fixed; only SQL literal inputs are variable.",
+                    }
+                    for finding in findings
+                ]
+            output = {"candidate": item, "decisions": decisions}
+        return ModelResponse(parts=[TextPart(json.dumps(output))])
+
+    generator = CandidateLearningGenerator(
+        model=FunctionModel(respond), limits=InferenceLimits(max_requests=2), config_id="candidate-tests"
+    )
+    return generator, seen
+
+
+def candidate_spec(family, key):
+    return {"family": family, "key": key, "purpose": "Reusable station method", "trace_ids": ["trace-1"]}
+
+
+def test_generator_can_reject_advisory_findings_with_reasons(tmp_path):
+    async def scenario():
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        findings = [
+            {
+                "id": "fixed-table",
+                "category": "parameterization",
+                "comment": "Table name is fixed.",
+                "suggestion": "Consider a table parameter.",
+            }
+        ]
+        generator, seen = candidate_generator_for(
+            [candidate_spec("tool", "count-country")], findings=findings, reject_review=True
+        )
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=8)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert done.candidate_outcomes[0].repair_rounds == 1
+            assert done.candidate_outcomes[0].review_rounds == 1
+            async with service.database.transaction() as connection:
+                record = await service.repository.get(connection, "learning", run.run_id)
+            assert record.candidates[0].revisions[-1].decisions[0].decision == "reject"
+            assert len(record.run.artifacts) == 1
+            assert done.usage.model_calls == len(seen)
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_candidate_caps_and_total_budget_preserve_completed_experience(tmp_path):
+    async def scenario():
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        specs = [
+            candidate_spec("experience", "station-country"),
+            candidate_spec("experience", "extra"),
+            candidate_spec("tool", "count-country"),
+        ]
+        generator, seen = candidate_generator_for(specs)
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_candidates_per_family=1, max_model_calls=3)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert [ref.family for ref in done.artifacts] == ["experience"]
+            outcomes = {item.key: item for item in done.candidate_outcomes}
+            assert outcomes["extra"].reason == "candidate_limit"
+            assert outcomes["count-country"].reason == "budget_exceeded"
+            assert done.usage.model_calls == len(seen) == 3
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_candidate_worker_restart_keeps_published_artifacts_and_generator_messages(tmp_path):
+    async def scenario():
+        from powercontext.builtin.runtime.processing_execution import InvocationAlreadyHandled
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        specs = [candidate_spec("experience", "station-country"), candidate_spec("tool", "count-country")]
+        generator, seen = candidate_generator_for(specs)
+        review = generator.review_tool
+        interrupted = False
+
+        async def interrupt_review(tool, *, max_requests):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise InvocationAlreadyHandled()
+            return await review(tool, max_requests=max_requests)
+
+        generator.review_tool = interrupt_review
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=12)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            with pytest.raises(InvocationAlreadyHandled):
+                await invoke(service)
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert all(ref.revision == 1 for ref in done.artifacts)
+            generated = [value["candidate"]["key"] for value in seen if value.get("phase") == "generate"]
+            assert generated == ["station-country", "count-country"]
+            assert len([value for value in seen if value.get("phase") == "discover"]) == 1
+            assert done.usage.reserved_model_calls == generator.max_requests
+            assert done.usage.model_calls - done.usage.reserved_model_calls == len(seen)
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_restart_after_review_cannot_publish_before_generator_addresses_findings(tmp_path, monkeypatch):
+    async def scenario():
+        from powercontext.builtin.runtime.processing_execution import InvocationAlreadyHandled
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+        from powercontext.builtin.trace_learning.workflow import CandidateWorkflow
+
+        generator, _ = candidate_generator_for(
+            [candidate_spec("tool", "count-country")],
+            findings=[
+                {
+                    "id": "fixed-table",
+                    "category": "parameterization",
+                    "comment": "Table is fixed.",
+                    "suggestion": "Consider making it variable.",
+                }
+            ],
+            reject_review=True,
+        )
+        review = CandidateWorkflow._review
+        first = True
+
+        async def interrupt_after_review(self, index, item):
+            nonlocal first
+            await review(self, index, item)
+            if first:
+                first = False
+                raise InvocationAlreadyHandled()
+
+        monkeypatch.setattr(CandidateWorkflow, "_review", interrupt_after_review)
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=12)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            with pytest.raises(InvocationAlreadyHandled):
+                await invoke(service)
+            await invoke(service)
+            async with service.database.transaction() as connection:
+                record = await service.repository.get(connection, "learning", run.run_id)
+            assert record.run.status == "succeeded", record.run.error
+            assert len(record.candidates[0].revisions) == 2
+            assert record.candidates[0].revisions[-1].decisions[0].decision == "reject"
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_deadline_preserves_published_candidates_and_marks_unfinished_candidates(tmp_path):
+    async def scenario():
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        generator, _ = candidate_generator_for([
+            candidate_spec("experience", "station-country"),
+            candidate_spec("tool", "count-country"),
+        ])
+        generate = generator.generate_candidate
+
+        async def timeout_tool(value, *, messages, max_requests):
+            if value.candidate.family == "tool":
+                raise TimeoutError
+            return await generate(value, messages=messages, max_requests=max_requests)
+
+        generator.generate_candidate = timeout_tool
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=12)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert done.error == "budget_exceeded"
+            assert done.candidate_outcomes[1].status == "deferred"
+            async with service.database.transaction() as connection:
+                artifacts = await service.learned_artifacts(connection, "learning")
+            assert [item.family for item in artifacts] == ["experience"]
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_recall_and_revision_lookup_include_artifacts_older_than_thirty_runs(tmp_path):
+    async def scenario():
+        from powercontext.builtin.inference.models import GenerationResult
+        from powercontext.builtin.runtime.learned_context import prepare_learned_context
+        from powercontext.builtin.trace_learning.models import GeneratedTraceLearningBundle, ImportTraceLearningRequest
+
+        class DistinctGenerator(Generator):
+            async def generate(self, value):
+                result = await super().generate(value)
+                data = result.output.model_dump(mode="json")
+                identity = value.traces[0].trace_id
+                for group in ("experiences", "tools", "skills"):
+                    data[group][0]["key"] += "-" + identity
+                data["tools"][0]["content"]["name"] += "_" + identity
+                data["skills"][0]["tool_keys"] = [data["tools"][0]["key"]]
+                if identity == "first":
+                    data["tools"][0]["content"]["description"] = "Unique earliest capability for attendance inventory."
+                return GenerationResult(output=GeneratedTraceLearningBundle.model_validate(data), usage=result.usage)
+
+        generator = DistinctGenerator()
+        manager, service = await setup_service(tmp_path, generator)
+        try:
+            first = None
+            for index in range(32):
+                identity = "first" if index == 0 else f"later{index}"
+                run = await service.import_traces(
+                    "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data(identity, identity))
+                )
+                await invoke(service)
+                done = await service.get_run("learning", "runtime", run.run_id)
+                assert done.status == "succeeded", done.error
+                if first is None:
+                    first = next(ref for ref in done.artifacts if ref.family == "tool")
+            async with service.database.transaction() as connection:
+                artifacts = await service.learned_artifacts(connection, "learning")
+            assert len(artifacts) == 96
+            context = prepare_learned_context(
+                artifacts,
+                query="Unique earliest attendance inventory",
+                dialect="sqlite",
+                database_name="cards",
+                max_bytes=8000,
+            )
+            assert context.tools[0].ref == first
+            revised = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data("revise-first", "first"))
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", revised.run_id)
+            assert done.status == "succeeded", done.error
+            tool = next(ref for ref in done.artifacts if ref.family == "tool")
+            assert first is not None
+            assert tool.artifact_id == first.artifact_id and tool.revision == 2
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_candidate_revision_conflict_does_not_stop_independent_candidates(tmp_path, monkeypatch):
+    async def scenario():
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+        from powercontext.errors import RevisionConflictError
+
+        generator, _ = candidate_generator_for([
+            candidate_spec("experience", "conflict"),
+            candidate_spec("experience", "independent"),
+        ])
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=10)
+        save = service._save_bundle
+
+        async def conflict_once(connection, record):
+            if record.generated.experiences[0].key == "conflict":
+                raise RevisionConflictError("conflict", "current")
+            return await save(connection, record)
+
+        monkeypatch.setattr(service, "_save_bundle", conflict_once)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert len(done.artifacts) == 1
+            assert done.candidate_outcomes[0].reason == "artifact_revision_conflict"
+            assert done.candidate_outcomes[1].status == "published"
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_published_tool_revision_is_recallable_before_other_candidates_finish(tmp_path):
+    async def scenario():
+        from powercontext.builtin.runtime.processing_execution import InvocationAlreadyHandled
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        manager, service = await setup_service(tmp_path, Generator())
+        try:
+            first = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            old = await service.get_run("learning", "runtime", first.run_id)
+            old_tool = next(ref for ref in old.artifacts if ref.family == "tool")
+            skill_spec = candidate_spec("skill", "count-stations") | {"tool_keys": ["count-country"]}
+            generator, _ = candidate_generator_for([candidate_spec("tool", "count-country"), skill_spec])
+            generate = generator.generate_candidate
+
+            async def interrupt_skill(value, *, messages, max_requests):
+                if value.candidate.family == "skill":
+                    raise InvocationAlreadyHandled()
+                return await generate(value, messages=messages, max_requests=max_requests)
+
+            generator.generate_candidate = interrupt_skill
+            service.generator = generator
+            service.budget = LearningBudget(max_model_calls=12)
+            await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data("second"))
+            )
+            with pytest.raises(InvocationAlreadyHandled):
+                await invoke(service)
+            async with service.database.transaction() as connection:
+                recalled = await service.learned_artifacts(connection, "learning")
+            refs = [item.as_ref() for item in recalled if item.family == "tool"]
+            assert len(refs) == 1 and refs[0].artifact_id == old_tool.artifact_id and refs[0].revision == 2
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())

@@ -93,6 +93,10 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_RUNTIME_DREAM_ENABLED` | `true` | Accept explicit Dream requests for declared Experience/Skill Families; no automatic artifact selection |
 | `POWERCONTEXT_SERVER_RUNTIME_DREAM_MAX_PENDING_PER_SCOPE` | `32` | Combined queued and running DreamRun limit per Scope |
 | `POWERCONTEXT_SERVER_RUNTIME_DREAM_BUDGET` | `{}` | JSON budget; may tighten evidence limits, at most 2 model calls and 120 seconds from first execution |
+| `POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_ENABLED` | `false` | Enable explicit trace-learning Runs and the Tool processing binding |
+| `POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_BUDGET` | `{}` | JSON `LearningBudget`; controls the whole inventory, candidate, review, repair, and validation Run |
+| `POWERCONTEXT_SERVER_RUNTIME_TOOL_MAX_WORKERS` | `1` | Trace-learning Tool Worker quota |
+| `POWERCONTEXT_SERVER_RUNTIME_TOOL_WORKER_TIMEOUT_SECONDS` | `600` | Trace-learning Tool Worker Scope invocation timeout |
 | `POWERCONTEXT_SERVER_RUNTIME_GENERATION_CONCURRENCY` | `4` | Foreground Runtime generation concurrency; background Workers use per-Family quotas |
 | `POWERCONTEXT_SERVER_RUNTIME_PROFILE_MAX_WORKERS` | `4` | Independent Profile Worker quota; alias `PROFILE_MAX_CONCURRENCY` |
 | `POWERCONTEXT_SERVER_RUNTIME_MEMORY_WORKER_TIMEOUT_SECONDS` | `600` | Total Memory Scope timeout |
@@ -103,7 +107,8 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_HEADERS` | `{}` | JSON object of static generation client headers; values are secrets |
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL_SETTINGS` | `{}` | JSON object of Pydantic AI generation model settings |
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_TIMEOUT_SECONDS` | `30` | Timeout in seconds for one structured generation operation |
-| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS` | `2` | Maximum provider requests for one structured generation operation, including retries |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS` | `2` | One initial request plus one repair request for each structured generation operation; `3` allows two repairs |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_ALLOW_PYTHON_LITERALS` | `true` | Accept bounded Python-literal syntax as a compatibility input before normal schema validation; set `false` to disable |
 | `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL_CONTEXT_WINDOW_TOKENS` | `125000` | Total generation-model context window used to budget Topic processing |
 | `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL` | unset | Pydantic AI embedding model; requires profile ID and dimension |
 | `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_BASE_URL` | provider default | Custom OpenAI-compatible embeddings base URL |
@@ -122,6 +127,42 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_INFERENCE_RERANK_MAX_REQUESTS` | generation request limit | Maximum model requests in one rerank operation |
 | `POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` | unset | Experience automatic admission interval; unset preserves accepted work and stops new automatic admission |
 | `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | automatic local project targets | JSON override containing the host identity and explicit Agent Skill targets |
+
+## Trace learning
+
+Trace learning is explicit and opt-in. Configure a generation model and persistent database, then enable the Tool
+processing family. The Worker timeout should cover the Run deadline plus worker startup and acknowledgement time:
+
+```bash
+export POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_ENABLED=true
+export POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_FAMILIES='["tool"]'
+export POWERCONTEXT_SERVER_RUNTIME_TOOL_MAX_WORKERS=1
+export POWERCONTEXT_SERVER_RUNTIME_TOOL_WORKER_TIMEOUT_SECONDS=1860
+export POWERCONTEXT_SERVER_RUNTIME_TRACE_LEARNING_BUDGET='{"max_model_calls":128,"max_candidates_per_family":32,"max_candidate_repair_rounds":2,"max_output_tokens":16000,"timeout_seconds":1800}'
+```
+
+`trace_learning_budget` is one JSON object. Its defaults and limits are:
+
+| Field | Default | Maximum |
+| --- | ---: | ---: |
+| `max_model_calls` | `128` | `1024` |
+| `max_candidates_per_family` | `32` | `128` |
+| `max_candidate_repair_rounds` | `2` | `8` |
+| `max_output_tokens` | `16000` | `64000` |
+| `max_input_chars` | `400000` | `4194304` |
+| `timeout_seconds` | `1800` | `7200` |
+| `previous_artifact_limit` | `30` | `100` |
+| `max_pending_per_scope` | `32` | `1000` |
+
+`max_model_calls` is a Run-wide request budget. It includes Supervisor inventory, per-candidate generation, the
+Tool-only reviewer, structured-output format retries, and quality repairs. The Supervisor reserves a request before
+dispatch; a Worker that loses a response does not return that reservation. Checkpoints retain candidate messages and
+published outcomes across Worker restarts.
+
+`POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS=2` means initial 1 plus repair 1 for each structured generation
+operation. Set it to `3` for initial 1 plus two repairs. `POWERCONTEXT_SERVER_INFERENCE_GENERATION_ALLOW_PYTHON_LITERALS`
+defaults to `true` and accepts only bounded, JSON-compatible Python-literal syntax; normal output schema validation still
+runs. Set it to `false` to reject that compatibility path.
 
 Topic Workers enforce a durable allowance per unadvanced Scope Cursor: 3 attempts, 512 reserved provider requests,
 and 64,000,000 estimated token-capacity units across all retries. A Window admits at most 4,194,304 canonical evidence

@@ -10113,9 +10113,19 @@ components:
       properties:
         max_model_calls:
           type: integer
-          maximum: 10.0
+          maximum: 1024.0
           minimum: 1.0
-          default: 3
+          default: 128
+        max_candidates_per_family:
+          type: integer
+          maximum: 128.0
+          minimum: 1.0
+          default: 32
+        max_candidate_repair_rounds:
+          type: integer
+          maximum: 8.0
+          minimum: 0.0
+          default: 2
         max_output_tokens:
           type: integer
           maximum: 64000.0
@@ -10128,9 +10138,9 @@ components:
           default: 400000
         timeout_seconds:
           type: number
-          maximum: 3600.0
+          maximum: 7200.0
           exclusiveMinimum: 0.0
-          default: 300
+          default: 1800
         previous_artifact_limit:
           type: integer
           maximum: 100.0
@@ -10144,6 +10154,11 @@ components:
       type: object
     LearningUsage:
       properties:
+        reserved_model_calls:
+          type: integer
+          minimum: 0.0
+          default: 0
+          description: Unconfirmed reservations included in model_calls; confirmed requests are model_calls minus this value.
         model_calls:
           type: integer
           minimum: 0.0
@@ -10177,6 +10192,28 @@ components:
           type: string
           default: Checks parameter binding against recorded successful SQL; does not rerun a live database.
       type: object
+    LearningCandidateOutcome:
+      type: object
+      properties:
+        family:
+          type: string
+          enum: [experience, tool, skill]
+        key:
+          type: string
+        status:
+          type: string
+          enum: [planned, generating, reviewing, repairing, ready, published, rejected, deferred]
+          default: planned
+        reason:
+          type: string
+          nullable: true
+        repair_rounds:
+          type: integer
+          default: 0
+        review_rounds:
+          type: integer
+          default: 0
+      required: [family, key]
     LearningRun:
       properties:
         scope_id:
@@ -10195,7 +10232,9 @@ components:
           type: string
           enum:
           - imported
+          - discovering
           - generating
+          - reviewing
           - validating
           - saving
           - complete
@@ -10230,7 +10269,7 @@ components:
           default: 0
         prompt_version:
           type: string
-          default: powercontext.trace-learning.v1
+          default: powercontext.trace-learning.v3
         model_config_id:
           type: string
           nullable: true
@@ -10242,6 +10281,11 @@ components:
           allOf:
           - $ref: '#/components/schemas/ValidationReport'
           nullable: true
+        candidate_outcomes:
+          type: array
+          default: []
+          items:
+            $ref: '#/components/schemas/LearningCandidateOutcome'
         error:
           type: string
           nullable: true

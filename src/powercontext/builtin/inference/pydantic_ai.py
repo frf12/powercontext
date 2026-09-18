@@ -19,10 +19,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from contextlib import nullcontext
+from contextvars import ContextVar
 from copy import copy
+from dataclasses import dataclass, replace
 from typing import Generic, Self, TypeVar, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 from typing_extensions import override
 
 from powercontext.builtin.artifacts.memory.canonical import canonical_embedding
@@ -72,7 +74,7 @@ class PydanticAIConfigurationError(InferenceConfigurationError):
 
 try:
     from pydantic import PydanticSchemaGenerationError, PydanticUserError, TypeAdapter, ValidationError
-    from pydantic_ai import Agent, Embedder, PromptedOutput
+    from pydantic_ai import Agent, Embedder, PromptedOutput, capture_run_messages
     from pydantic_ai.embeddings import EmbeddingModel as PydanticAIEmbeddingModelBase
     from pydantic_ai.exceptions import (
         ConcurrencyLimitExceeded,
@@ -82,7 +84,14 @@ try:
         UsageLimitExceeded,
         UserError,
     )
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelMessagesTypeAdapter,
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        UserPromptPart,
+    )
     from pydantic_ai.models import Model, ModelRequestParameters
     from pydantic_ai.models.wrapper import WrapperModel
     from pydantic_ai.settings import ModelSettings, merge_model_settings
@@ -105,10 +114,25 @@ class InferenceLimits(BaseModel):
     max_output_tokens_per_request: int | None = Field(default=None, ge=1)
     output_tokens_limit: int | None = Field(default=None, ge=1)
     allow_continuations: bool = True
+    allow_python_literals: bool = True
 
 
-class _CompleteResponseModel(WrapperModel):
-    """Do not let Agent fold separately billed continuations into one request."""
+@dataclass
+class _RequestCounter:
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+_REQUEST_COUNTER: ContextVar[_RequestCounter | None] = ContextVar("structured_request_counter", default=None)
+
+
+class _StructuredResponseModel(WrapperModel):
+    """Count attempted calls and normalize syntax before the unchanged schema validator."""
+
+    def __init__(self, model: Model, limits: InferenceLimits) -> None:
+        super().__init__(model)
+        self._limits = limits
 
     @override
     async def request(
@@ -117,9 +141,34 @@ class _CompleteResponseModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        counter = _REQUEST_COUNTER.get()
+        if counter is not None:
+            counter.requests += 1
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-        if response.state != "complete":
+        if counter is not None:
+            counter.input_tokens += response.usage.input_tokens
+            counter.output_tokens += response.usage.output_tokens
+        if (
+            self._limits.max_output_tokens_per_request is not None
+            and response.usage.output_tokens > self._limits.max_output_tokens_per_request
+        ):
+            error = InvalidInferenceOutputError("generate", "per-request output token budget exceeded")
+            error.messages = tuple(ModelMessagesTypeAdapter.dump_python([*messages, response], mode="json"))
+            raise error
+        if not self._limits.allow_continuations and response.state != "complete":
             raise InvalidInferenceOutputError("generate", "provider continuation is not allowed")
+        text_parts = [part for part in response.parts if isinstance(part, TextPart)]
+        if self._limits.allow_python_literals and response.state == "complete" and len(text_parts) == 1:
+            from powercontext.builtin.inference.structured_output import normalize_python_literal
+
+            part = text_parts[0]
+            normalized = normalize_python_literal(part.content)
+            if normalized is not None:
+                response = replace(
+                    response,
+                    parts=[replace(item, content=normalized) if item is part else item for item in response.parts],
+                    metadata={**(response.metadata or {}), "structured_output_original": part.content},
+                )
         return response
 
 
@@ -154,7 +203,7 @@ class PydanticAIStructuredGenerator(Generic[InputT, OutputT]):
                     ModelSettings(max_tokens=self._limits.max_output_tokens_per_request),
                 )
             self._agent = Agent(
-                model if self._limits.allow_continuations else _CompleteResponseModel(model),
+                _StructuredResponseModel(model, self._limits),
                 output_type=PromptedOutput(output_type),
                 instructions=instructions,
                 model_settings=bounded_settings,
@@ -166,7 +215,22 @@ class PydanticAIStructuredGenerator(Generic[InputT, OutputT]):
 
     async def generate(self, value: InputT, /) -> GenerationResult[OutputT]:
         """Generate one structured value within the configured request and time limits."""
+        return await self.generate_conversation(value)
 
+    async def generate_conversation(
+        self,
+        value: InputT,
+        /,
+        *,
+        messages: tuple[dict[str, JsonValue], ...] = (),
+        max_requests: int | None = None,
+    ) -> GenerationResult[OutputT]:
+        """Resume serializable messages without increasing the configured per-call request limit."""
+        request_limit = (
+            self._limits.max_requests if max_requests is None else min(max_requests, self._limits.max_requests)
+        )
+        if request_limit < 1:
+            raise InvalidInferenceOutputError("generate", "request budget exhausted")
         if not isinstance(value, self._input_type):
             raise PydanticAIConfigurationError("input-type", self._input_type.__qualname__)
         try:
@@ -174,6 +238,10 @@ class PydanticAIStructuredGenerator(Generic[InputT, OutputT]):
         except (PydanticSerializationError, PydanticUserError, ValidationError, UnicodeError) as error:
             raise PydanticAIConfigurationError("serialize") from error
 
+        run_usage = RunUsage()
+        counter = _RequestCounter()
+        token = _REQUEST_COUNTER.set(counter)
+        captured: list[ModelMessage] = []
         try:
             selection = None if self._prompt_key is None else current_prompt(self._prompt_key)
             # Agent.override uses task-local state; concurrent Scopes never mutate a shared Agent.
@@ -182,12 +250,14 @@ class PydanticAIStructuredGenerator(Generic[InputT, OutputT]):
                 if selection is not None and selection.selection == "artifact"
                 else nullcontext()
             )
-            with override:
+            with override, capture_run_messages() as captured:
                 result = await asyncio.wait_for(
                     self._agent.run(
                         prompt,
+                        message_history=ModelMessagesTypeAdapter.validate_python(list(messages)),
+                        usage=run_usage,
                         usage_limits=UsageLimits(
-                            request_limit=self._limits.max_requests,
+                            request_limit=request_limit,
                             output_tokens_limit=self._limits.output_tokens_limit,
                         ),
                         metadata=None if selection is None else selection.trace_attributes(),
@@ -200,12 +270,22 @@ class PydanticAIStructuredGenerator(Generic[InputT, OutputT]):
             mapped = _map_error(error, operation="generate", timeout_seconds=self._limits.timeout_seconds)
             if mapped is None:
                 raise
+            mapped.usage = InferenceUsage(
+                requests=counter.requests, input_tokens=counter.input_tokens, output_tokens=counter.output_tokens
+            )
+            mapped.messages = mapped.messages or tuple(ModelMessagesTypeAdapter.dump_python(captured, mode="json"))
             if mapped is error:
                 raise
             raise mapped from error
+        finally:
+            _REQUEST_COUNTER.reset(token)
 
-        usage = _generation_usage(result.usage)
-        return GenerationResult(output=cast(OutputT, result.output), usage=usage)
+        usage = _generation_usage(result.usage).model_copy(update={"requests": counter.requests})
+        return GenerationResult(
+            output=cast(OutputT, result.output),
+            usage=usage,
+            messages=tuple(ModelMessagesTypeAdapter.dump_python(result.all_messages(), mode="json")),
+        )
 
 
 class PydanticAIEmbeddingModel:

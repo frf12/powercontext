@@ -110,7 +110,7 @@ def prepare_learned_context(
         and artifact.content.implementation.database_name == database_name
     }
     context = _select_skill(artifacts, tools, terms, max_bytes)
-    if not context.tools:
+    if not context.skills and not context.tools:
         context = _select_tool(tools, terms, max_bytes)
     return _add_experiences(context, artifacts, terms, max_bytes)
 
@@ -130,7 +130,7 @@ def _select_skill(
         if not _score(terms, skill.content.description + " " + skill.content.instructions):
             continue
         dependencies = skill.content.tool_dependencies
-        if not dependencies or any(_ref_key(ref) not in tools for ref in dependencies):
+        if any(_ref_key(ref) not in tools for ref in dependencies):
             continue
         selected_tools = tuple(
             LearnedTool(ref=ref, **tools[_ref_key(ref)].content.model_dump()) for ref in dependencies

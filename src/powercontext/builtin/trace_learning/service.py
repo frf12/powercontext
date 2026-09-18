@@ -205,12 +205,17 @@ class TraceLearningService:
         connection: AsyncConnection,
         scope_id: str,
         *,
-        limit: int = 30,
+        limit: int | None = None,
+        host_profile: TraceLearningHostProfile | None = None,
     ) -> tuple[Artifact[Any], ...]:
-        """Read only successful, active learned revisions; callers apply user read authorization."""
+        """Read published, active learned revisions; callers apply user read authorization."""
+        if limit is not None and limit <= 0:
+            return ()
         result: list[Artifact[Any]] = []
         seen = set()
-        for record in await self.repository.list_completed(connection, scope_id, limit=limit):
+        for record in await self.repository.list_completed(connection, scope_id, limit=None, include_partial=True):
+            if host_profile is not None and record.run.host_profile != host_profile:
+                continue
             for ref in record.run.artifacts:
                 key = (ref.family, ref.artifact_id)
                 if key in seen:
@@ -227,20 +232,23 @@ class TraceLearningService:
                 if state != "active":
                     continue
                 result.append(await self.contexts.repositories.artifacts.get(connection, scope_id, ref))
-                if len(result) >= limit:
+                if limit is not None and len(result) >= limit:
                     return tuple(result)
         return tuple(result)
 
     async def _previous(
         self, connection: AsyncConnection, record: LearningRecord
     ) -> tuple[PreviousLearningArtifact, ...]:
-        records = await self.repository.list_completed(connection, record.run.scope_id, limit=30)
+        records = await self.repository.list_completed(connection, record.run.scope_id, limit=None)
         keys = {}
         for previous in reversed(records):
             if previous.run.host_profile == record.run.host_profile:
                 keys.update({_ref_key(ref): key.split(":", 1)[1] for key, ref in previous.artifact_keys.items()})
         values = await self.learned_artifacts(
-            connection, record.run.scope_id, limit=record.run.budget.previous_artifact_limit
+            connection,
+            record.run.scope_id,
+            limit=record.run.budget.previous_artifact_limit,
+            host_profile=record.run.host_profile,
         )
         result = []
         for value in values:
@@ -313,9 +321,21 @@ class TraceLearningService:
 
     async def _execute_record(self, record: LearningRecord, invocation: ScopeInvocation) -> None:  # noqa: C901 - bounded checkpoint stages
         run = record.run
-        if not self.enabled or self.generator is None or self.generator.config_id != run.model_config_id:
+        from powercontext.builtin.trace_learning.generation import CandidateLearningGenerator
+
+        if not self.enabled or self.generator is None:
             raise TraceLearningError("capability_unavailable")
-        if run.prompt_version != TRACE_LEARNING_PROMPT_VERSION:
+        allowed_config_ids = {self.generator.config_id}
+        legacy = run.prompt_version == "powercontext.trace-learning.v2"
+        if (
+            legacy
+            and isinstance(self.generator, CandidateLearningGenerator)
+            and self.generator.legacy_config_id is not None
+        ):
+            allowed_config_ids.add(self.generator.legacy_config_id)
+        if run.model_config_id not in allowed_config_ids or (
+            not legacy and run.prompt_version != TRACE_LEARNING_PROMPT_VERSION
+        ):
             raise TraceLearningError("capability_unavailable")
         await self._authorize(run.scope_id, record.principal_id, "contribute")
         if record.generation_input is None:
@@ -338,6 +358,11 @@ class TraceLearningService:
             raise TraceLearningError("invalid_checkpoint")
         for resolved in record.generation_input.resolved_tool_calls:
             await self._authorize(run.scope_id, record.principal_id, "read", resolved.tool_ref)
+        if isinstance(self.generator, CandidateLearningGenerator) and not legacy:
+            from powercontext.builtin.trace_learning.workflow import CandidateWorkflow
+
+            await CandidateWorkflow(self, invocation, record, self.generator).execute()
+            return
         while True:
             if record.generated is None:
                 record = await self._generate_candidate(record, invocation)
@@ -350,7 +375,7 @@ class TraceLearningService:
             ):
                 raise TraceLearningError("budget_exceeded")
             async with self._transaction(invocation) as connection:
-                previous_runs = await self.repository.list_completed(connection, run.scope_id, limit=30)
+                previous_runs = await self.repository.list_completed(connection, run.scope_id, limit=None)
             try:
                 validation = validate_bundle(
                     record.generated,
@@ -496,10 +521,25 @@ class TraceLearningService:
         scope = record.run.scope_id
         repositories = self.contexts.repositories
         previous = {(item.ref.family, item.key): item.ref for item in record.generation_input.previous_artifacts}
-        saved: dict[str, ArtifactRef] = {}
+        saved: dict[str, ArtifactRef] = dict(record.artifact_keys)
 
         async def save(family: str, item, content, dependencies: tuple[ArtifactRef, ...] = ()) -> Artifact[Any]:
+            identity = content_digest(
+                (record.run.host_profile.model_dump_json() + ":" + family + ":" + item.key).encode()
+            )
+            artifact_id = "tl_" + identity[7:47]
             old_ref = previous.get((family, item.key))
+            if old_ref is None:
+                revision = await connection.scalar(
+                    select(ARTIFACT_HEADS_TABLE.c.revision).where(
+                        ARTIFACT_HEADS_TABLE.c.scope_id == scope,
+                        ARTIFACT_HEADS_TABLE.c.family == family,
+                        ARTIFACT_HEADS_TABLE.c.artifact_id == artifact_id,
+                    )
+                )
+                if revision is not None:
+                    old_ref = ArtifactRef(family=family, artifact_id=artifact_id, revision=revision)
+                    await self._authorize(scope, record.principal_id, "read", old_ref)
             old = None if old_ref is None else await repositories.artifacts.get(connection, scope, old_ref)
             if old is not None:
                 await self._authorize(scope, record.principal_id, "write", old.as_ref())
@@ -508,10 +548,7 @@ class TraceLearningService:
             draft_type = {"experience": ExperienceDraft, "skill": SkillDraft, "tool": ToolDraft}[family]
             draft = draft_type(content=content, sources=sources, artifacts=lineage)
             if old is None:
-                identity = content_digest(
-                    (record.run.host_profile.model_dump_json() + ":" + family + ":" + item.key).encode()
-                )
-                artifact = await repositories.artifacts.create(connection, scope, "tl_" + identity[7:47], draft)
+                artifact = await repositories.artifacts.create(connection, scope, artifact_id, draft)
             else:
                 artifact = await repositories.artifacts.revise(connection, scope, old, draft)
             if self.attest_artifact is not None:
@@ -528,7 +565,7 @@ class TraceLearningService:
 
         for item in record.generated.experiences:
             await save("experience", item, item.content)
-        experience_refs = tuple(saved.values())
+        experience_refs = tuple(ref for ref in saved.values() if ref.family == "experience")
         for item in record.generated.tools:
             await save("tool", item, item.content, experience_refs)
         for item in record.generated.skills:
@@ -559,12 +596,40 @@ class TraceLearningService:
             current = await self.repository.get(connection, record.run.scope_id, record.run.run_id)
             if current.generation != record.generation:
                 raise TraceLearningError("attempt_conflict")
-            can_retry = retry and current.run.usage.model_calls < current.run.budget.max_model_calls
+            now = await database_now(connection)
+            can_retry = (
+                retry
+                and current.run.usage.model_calls < current.run.budget.max_model_calls
+                and (current.deadline_at is None or now < current.deadline_at)
+            )
+            partial = current.candidate_plan_ready and bool(current.run.artifacts) and not can_retry
+            if current.candidate_plan_ready and not can_retry:
+                current = current.model_copy(
+                    update={
+                        "candidates": tuple(
+                            candidate
+                            if candidate.outcome.status in {"published", "rejected", "deferred"}
+                            else candidate.model_copy(
+                                update={
+                                    "outcome": candidate.outcome.model_copy(
+                                        update={
+                                            "status": "deferred",
+                                            "reason": code,
+                                        }
+                                    )
+                                }
+                            )
+                            for candidate in current.candidates
+                        )
+                    }
+                )
             run = current.run.model_copy(
                 update={
-                    "status": "queued" if can_retry else "failed",
+                    "status": "queued" if can_retry else ("succeeded" if partial else "failed"),
+                    "stage": "complete" if partial else current.run.stage,
                     "error": code,
-                    "completed_at": None if can_retry else await database_now(connection),
+                    "candidate_outcomes": tuple(candidate.outcome for candidate in current.candidates),
+                    "completed_at": None if can_retry else now,
                 }
             )
             await self.repository.store(connection, current.model_copy(update={"run": run}))
