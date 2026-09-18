@@ -56,7 +56,7 @@ Tool reviewer 完全独立：只接收候选的 `ToolContent`，看不到 trace�
 
 候选失败相互隔离。被拒绝或延期的候选不会回滚已经发布的候选。Run 的 `status=succeeded` 只表示至少有一个候选产出了可发布
 产物，并不表示所有计划候选都完成。检查 `candidate_outcomes`，确认候选是否全部为 `published`，以及是否存在 `rejected` 或
-`deferred`。预算或截止时间中止时可以保留部分已发布产物，同时在 Run 的 error 状态中保留剩余工作被中止的原因。
+`deferred`。预算或截止时间中止时可以保留部分已发布产物，同时在候选 outcome 或 Run 的 error 状态中保留剩余工作被中止的原因。
 
 ## 检查校验和预算
 

@@ -66,7 +66,7 @@ Candidate failures are isolated. A rejected or deferred candidate does not roll 
 published. A Run with `status=succeeded` means that at least one candidate produced a publishable artifact; it does not
 mean that every planned candidate finished. Inspect `candidate_outcomes` to determine whether all candidates are
 `published` or whether any are `rejected` or `deferred`. A budget or deadline stop can leave partial publications and
-still records the reason that the remaining work was stopped in the Run error state.
+records why the remaining work stopped in the candidate outcomes or the Run error state.
 
 ## Inspect validation and budget
 
