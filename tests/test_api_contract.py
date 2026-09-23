@@ -476,6 +476,8 @@ def test_prepared_context_is_a_generic_typed_operation_outside_the_mcp_memory_to
         "max_bytes",
         "assembly",
         "learned_tools",
+        "learned_families",
+        "tool_limit",
         "host_profile",
     }
     assert set(schemas["PreparedContext"]["properties"]) == {

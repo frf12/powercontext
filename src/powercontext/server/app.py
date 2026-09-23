@@ -543,6 +543,8 @@ from powercontext.http import (
     ScopeSelection,
     SearchMemoryRequest,
     SearchMemoryResponse,
+    SearchToolsRequest,
+    SearchToolsResponse,
     SearchTopicMemoryRequest,
     SearchTopicMemoryResponse,
     ServerAccessResource,
@@ -746,6 +748,7 @@ from powercontext.http._generated.operations import (
     REVOKE_REMOTE_SKILL_TARGET,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
+    SEARCH_TOOLS,
     SEARCH_TOPIC_MEMORY,
     SET_DEFAULT_SCOPE,
     SET_SCOPE_BINDING,
@@ -1426,6 +1429,7 @@ def create_app(
     _add_route(app, REMEMBER_MEMORY, remember_memory)
     _add_route(app, SEARCH_MEMORY, search_memory)
     _add_route(app, PREPARE_CONTEXT, prepare_context)
+    _add_route(app, SEARCH_TOOLS, search_tools)
     _add_route(app, CREATE_WORK_CONTRACT, create_work_contract)
     _add_route(app, HANDOFF_CURRENT_WORK, handoff_current_work)
     _add_route(app, ACKNOWLEDGE_HANDOFF, acknowledge_handoff)
@@ -2901,6 +2905,47 @@ async def prepare_context(
     application: Annotated[ServerApplication, Depends(_require_application)],
     http_request: Request,
 ) -> PreparedContext | Response:
+    result = await _prepare_context_result(
+        request, application, http_request, operation_id=PREPARE_CONTEXT.operation_id
+    )
+    response = mapping.prepared_context_response(result)
+    # Strict older SDKs reject any new field, even a null default.
+    if not request.learned_tools and request.learned_families is None:
+        return JSONResponse(response.model_dump(mode="json", by_alias=True, exclude={"learned_context"}))
+    return response
+
+
+async def search_tools(
+    request: SearchToolsRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+    http_request: Request,
+) -> SearchToolsResponse:
+    prepared_request = PrepareContextRequest.model_validate({
+        "scope_id": request.scope_id,
+        "query": request.query,
+        "host_profile": request.host_profile.model_dump(mode="json"),
+        "max_bytes": request.max_bytes,
+        "tool_limit": request.limit,
+        "learned_families": ["tool"],
+        "assembly": {"sections": []},
+    })
+    result = await _prepare_context_result(
+        prepared_request, application, http_request, operation_id=SEARCH_TOOLS.operation_id
+    )
+    return SearchToolsResponse.model_validate({
+        "tools": []
+        if result.learned_context is None
+        else [tool.model_dump(mode="json") for tool in result.learned_context.tools]
+    })
+
+
+async def _prepare_context_result(
+    request: PrepareContextRequest,
+    application: ServerApplication,
+    http_request: Request,
+    *,
+    operation_id: str,
+) -> RuntimePreparedContext:
     prepared_request = mapping.prepare_context_request(request)
     scoped = application.context.for_scope(request.scope_id)
     access = access_control_for_mode(
@@ -2915,7 +2960,7 @@ async def prepare_context(
             await access.require_all(
                 _require_principal(),
                 tuple((AccessAction.SCOPE_READ, ResourceRef.scope(scope_id)) for scope_id in scope_ids),
-                context=_access_audit_context(PREPARE_CONTEXT.operation_id),
+                context=_access_audit_context(operation_id),
             )
             for scope_id in scope_ids[1:]:
                 await require_scope_content_ready(http_request, scope_id)
@@ -2934,20 +2979,16 @@ async def prepare_context(
                     )
                     for ref in refs
                 ),
-                context=_access_audit_context(PREPARE_CONTEXT.operation_id),
+                context=_access_audit_context(operation_id),
             )
 
-        if prepared_request.learned_tools:
+        if prepared_request.wants_learned_context:
             result = await scoped.prepare(
                 prepared_request, authorize_scopes=authorize_scopes, authorize_artifacts=authorize_artifacts
             )
         else:
             result = await scoped.prepare(prepared_request, authorize_scopes=authorize_scopes)
-    response = mapping.prepared_context_response(result)
-    # Strict older SDKs reject any new field, even a null default.
-    if not prepared_request.learned_tools:
-        return JSONResponse(response.model_dump(mode="json", by_alias=True, exclude={"learned_context"}))
-    return response
+    return result
 
 
 async def create_work_contract(
@@ -4368,6 +4409,7 @@ _COLLECTION_CONTENT_OPERATIONS = frozenset({
     "list_memory_entries",
     "list_memory_changes",
     "prepare_context",
+    "search_tools",
     "list_managed_skills",
     "list_artifact_candidates",
     "get_artifact_candidate",

@@ -1364,6 +1364,12 @@ class MemoryCitation(BaseModel):
     entry_version_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
 
 
+class LearnedFamily(StrEnum):
+    EXPERIENCE = "experience"
+    SKILL = "skill"
+    TOOL = "tool"
+
+
 class ContextAssemblyFamily(StrEnum):
     MEMORY = "memory"
     EXPERIENCE = "experience"
@@ -2581,6 +2587,17 @@ class SqlToolImplementation(BaseModel):
     database_name: Annotated[StrictStr | None, Field(max_length=256, min_length=1)] = None
 
 
+class SearchToolsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    query: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern=".*\\S.*")]
+    host_profile: TraceLearningHostProfile
+    limit: Annotated[StrictInt, Field(ge=1, le=8)] = 3
+    max_bytes: Annotated[StrictInt, Field(ge=512, le=32768)] = 8000
+
+
 class TraceLearningSourceReference(BaseModel):
     source_type: StrictStr
     source_id: StrictStr
@@ -3520,6 +3537,13 @@ class LearnedTool(BaseModel):
     ref: ArtifactReference
 
 
+class SearchToolsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    tools: Annotated[list[LearnedTool], Field(max_length=8)]
+
+
 class LearnedContext(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3697,7 +3721,7 @@ class PreparedContext(BaseModel):
     learned_context: Annotated[
         LearnedContext | None,
         Field(
-            description="Included only for requests that opt into learned_tools; callable schemas are never truncated."
+            description="Included only for requests opting into learned_tools or learned_families; callable schemas are never truncated."
         ),
     ] = None
 
@@ -3765,9 +3789,26 @@ class PrepareContextRequest(BaseModel):
     learned_tools: Annotated[
         StrictBool, Field(description="Opt into complete learned tool contracts and their associated methods.")
     ] = False
+    learned_families: Annotated[
+        list[LearnedFamily] | None,
+        Field(
+            description="Explicit selection applied before budgeting, overriding learned_tools. An empty array disables learned E/S/T. Omitting this field preserves the learned_tools opt-in behavior. Disabling Experience also disables ordinary Experience assembly. Skills requiring disabled or unavailable tools are skipped.",
+            max_length=3,
+        ),
+    ] = None
+    tool_limit: Annotated[
+        StrictInt,
+        Field(
+            description="Maximum returned learned tools, including Skill dependencies and independent matches.",
+            ge=1,
+            le=8,
+        ),
+    ] = 3
     host_profile: Annotated[
         TraceLearningHostProfile | None,
-        Field(description="Required when learned_tools is true; identifies the Agent SQL execution environment."),
+        Field(
+            description="Required for a nonempty learned capability selection; identifies the Agent SQL execution environment."
+        ),
     ] = None
 
 

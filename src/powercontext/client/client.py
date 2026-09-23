@@ -175,6 +175,8 @@ from powercontext.http import (
     ScopeQueryField,
     SearchMemoryRequest,
     SearchMemoryResponse,
+    SearchToolsRequest,
+    SearchToolsResponse,
     SearchTopicMemoryRequest,
     SearchTopicMemoryResponse,
     SetDefaultScopeRequest,
@@ -301,6 +303,7 @@ from powercontext.http._generated.operations import (
     REVOKE_REMOTE_SKILL_TARGET,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
+    SEARCH_TOOLS,
     SEARCH_TOPIC_MEMORY,
     SET_DEFAULT_SCOPE,
     SET_SCOPE_BINDING,
@@ -929,6 +932,11 @@ class PowerContextClient:
 
         return await self._request(PREPARE_CONTEXT, request)
 
+    async def search_tools(self, request: SearchToolsRequest) -> SearchToolsResponse:
+        """Find complete callable tools compatible with the current execution host."""
+
+        return await self._request(SEARCH_TOOLS, request)
+
     async def prepare_handoff(self, request: PrepareHandoffRequest) -> HandoffDraft:
         """Generate one inspectable Handoff Draft from exact evidence."""
 
@@ -1246,12 +1254,10 @@ def _prepare_request(
         if not isinstance(payload, dict):
             message = "Request must serialize to an object."
             raise TypeError(message)
-        if (
-            operation is PREPARE_CONTEXT
-            and isinstance(request, PrepareContextRequest)
-            and "assembly" not in request.model_fields_set
-        ):
-            payload.pop("assembly", None)
+        if operation is PREPARE_CONTEXT and isinstance(request, PrepareContextRequest):
+            for optional_field in ("assembly", "learned_families", "tool_limit"):
+                if optional_field not in request.model_fields_set:
+                    payload.pop(optional_field, None)
         if operation.request_location == "query":
             request_query.update({key: value for key, value in payload.items() if value is not None})
         else:

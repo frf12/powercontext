@@ -722,12 +722,12 @@ class ScopedContextApplication:
         ):
             raise InvalidRuntimeRequestError("context-assembly-entry-limit")
         async with self._runtime._scope_operation(self.scope_id) as scope:
-            if request.assembly is not None and not request.assembly.sections and not request.learned_tools:
+            if request.assembly is not None and not request.assembly.sections and not request.wants_learned_context:
                 return PreparedContextBuilder().empty()
             if authorize_scopes is not None:
                 await authorize_scopes((self.scope_id, *scope.context_references))
             service = self._runtime._trace_learning_service
-            if not request.learned_tools or request.host_profile is None or service is None:
+            if not request.selected_learned_families or request.host_profile is None or service is None:
                 return await self._prepare(request, scope)
             async with service.database.transaction() as connection:
                 artifacts = await service.learned_artifacts(
@@ -739,6 +739,8 @@ class ScopedContextApplication:
                 dialect=request.host_profile.dialect,
                 database_name=request.host_profile.database_name,
                 max_bytes=request.max_bytes,
+                families=request.selected_learned_families,
+                tool_limit=request.tool_limit,
             )
             if not learned.refs:
                 return await self._prepare(request, scope)
@@ -764,13 +766,21 @@ class ScopedContextApplication:
         *,
         exclude_experiences: frozenset[tuple[str, int]] = frozenset(),
     ) -> PreparedContext:
+        if not request.context_families:
+            return PreparedContextBuilder().empty()
+        return await self._prepare_sections(request, scope, exclude_experiences=exclude_experiences)
+
+    async def _prepare_sections(
+        self,
+        request: PrepareContextRequest,
+        scope: ScopeDescriptor,
+        /,
+        *,
+        exclude_experiences: frozenset[tuple[str, int]],
+    ) -> PreparedContext:
         builder = PreparedContextBuilder()
         scope_ids = [self.scope_id, *scope.context_references]
-        families = (
-            {section.family for section in request.assembly.sections}
-            if request.assembly is not None
-            else {"memory", "experience", "topic-memory"}
-        )
+        families = request.context_families
 
         memory_candidates: list[PreparedMemoryCandidates] = []
         experience_candidates: list[PreparedExperienceCandidates] = []

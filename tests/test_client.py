@@ -97,6 +97,8 @@ def test_prepare_client_preserves_omitted_and_explicit_assembly() -> None:
                 })
             )
         assert "assembly" not in bodies[0]
+        assert "learned_families" not in bodies[0]
+        assert "tool_limit" not in bodies[0]
         assert bodies[1]["assembly"]["format"] == "markdown"
         assert bodies[1]["assembly"]["sections"] == [
             {"family": "memory", "limit": 6},

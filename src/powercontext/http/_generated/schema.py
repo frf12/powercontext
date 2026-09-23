@@ -747,6 +747,42 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "x-powercontext-scope-mode": "current",
             }
         },
+        "/v1/tools/search": {
+            "post": {
+                "tags": ["context"],
+                "summary": "Search compatible learned tools",
+                "description": "Return ranked, complete callable "
+                "contracts from the current scope for the "
+                "supplied execution host. This read-only "
+                "operation does not execute tools or "
+                "invoke a model. Non-matches return an "
+                "empty list.",
+                "operationId": "search_tools",
+                "requestBody": {
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SearchToolsRequest"}}},
+                    "required": True,
+                },
+                "responses": {
+                    "200": {
+                        "description": "Complete matching tools within the requested limits.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {
+                            "application/json": {"schema": {"$ref": "#/components/schemas/SearchToolsResponse"}}
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"$ref": "#/components/responses/Forbidden"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
+                "x-powercontext-scope-mode": "current",
+            }
+        },
         "/v1/work/contracts/create": {
             "post": {
                 "tags": ["work"],
@@ -5940,10 +5976,11 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "only "
                         "for "
                         "requests "
-                        "that "
-                        "opt "
+                        "opting "
                         "into "
-                        "learned_tools; "
+                        "learned_tools "
+                        "or "
+                        "learned_families; "
                         "callable "
                         "schemas "
                         "are "
@@ -5961,8 +5998,9 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "learned_context, with content null "
                 "and content_bytes zero. Callers "
                 "that do not opt into learned_tools "
-                "receive the existing text-only "
-                "response shape.",
+                "or an explicit learned_families "
+                "selection receive the existing "
+                "text-only response shape.",
             },
             "EntryChange": {
                 "properties": {
@@ -7016,13 +7054,73 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "description": "Opt into complete learned tool contracts and their associated methods.",
                         "default": False,
                     },
+                    "learned_families": {
+                        "items": {"type": "string", "enum": ["experience", "skill", "tool"]},
+                        "type": "array",
+                        "maxItems": 3,
+                        "uniqueItems": True,
+                        "description": "Explicit "
+                        "selection "
+                        "applied "
+                        "before "
+                        "budgeting, "
+                        "overriding "
+                        "learned_tools. "
+                        "An "
+                        "empty "
+                        "array "
+                        "disables "
+                        "learned "
+                        "E/S/T. "
+                        "Omitting "
+                        "this "
+                        "field "
+                        "preserves "
+                        "the "
+                        "learned_tools "
+                        "opt-in "
+                        "behavior. "
+                        "Disabling "
+                        "Experience "
+                        "also "
+                        "disables "
+                        "ordinary "
+                        "Experience "
+                        "assembly. "
+                        "Skills "
+                        "requiring "
+                        "disabled "
+                        "or "
+                        "unavailable "
+                        "tools "
+                        "are "
+                        "skipped.",
+                    },
+                    "tool_limit": {
+                        "type": "integer",
+                        "maximum": 8.0,
+                        "minimum": 1.0,
+                        "description": "Maximum "
+                        "returned "
+                        "learned "
+                        "tools, "
+                        "including "
+                        "Skill "
+                        "dependencies "
+                        "and "
+                        "independent "
+                        "matches.",
+                        "default": 3,
+                    },
                     "host_profile": {
                         "allOf": [{"$ref": "#/components/schemas/TraceLearningHostProfile"}],
                         "description": "Required "
-                        "when "
-                        "learned_tools "
-                        "is "
-                        "true; "
+                        "for "
+                        "a "
+                        "nonempty "
+                        "learned "
+                        "capability "
+                        "selection; "
                         "identifies "
                         "the "
                         "Agent "
@@ -9194,6 +9292,26 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["sql", "parameter_order"],
                 "description": "One read-only SQL statement with positional, explicitly ordered values.",
+            },
+            "SearchToolsRequest": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "query": {"type": "string", "maxLength": 8192, "minLength": 1, "pattern": ".*\\S.*"},
+                    "host_profile": {"$ref": "#/components/schemas/TraceLearningHostProfile"},
+                    "limit": {"type": "integer", "maximum": 8.0, "minimum": 1.0, "default": 3},
+                    "max_bytes": {"type": "integer", "maximum": 32768.0, "minimum": 512.0, "default": 8000},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["scope_id", "query", "host_profile"],
+            },
+            "SearchToolsResponse": {
+                "properties": {
+                    "tools": {"items": {"$ref": "#/components/schemas/LearnedTool"}, "type": "array", "maxItems": 8}
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["tools"],
             },
             "LearnedContext": {
                 "properties": {

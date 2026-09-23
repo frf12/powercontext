@@ -845,6 +845,42 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/tools/search:
+    post:
+      tags: [context]
+      summary: Search compatible learned tools
+      description: >-
+        Return ranked, complete callable contracts from the current scope for the supplied execution host.
+        This read-only operation does not execute tools or invoke a model. Non-matches return an empty list.
+      operationId: search_tools
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-scope-mode: current
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchToolsRequest"
+      responses:
+        "200":
+          description: Complete matching tools within the requested limits.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchToolsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/work/contracts/create:
     post:
       tags: [work]
@@ -6801,7 +6837,7 @@ components:
       description: >-
         Prepared text and optional structured learned context. A ready response may contain only
         learned_context, with content null and content_bytes zero. Callers that do not opt into
-        learned_tools receive the existing text-only response shape.
+        learned_tools or an explicit learned_families selection receive the existing text-only response shape.
       type: object
       additionalProperties: false
       required: [schema, status, content, content_bytes]
@@ -6820,7 +6856,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/LearnedContext"
           nullable: true
-          description: Included only for requests that opt into learned_tools; callable schemas are never truncated.
+          description: Included only for requests opting into learned_tools or learned_families; callable schemas are never truncated.
     EntryChange:
       type: object
       additionalProperties: false
@@ -8241,11 +8277,28 @@ components:
           type: boolean
           default: false
           description: Opt into complete learned tool contracts and their associated methods.
+        learned_families:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items:
+            type: string
+            enum: [experience, skill, tool]
+          description: >-
+            Explicit selection applied before budgeting, overriding learned_tools. An empty array disables
+            learned E/S/T. Omitting this field preserves the learned_tools opt-in behavior. Disabling Experience
+            also disables ordinary Experience assembly. Skills requiring disabled or unavailable tools are skipped.
+        tool_limit:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 3
+          description: Maximum returned learned tools, including Skill dependencies and independent matches.
         host_profile:
           allOf:
             - $ref: "#/components/schemas/TraceLearningHostProfile"
           nullable: true
-          description: Required when learned_tools is true; identifies the Agent SQL execution environment.
+          description: Required for a nonempty learned capability selection; identifies the Agent SQL execution environment.
     ContextAssemblySection:
       type: object
       additionalProperties: false
@@ -10385,6 +10438,43 @@ components:
       - sql
       - parameter_order
       description: One read-only SQL statement with positional, explicitly ordered values.
+    SearchToolsRequest:
+      type: object
+      additionalProperties: false
+      required: [scope_id, query, host_profile]
+      properties:
+        scope_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '.*\S.*'
+        query:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          pattern: '.*\S.*'
+        host_profile:
+          $ref: "#/components/schemas/TraceLearningHostProfile"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 3
+        max_bytes:
+          type: integer
+          minimum: 512
+          maximum: 32768
+          default: 8000
+    SearchToolsResponse:
+      type: object
+      additionalProperties: false
+      required: [tools]
+      properties:
+        tools:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/LearnedTool"
     LearnedContext:
       properties:
         experiences:

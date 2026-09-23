@@ -119,6 +119,38 @@ When only learned context is requested, `status=ready`, `content=null`, and `con
 the new field. Preparation keeps Skill dependencies complete and applies the byte budget before adding Experience text;
 it never exposes a Skill with a missing exact Tool revision.
 
+Backend callers can select learned families independently with `learned_families`. Selection happens before ranking and
+budget allocation and overrides the legacy `learned_tools` switch; omitting it preserves legacy behavior. An empty array
+disables all three learned families. `["tool"]` enables only learned tools; `["experience", "skill"]` disables them.
+Disabling Experience also prevents ordinary Experience assembly from restoring it. Other Memory and Profile sections
+remain controlled by `assembly`. A nonempty learned selection requires the actual `host_profile`.
+
+```json
+{
+  "scope_id": "your-scope",
+  "query": "How many stations are in CZE?",
+  "max_bytes": 32768,
+  "assembly": {"sections": []},
+  "learned_families": ["tool"],
+  "tool_limit": 3,
+  "host_profile": {"kind": "datus", "dialect": "mysql", "database_name": "your-db"}
+}
+```
+
+`tool_limit` defaults to 3 and accepts up to 8 tools, including Skill dependencies and independent matches. Selecting a
+Skill does not prevent independent Tool matches. A long standalone Skill cannot displace a matching tool that would
+otherwise fit. When tools are disabled, Skills requiring learned tools are skipped; independent methods remain eligible.
+Dependencies, callable contracts and programs must fit completely; tools are never truncated into partial contracts.
+
+For active tool discovery, call `POST /v1/tools/search` with `scope_id`, `query`, `host_profile`, and optional `limit` and
+`max_bytes`. It returns `{"tools": [...]}` with complete callable contracts, programs and exact Artifact revisions, or an
+empty list for no match. The Python client exposes `client.search_tools(SearchToolsRequest(...))`. Search retains Scope
+and Artifact read authorization, filters by execution host, and does not execute SQL or invoke a model. The host binds
+returned tools to its executor.
+
+PC's `max_bytes` default remains 8,000 bytes, with a maximum of 32,768. Callers may explicitly request a larger budget;
+this neither adds model requests nor requires filling the available context.
+
 Retrieval reads Runs with published candidates in pages, collects all active heads, and then ranks related artifacts by the query and
 the available byte budget. It uses lexical matching in the current Scope, not a semantic vector index. It is therefore
 not limited to the latest thirty Runs with published candidates, although the Run budget still bounds the number of previous heads

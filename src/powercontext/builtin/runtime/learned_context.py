@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,6 +26,9 @@ from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience
 from powercontext.builtin.artifacts.skill import Skill
 from powercontext.builtin.artifacts.tool import Tool, ToolContent
+
+LearnedArtifactFamily = Literal["experience", "skill", "tool"]
+LEARNED_ARTIFACT_FAMILIES: tuple[LearnedArtifactFamily, ...] = ("experience", "skill", "tool")
 
 
 class LearnedExperience(BaseModel):
@@ -94,25 +97,32 @@ def prepare_learned_context(
     dialect: str,
     database_name: str | None,
     max_bytes: int,
+    families: Sequence[LearnedArtifactFamily] = LEARNED_ARTIFACT_FAMILIES,
+    tool_limit: int = 3,
 ) -> LearnedContext:
-    """Select one related method with all dependencies, then related experience.
+    """Select enabled methods, independent tools and experience within one budget.
 
     This initial deterministic retrieval policy uses only learned descriptions
     and instructions. It does not read held-out answers or request another model.
     """
 
+    enabled = set(families)
+    if enabled - set(LEARNED_ARTIFACT_FAMILIES):
+        raise ValueError("Unknown learned artifact family")  # noqa: TRY003
+    if not 1 <= tool_limit <= 8:
+        raise ValueError("tool_limit must be between 1 and 8")  # noqa: TRY003
     terms = _terms(query)
     tools = {
         _ref_key(artifact.as_ref()): artifact
         for artifact in artifacts
         if isinstance(artifact, Tool)
+        and "tool" in enabled
         and artifact.content.implementation.dialect == dialect
         and artifact.content.implementation.database_name == database_name
     }
-    context = _select_skill(artifacts, tools, terms, max_bytes)
-    if not context.skills and not context.tools:
-        context = _select_tool(tools, terms, max_bytes)
-    return _add_experiences(context, artifacts, terms, max_bytes)
+    context = _select_skill(artifacts, tools, terms, max_bytes, tool_limit) if "skill" in enabled else LearnedContext()
+    context = _add_tools(context, tools, terms, max_bytes, tool_limit)
+    return _add_experiences(context, artifacts, terms, max_bytes) if "experience" in enabled else context
 
 
 def _select_skill(
@@ -120,6 +130,7 @@ def _select_skill(
     tools: dict[tuple[str, str, int], Tool],
     terms: set[str],
     max_bytes: int,
+    tool_limit: int,
 ) -> LearnedContext:
     skills = sorted(
         (artifact for artifact in artifacts if isinstance(artifact, Skill)),
@@ -135,8 +146,14 @@ def _select_skill(
         selected_tools = tuple(
             LearnedTool(ref=ref, **tools[_ref_key(ref)].content.model_dump()) for ref in dependencies
         )
+        if len(selected_tools) > tool_limit:
+            continue
         if len({tool.name for tool in selected_tools}) != len(selected_tools):
             continue
+        # Reserve a matching callable before a standalone method consumes its
+        # space. Method text alone must not displace the only usable tool.
+        if not dependencies:
+            selected_tools = _add_tools(LearnedContext(), tools, terms, max_bytes, 1).tools
         candidate = LearnedContext(
             skills=(
                 LearnedSkill(
@@ -150,19 +167,31 @@ def _select_skill(
     return LearnedContext()
 
 
-def _select_tool(tools: dict[tuple[str, str, int], Tool], terms: set[str], max_bytes: int) -> LearnedContext:
+def _add_tools(
+    context: LearnedContext,
+    tools: dict[tuple[str, str, int], Tool],
+    terms: set[str],
+    max_bytes: int,
+    limit: int,
+) -> LearnedContext:
     ranked_tools = sorted(
         tools.values(),
         key=lambda tool: _score(terms, tool.content.name + " " + tool.content.description),
         reverse=True,
     )
     for tool in ranked_tools:
+        if len(context.tools) >= limit:
+            break
+        if any(selected.name == tool.content.name for selected in context.tools):
+            continue
         if not _score(terms, tool.content.name + " " + tool.content.description):
             continue
-        candidate = LearnedContext(tools=(LearnedTool(ref=tool.as_ref(), **tool.content.model_dump()),))
+        candidate = context.model_copy(
+            update={"tools": (*context.tools, LearnedTool(ref=tool.as_ref(), **tool.content.model_dump()))}
+        )
         if _fits(candidate, max_bytes):
-            return candidate
-    return LearnedContext()
+            context = candidate
+    return context
 
 
 def _add_experiences(

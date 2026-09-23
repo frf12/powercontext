@@ -154,6 +154,8 @@ from powercontext.http._generated.models import (
     ScopePage,
     SearchMemoryRequest,
     SearchMemoryResponse,
+    SearchToolsRequest,
+    SearchToolsResponse,
     SearchTopicMemoryRequest,
     SearchTopicMemoryResponse,
     SetDefaultScopeRequest,
@@ -789,6 +791,32 @@ PREPARE_CONTEXT = Operation[PrepareContextRequest, PreparedContext](
     responses={
         200: {
             "description": "Final context ready for direct injection, or a normal empty result.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
+)
+
+SEARCH_TOOLS = Operation[SearchToolsRequest, SearchToolsResponse](
+    method="POST",
+    path="/v1/tools/search",
+    operation_id="search_tools",
+    request_type=SearchToolsRequest,
+    request_location="body",
+    path_parameters=(),
+    response_type=SearchToolsResponse,
+    success_status=200,
+    summary="Search compatible learned tools",
+    tags=("context",),
+    scope_mode="current",
+    responses={
+        200: {
+            "description": "Complete matching tools within the requested limits.",
             "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
         },
         401: {"$ref": "#/components/responses/Unauthorized"},

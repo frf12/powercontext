@@ -50,7 +50,11 @@ from powercontext.builtin.review import (
     CandidateStatus,
 )
 from powercontext.builtin.review.generation import SkillGenerationOrigin
-from powercontext.builtin.runtime.learned_context import LearnedContext
+from powercontext.builtin.runtime.learned_context import (
+    LEARNED_ARTIFACT_FAMILIES,
+    LearnedArtifactFamily,
+    LearnedContext,
+)
 from powercontext.builtin.sources import ExternalSkillImportMode
 from powercontext.builtin.tags import TagFilter
 from powercontext.builtin.trace_learning.models import TraceLearningHostProfile
@@ -230,12 +234,37 @@ class PrepareContextRequest(_PreparedContextModel):
     max_bytes: Annotated[int, Field(ge=512, le=32768)] = 8000
     assembly: ContextAssembly | None = None
     learned_tools: bool = False
+    learned_families: Annotated[tuple[LearnedArtifactFamily, ...], Field(max_length=3, strict=False)] | None = None
+    tool_limit: Annotated[int, Field(ge=1, le=8)] = 3
     host_profile: TraceLearningHostProfile | None = None
+
+    @property
+    def wants_learned_context(self) -> bool:
+        return self.learned_tools or self.learned_families is not None
+
+    @property
+    def selected_learned_families(self) -> tuple[LearnedArtifactFamily, ...]:
+        if self.learned_families is not None:
+            return self.learned_families
+        return LEARNED_ARTIFACT_FAMILIES if self.learned_tools else ()
+
+    @property
+    def context_families(self) -> set[str]:
+        families: set[str] = (
+            {section.family for section in self.assembly.sections}
+            if self.assembly is not None
+            else {"memory", "experience", "topic-memory"}
+        )
+        if self.learned_families is not None and "experience" not in self.learned_families:
+            families.discard("experience")
+        return families
 
     @model_validator(mode="after")
     def require_learned_tool_host(self) -> PrepareContextRequest:
-        if self.learned_tools and self.host_profile is None:
-            raise ValueError("host_profile is required when learned_tools is enabled")  # noqa: TRY003
+        if self.selected_learned_families and self.host_profile is None:
+            raise ValueError("host_profile is required when learned capabilities are enabled")  # noqa: TRY003
+        if self.learned_families is not None and len(set(self.learned_families)) != len(self.learned_families):
+            raise ValueError("Learned families must be unique")  # noqa: TRY003
         return self
 
     @model_validator(mode="before")

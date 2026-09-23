@@ -104,6 +104,35 @@ Supervisor 在发起模型请求前保守预留下一次额度。Worker 在模�
 `status=ready`、`content=null`、`content_bytes=0`；旧请求不会出现新增字段。准备阶段保证 Skill 与精确 Tool revision 的依赖完整，
 再在字节预算内加入 Experience，不会暴露缺少依赖的 Skill。
 
+服务端调用方可以用 `learned_families` 独立选择三类学习制品。这个选择在候选排序和预算分配之前生效，覆盖旧的
+`learned_tools` 开关；省略时保留旧调用行为。`[]` 关闭三类学习制品，`["tool"]` 只启用学习工具，
+`["experience", "skill"]` 关闭学习工具。关闭 Experience 同时禁用普通 assembly 的 Experience 回退；其他 Memory、Profile 等
+仍由 `assembly` 控制。只要选择非空的学习能力，就需要实际的 `host_profile`。
+
+```json
+{
+  "scope_id": "your-scope",
+  "query": "CZE 有多少个站点？",
+  "max_bytes": 32768,
+  "assembly": {"sections": []},
+  "learned_families": ["tool"],
+  "tool_limit": 3,
+  "host_profile": {"kind": "datus", "dialect": "mysql", "database_name": "your-db"}
+}
+```
+
+`tool_limit` 默认 3，上限 8，包含 Skill 依赖和独立匹配的 Tool。Skill 不会阻止其他匹配 Tool 入选，无依赖的长 Skill
+也不会挤掉本可放入预算的相关 Tool。关闭 Tool 时，依赖学习 Tool 的 Skill 被跳过，独立方法仍可使用。完整依赖、参数契约和
+执行程序必须整体放入预算，不会截断为不可调用的工具。
+
+需要主动寻找工具时，调用 `POST /v1/tools/search`，传入 `scope_id`、`query`、`host_profile`，以及可选的 `limit`、
+`max_bytes`。返回 `{"tools": [...]}`，每项包含完整使用契约、执行程序和精确 Artifact revision；无匹配正常返回空数组。
+Python 客户端对应 `client.search_tools(SearchToolsRequest(...))`。接口沿用 Scope 和 Artifact 读取授权，只返回适合执行环境的工具，
+不执行 SQL，也不调用模型。宿主负责将检索结果绑定成可调用工具。
+
+PC 的 `max_bytes` 默认仍为 8,000，上限为 32,768 字节。调用方可显式提高请求预算；增加预算不会触发额外模型请求，也不代表
+每次必须填满上下文。
+
 召回会分页读取含已发布候选的 Run 的全部 active head，再按 query 相关性和剩余字节预算选择。当前使用 Scope 内的词法匹配，不使用语义向量索引，
 因此不再只看最近 30 个含已发布候选的 Run；生成阶段仍受 Run budget 对历史 head 数量的限制。
 
