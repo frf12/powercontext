@@ -542,6 +542,14 @@ class TraceLearningService:
                     await self._authorize(scope, record.principal_id, "read", old_ref)
             old = None if old_ref is None else await repositories.artifacts.get(connection, scope, old_ref)
             if old is not None:
+                skill_reuses = {
+                    candidate.spec.key: candidate.spec.skill_reuse.ref
+                    for candidate in record.candidates
+                    if candidate.spec.family == "skill" and candidate.spec.skill_reuse is not None
+                }
+                if family == "skill" and record.candidate_plan_ready and skill_reuses.get(item.key) != old.as_ref():
+                    # The bounded catalog may omit a same-key head. Never silently revise it.
+                    raise TraceLearningError("invalid_skill_reuse")
                 await self._authorize(scope, record.principal_id, "write", old.as_ref())
             sources = _unique_refs((*(() if old is None else old.lineage.sources), *record.run.sources))
             lineage = _unique_refs((*(() if old is None else (old.as_ref(),)), *dependencies))

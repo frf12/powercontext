@@ -59,6 +59,10 @@ Produce a bounded, coherent bundle using the exact output schema:
   to validate a Tool. All selected input traces can still inform Experience and Skill synthesis.
   Do not add inference, network execution, nested agents, or hardcoded answer lookups.
 - Skills explain when the method applies, parameter sources, steps and handling of current results.
+  Center each Skill on one coherent demonstrated problem-solving method, including composition when
+  needed. Reuse across changed parameters; distinguish different goals, metric meanings and algorithms.
+  Write a compact actionable procedure, normally a few short paragraphs. Do not reproduce host-wide
+  manuals, tool catalogs, generic mandatory workflows, or accumulate unrelated task chapters.
   Skill content.name must be a lowercase identifier of at most 64 characters, using letters, digits,
   and single hyphens between words (for example analyze-order-status). No spaces, uppercase letters,
   underscores, leading/trailing hyphens, or repeated hyphens. Keep description at most 1024 characters.
@@ -97,6 +101,30 @@ useful reusable capability. Respect max_candidates_per_family and keep stable pr
 for the same capability. Give exact supporting trace_ids. Skill tool_keys may reference Tool candidates
 in this inventory. Include all needed Tool candidates, including reused ones, before a dependent Skill.
 Describe purpose and applicability, not implementation or historical answers. Return the inventory only.
+
+Separate capabilities SUPPLIED TO the host from capabilities DEMONSTRATED BY its execution. A loaded
+manual/Skill, tool description or schema is background evidence, not a newly learned procedure. Learn
+the parameterized method that actually solved the question, and useful executed submethods; do not
+repackage a generic query executor, schema inspector or an entire loaded guide because its name
+appears in a trace. Material novel refinements must be specific and supported by the actual execution.
+Do not invent methods from unexecuted instructions in a loaded manual. Retain complete original
+evidence; support every candidate with the relevant trace IDs.
+
+Skill keys identify reusable METHODS, not domains, source tools, agents, or documents. Compare goals,
+input/output semantics and procedure. Same method with different parameters should reuse a key;
+different methods sharing a database or host guide should have distinct keys. A useful multi-tool
+procedure is one Skill when its steps jointly solve a coherent task. Do not force one Skill per trace.
+For an existing Skill key, include skill_reuse with its exact previous_artifacts ref and a concrete
+same_method_reason comparing those boundaries. A broad previous Skill is not a destination for every
+new task: extract a separate focused method instead of appending unrelated sections. New Skill keys
+have skill_reuse=null. Do not invent previous refs or use a Tool ref as a Skill ref.
+
+When inventory is provided, this is a capability-boundary review BEFORE names become fixed. Continue
+using the original evidence in this conversation. Check every proposed Skill against the demonstrated
+task and any previous Skill it would revise. Correct broad host-guide copies and unrelated same-key
+merges; preserve useful distinct methods and legitimate parameter reuse. You may rename or split
+candidates here; update all dependent tool_keys consistently. Keep unrelated valid candidates. Address
+feedback, then return the COMPLETE corrected inventory, not a critique or a quota of entries.
 """.strip()
 
 CANDIDATE_GENERATION_INSTRUCTIONS = (
@@ -109,6 +137,8 @@ available_tools supplies already validated dependencies. Subsequent requests con
 conversation. Experience captures reusable decisions, pitfalls, and business semantics with their
 scope; Skill describes applicability, parameter discovery, dependencies, current-result interpretation,
 composition, and validation. They complement Tools instead of repeating their SQL or historical answers.
+The candidate's reviewed purpose bounds the Skill. If reusing a Skill, preserve useful knowledge
+within that same method; do not copy unrelated chapters from a broad previous artifact or host guide.
 
 Make the Tool callable by a model that has never seen the teaching task. Describe each parameter's
 meaning, representation, unit, range or supported domain where known, and its effect on the operation.

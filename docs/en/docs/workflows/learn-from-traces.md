@@ -52,6 +52,26 @@ The Supervisor first asks the model for a bounded inventory. It then processes c
 Tool, and Skill order. `max_candidates_per_family` limits the inventory for each family. A dependent Skill is generated
 after the Tool candidates it names, so its `tool_keys` can refer to validated candidates in the same Run.
 
+An inventory containing Skills receives a capability-boundary review in the original discovery conversation before
+keys become fixed. Loaded host guides, tool descriptions and schemas are background evidence. Extract the specific
+method demonstrated by execution, rather than republishing a general manual. Reuse methods across changed parameters;
+do not merge different goals, input/output meanings or algorithms merely because they share a database. Review can
+revise keys and associated `tool_keys`; it does not require one Skill per trace. Keep the resulting procedure compact
+and preserve useful knowledge within that method.
+
+Reusing a previous Skill key requires `skill_reuse.ref`, its exact visible Artifact reference, and
+`same_method_reason`. The service validates the reference; the model compares goals, input/output meanings and
+procedure. This is an explicit assessment, not proof of semantic equivalence. Missing confirmation receives bounded
+discovery feedback, and unresolved Skill candidates remain unpublished. Publication also prevents silently replacing
+a same-key head omitted from the bounded catalog. Inventory, messages, review counts and errors are checkpointed.
+Structured-output or input-budget failure defers Skills while independent Experience/Tool candidates can continue
+within the remaining budget. Review requests share the Run budget; `max_candidate_repair_rounds` also bounds additional
+inventory repair rounds after its initial review.
+
+The current prompt version is `powercontext.trace-learning.v4`. Drain queued/running v3 Runs before deployment.
+Unfinished work with a mismatched version ends with `capability_unavailable`; already published artifacts remain.
+Do not relabel an old Run to bypass the version check.
+
 Each candidate has its own saved model messages, revisions, review findings, validation result, repair count, and
 outcome. On a Worker restart, the next attempt resumes the saved conversation and candidate checkpoint. Already
 published candidates are skipped; the Worker does not regenerate them.

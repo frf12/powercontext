@@ -47,6 +47,20 @@ Supervisor 先让模型生成有界的候选 inventory，然后按 Experience、
 `max_candidates_per_family` 分别限制每个 Family 的候选数量。依赖 Tool 的 Skill 会在它引用的 Tool 候选完成校验后生成，
 因此同一 Run 中的 `tool_keys` 可以引用已校验候选。
 
+候选包含 Skill 时，发现模型会沿原始 conversation 在固定 key 前复核一次方法粒度。已加载的宿主指南、工具说明和
+schema 是背景材料；Skill 应提炼实际执行所证明的具体解题方法，而不是重新发布通用指南。同方法换参数可以复用，
+不同目标、输入输出语义或算法不应仅因来自同一数据库而合并。复核可修改候选 key 及关联的 `tool_keys`，不强制每条
+trace 生成一个 Skill。生成的正文应紧凑，并围绕该方法保留有效知识。
+
+复用旧 Skill key 时，候选必须提供 `skill_reuse.ref`（可见旧 Skill 的精确引用）与 `same_method_reason`。
+服务检查引用是否匹配；模型负责比较目标、输入输出语义和执行方法，这不构成语义正确性的证明。缺少确认时，发现模型
+先收到有界修复反馈，仍不满足要求的 Skill 不会发布。同 key head 不在有限目录中时，发布检查也会阻止静默覆盖。
+复核的 inventory、messages、次数及错误会持久化。结构化输出或输入预算导致复核失败时，Skill 延期，独立 E/T 候选
+仍可在剩余预算内继续。额外复核请求计入同一个 Run 预算，`max_candidate_repair_rounds` 也限制复核后的额外修复轮数。
+
+当前提示词版本为 `powercontext.trace-learning.v4`。部署前应让 v3 的 queued/running Run 完成；版本不匹配的未完成任务
+会以 `capability_unavailable` 结束，已有制品不会因此删除。不要将旧任务标记为新版本来绕过检查。
+
 每个候选都有独立保存的模型 `messages`、revision、review finding、validation 结果、修复次数和 outcome。Worker 重启后，
 从已保存的 conversation 和候选检查点继续；已经发布的候选会跳过，不会重新生成。
 

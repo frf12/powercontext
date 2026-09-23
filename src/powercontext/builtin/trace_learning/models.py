@@ -32,7 +32,7 @@ from powercontext.errors import PowerContextError
 from powercontext.sources import SourceRef
 
 TRACE_LEARNING_BINDING = "tool.trace-learning.v1"
-TRACE_LEARNING_PROMPT_VERSION = "powercontext.trace-learning.v3"
+TRACE_LEARNING_PROMPT_VERSION = "powercontext.trace-learning.v4"
 
 
 class TraceLearningError(PowerContextError, ValueError):
@@ -192,6 +192,18 @@ GeneratedCandidate = GeneratedExperience | GeneratedTool | GeneratedSkill
 CandidateT = TypeVar("CandidateT")
 
 
+class SkillReuseDecision(BaseModel):
+    """Explicit model assessment of a visible previous Skill's capability boundary."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    ref: ArtifactRef
+    same_method_reason: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="Compare the task goal, input/output meaning and procedure; explain why only parameters or refinements differ.",
+    )
+
+
 class CandidateSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     family: ArtifactFamily
@@ -199,6 +211,10 @@ class CandidateSpec(BaseModel):
     purpose: str = Field(min_length=1, max_length=2000)
     trace_ids: tuple[str, ...] = Field(min_length=1, max_length=32)
     tool_keys: tuple[str, ...] = Field(default=(), max_length=16)
+    skill_reuse: SkillReuseDecision | None = Field(
+        default=None,
+        description="Required when reusing a previous Skill key; null for a new capability. Use its exact visible ref.",
+    )
 
 
 class CandidateInventory(BaseModel):
@@ -375,6 +391,9 @@ class LearningRecord(BaseModel):
     artifact_keys: dict[str, ArtifactRef] = Field(default_factory=dict)
     candidate_plan_ready: bool = False
     discovery_messages: tuple[dict[str, JsonValue], ...] = ()
+    discovered_inventory: CandidateInventory | None = None
+    inventory_review_rounds: int = 0
+    inventory_review_error: str | None = None
     candidates: tuple[LearningCandidate, ...] = ()
 
 

@@ -1176,6 +1176,8 @@ def candidate_generator_for(specs, *, findings=(), reject_review=False):
             family = value["candidate"]["family"]
             item = bundle_data()[{"experience": "experiences", "tool": "tools", "skill": "skills"}[family]][0]
             item["key"] = value["candidate"]["key"]
+            if family == "skill":
+                item["tool_keys"] = value["candidate"].get("tool_keys", [])
             decisions = []
             if value.get("feedback") and reject_review:
                 decisions = [
@@ -1197,6 +1199,193 @@ def candidate_generator_for(specs, *, findings=(), reject_review=False):
 
 def candidate_spec(family, key):
     return {"family": family, "key": key, "purpose": "Reusable station method", "trace_ids": ["trace-1"]}
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_skill_inventory_can_replace_supplied_host_guide_before_publication(tmp_path, monkeypatch, restart):
+    async def scenario():
+        from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
+        from pydantic_ai.models.function import FunctionModel
+
+        from powercontext.builtin.inference.pydantic_ai import InferenceLimits
+        from powercontext.builtin.runtime.processing_execution import InvocationAlreadyHandled
+        from powercontext.builtin.trace_learning.generation import CandidateLearningGenerator
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        def respond(messages, info):
+            value = json.loads(
+                next(
+                    part.content for msg in reversed(messages) for part in msg.parts if isinstance(part, UserPromptPart)
+                )
+            )
+            if value["phase"] == "discover":
+                if value.get("inventory"):
+                    assert "General database guide" in str(messages)
+                key = "count-stations" if value.get("inventory") else "database-guide"
+                output = {"candidates": [candidate_spec("skill", key)]}
+            else:
+                item = bundle_data()["skills"][0]
+                item["key"] = value["candidate"]["key"]
+                item["content"]["name"] = item["key"]
+                item["tool_keys"] = []
+                output = {"candidate": item}
+            return ModelResponse(parts=[TextPart(json.dumps(output))])
+
+        generator = CandidateLearningGenerator(
+            model=FunctionModel(respond), limits=InferenceLimits(max_requests=2), config_id="skill-boundary-test"
+        )
+        discover = generator.discover
+        interrupted = False
+
+        async def interrupt_review(value, *, messages=(), max_requests):
+            nonlocal interrupted
+            if restart and value.inventory is not None and not interrupted:
+                interrupted = True
+                raise InvocationAlreadyHandled()
+            return await discover(value, messages=messages, max_requests=max_requests)
+
+        monkeypatch.setattr(generator, "discover", interrupt_review)
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=12)
+        data = request_data()
+        data["traces"][0]["tool_calls"].insert(
+            0,
+            {
+                "call_id": "host-guide",
+                "name": "load_skill",
+                "arguments": {"name": "database-guide"},
+                "result": {"content": "General database guide: inspect schema, query and report current results."},
+            },
+        )
+        try:
+            run = await service.import_traces("learning", "runtime", ImportTraceLearningRequest.model_validate(data))
+            if restart:
+                with pytest.raises(InvocationAlreadyHandled):
+                    await invoke(service)
+                interrupted_run = await service.get_run("learning", "runtime", run.run_id)
+                assert not interrupted_run.artifacts
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert [(item.key, item.status) for item in done.candidate_outcomes] == [("count-stations", "published")]
+            async with service.database.transaction() as connection:
+                artifact = await service.contexts.repositories.artifacts.get(connection, "learning", done.artifacts[0])
+            assert artifact.content.name == "count-stations"
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("previous_limit", [0, 30])
+def test_skill_key_reuse_without_method_confirmation_cannot_overwrite_prior_artifact(tmp_path, previous_limit):
+    async def scenario():
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        manager, service = await setup_service(tmp_path, Generator())
+        try:
+            first = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            first = await service.get_run("learning", "runtime", first.run_id)
+            old_ref = next(ref for ref in first.artifacts if ref.family == "skill")
+            spec = candidate_spec("skill", "count-stations")
+            spec["tool_keys"] = []
+            service.generator, _ = candidate_generator_for([spec])
+            service.budget = LearningBudget(
+                max_model_calls=12, max_candidate_repair_rounds=1, previous_artifact_limit=previous_limit
+            )
+            second = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data("next"))
+            )
+            await invoke(service)
+            second = await service.get_run("learning", "runtime", second.run_id)
+            assert not second.artifacts
+            assert second.candidate_outcomes[0].reason == "invalid_skill_reuse"
+            async with service.database.transaction() as connection:
+                old = await service.contexts.repositories.artifacts.get(connection, "learning", old_ref)
+            assert old.as_ref() == old_ref
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_confirmed_same_method_skill_reuse_keeps_identity(tmp_path):
+    async def scenario():
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        manager, service = await setup_service(tmp_path, Generator())
+        try:
+            first = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            first = await service.get_run("learning", "runtime", first.run_id)
+            old_ref = next(ref for ref in first.artifacts if ref.family == "skill")
+            spec = candidate_spec("skill", "count-stations")
+            spec["skill_reuse"] = {
+                "ref": old_ref.model_dump(mode="json"),
+                "same_method_reason": "Same country-filtered count and scalar output; only the country parameter changes.",
+            }
+            service.generator, _ = candidate_generator_for([spec])
+            service.budget = LearningBudget(max_model_calls=12)
+            second = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data("next", country="SVK"))
+            )
+            await invoke(service)
+            second = await service.get_run("learning", "runtime", second.run_id)
+            assert second.status == "succeeded", second.error
+            (new_ref,) = second.artifacts
+            assert new_ref.artifact_id == old_ref.artifact_id
+            assert new_ref.revision == old_ref.revision + 1
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_invalid_skill_inventory_review_preserves_independent_experience(tmp_path):
+    async def scenario():
+        from powercontext.builtin.inference.errors import InvalidInferenceOutputError
+        from powercontext.builtin.inference.models import InferenceUsage
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest, LearningBudget
+
+        generator, _ = candidate_generator_for([
+            candidate_spec("experience", "station-country"),
+            candidate_spec("skill", "count-stations"),
+        ])
+        discover = generator.discover
+
+        async def invalid_review(value, *, messages=(), max_requests):
+            if value.inventory is not None:
+                error = InvalidInferenceOutputError("generate", "Malformed review after repair exhaustion")
+                error.usage = InferenceUsage(requests=1)
+                raise error
+            return await discover(value, messages=messages, max_requests=max_requests)
+
+        generator.discover = invalid_review
+        manager, service = await setup_service(tmp_path, generator)
+        service.budget = LearningBudget(max_model_calls=12)
+        try:
+            run = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            done = await service.get_run("learning", "runtime", run.run_id)
+            assert done.status == "succeeded", done.error
+            assert [ref.family for ref in done.artifacts] == ["experience"]
+            outcomes = {item.key: item for item in done.candidate_outcomes}
+            assert outcomes["count-stations"].status == "deferred"
+            assert outcomes["count-stations"].reason == "invalid_generation_output"
+            async with service.database.transaction() as connection:
+                record = await service.repository.get(connection, "learning", run.run_id)
+            assert "trace-1" in str(record.discovery_messages)
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
 
 
 def test_generator_can_reject_advisory_findings_with_reasons(tmp_path):
@@ -1500,6 +1689,10 @@ def test_published_tool_revision_is_recallable_before_other_candidates_finish(tm
             old = await service.get_run("learning", "runtime", first.run_id)
             old_tool = next(ref for ref in old.artifacts if ref.family == "tool")
             skill_spec = candidate_spec("skill", "count-stations") | {"tool_keys": ["count-country"]}
+            skill_spec["skill_reuse"] = {
+                "ref": next(ref for ref in old.artifacts if ref.family == "skill").model_dump(mode="json"),
+                "same_method_reason": "The same country count method is being refined without changing its goal or output.",
+            }
             generator, _ = candidate_generator_for([candidate_spec("tool", "count-country"), skill_spec])
             generate = generator.generate_candidate
 

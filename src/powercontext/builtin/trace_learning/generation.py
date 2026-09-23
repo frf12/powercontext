@@ -80,8 +80,10 @@ class LLMTraceLearningGenerator:
 
 class CandidateDiscoveryInput(BaseModel):
     phase: Literal["discover"] = "discover"
-    context: TraceLearningGenerationInput
+    context: TraceLearningGenerationInput | None = None
     max_candidates_per_family: int
+    inventory: CandidateInventory | None = None
+    feedback: tuple[str, ...] = ()
 
 
 class CandidateGenerationInput(BaseModel):

@@ -39,6 +39,7 @@ from powercontext.builtin.trace_learning.generation import (
 )
 from powercontext.builtin.trace_learning.models import (
     CandidateFeedback,
+    CandidateInventory,
     CandidateOutcome,
     CandidateResponse,
     GeneratedCandidate,
@@ -223,43 +224,118 @@ class CandidateWorkflow:
     async def _discover(self) -> None:
         if self.record.generation_input is None:
             raise TraceLearningError("invalid_checkpoint")
-        value = CandidateDiscoveryInput(
-            context=self.record.generation_input,
-            max_candidates_per_family=self.record.run.budget.max_candidates_per_family,
-        )
-        self._check_input(value, self.record.discovery_messages)
-        try:
-            result = await self._call(
-                lambda limit: self.generator.discover(
-                    value,
-                    messages=self.record.discovery_messages,
-                    max_requests=limit,
-                ),
-                stage="discovering",
-            )
-        except InferenceError as error:
-            self.record = self.record.model_copy(update={"discovery_messages": error.messages})
-            await self._store()
-            raise
+        if self.record.discovered_inventory is None:
+            await self._discover_inventory()
+        inventory = self._inventory()
+        if self.record.inventory_review_error is None and any(spec.family == "skill" for spec in inventory.candidates):
+            inventory = await self._review_inventory(inventory)
+        identity_errors = self._skill_reuse_errors(inventory)
         counts: Counter[str] = Counter()
         trace_ids = {trace.trace_id for trace in self.record.request.traces}
         candidates = []
         for spec in sorted(
-            result.output.candidates, key=lambda item: {"experience": 0, "tool": 1, "skill": 2}[item.family]
+            inventory.candidates, key=lambda item: {"experience": 0, "tool": 1, "skill": 2}[item.family]
         ):
             counts[spec.family] += 1
             outcome = CandidateOutcome(family=spec.family, key=spec.key)
             if not set(spec.trace_ids) <= trace_ids:
                 outcome = outcome.model_copy(update={"status": "rejected", "reason": "unknown_trace_id"})
+            elif spec.family == "skill" and self.record.inventory_review_error is not None:
+                outcome = outcome.model_copy(
+                    update={"status": "deferred", "reason": self.record.inventory_review_error}
+                )
+            elif (spec.family, spec.key) in identity_errors:
+                outcome = outcome.model_copy(update={"status": "rejected", "reason": "invalid_skill_reuse"})
             elif counts[spec.family] > self.record.run.budget.max_candidates_per_family:
                 outcome = outcome.model_copy(update={"status": "deferred", "reason": "candidate_limit"})
             candidates.append(LearningCandidate(spec=spec, outcome=outcome))
         self.record = self.record.model_copy(
             update={
                 "candidate_plan_ready": True,
-                "discovery_messages": result.messages,
                 "candidates": tuple(candidates),
                 "generated": GeneratedTraceLearningBundle(),
+            }
+        )
+        await self._store()
+
+    def _inventory(self) -> CandidateInventory:
+        if self.record.discovered_inventory is None:
+            raise TraceLearningError("invalid_checkpoint")
+        return self.record.discovered_inventory
+
+    async def _review_inventory(self, inventory: CandidateInventory) -> CandidateInventory:
+        # Review before fixing keys, while methods and dependencies can still be separated.
+        # Checkpoints prevent replaying completed discovery work after a worker restart.
+        while self.record.inventory_review_rounds <= self.record.run.budget.max_candidate_repair_rounds:
+            errors = self._skill_reuse_errors(inventory)
+            if self.record.inventory_review_rounds and not errors:
+                break
+            try:
+                await self._discover_inventory(inventory, tuple(errors.values()))
+            except (InvalidInferenceOutputError, ValidationError):
+                await self._defer_inventory_skills("invalid_generation_output")
+                break
+            except TraceLearningError as error:
+                if not error.code.endswith("budget_exceeded"):
+                    raise
+                await self._defer_inventory_skills(error.code)
+                break
+            inventory = self._inventory()
+        return inventory
+
+    async def _defer_inventory_skills(self, reason: str) -> None:
+        self.record = self.record.model_copy(update={"inventory_review_error": reason})
+        await self._store()
+
+    def _skill_reuse_errors(self, inventory: CandidateInventory) -> dict[tuple[str, str], str]:
+        context = self.record.generation_input
+        if context is None:
+            raise TraceLearningError("invalid_checkpoint")
+        previous = {item.key: item for item in context.previous_artifacts if item.ref.family == "skill"}
+        errors = {}
+        for spec in inventory.candidates:
+            if spec.family != "skill":
+                continue
+            old, decision = previous.get(spec.key), spec.skill_reuse
+            if old is not None and (decision is None or decision.ref != old.ref):
+                errors[(spec.family, spec.key)] = (
+                    f"Skill {spec.key!r}: reusing this key requires skill_reuse with exact ref "
+                    f"{old.ref.model_dump_json()} and a same_method_reason comparing goal, inputs/outputs and "
+                    "procedure. If this is a different method, choose a distinct key instead."
+                )
+            elif old is None and decision is not None:
+                errors[(spec.family, spec.key)] = (
+                    f"Skill {spec.key!r}: no previous Skill with this key is visible; a new method uses "
+                    "skill_reuse=null. Only reuse an exact Skill ref from the visible catalog."
+                )
+        return errors
+
+    async def _discover_inventory(self, inventory: CandidateInventory | None = None, feedback: tuple[str, ...] = ()):
+        value = CandidateDiscoveryInput(
+            context=self.record.generation_input if inventory is None else None,
+            max_candidates_per_family=self.record.run.budget.max_candidates_per_family,
+            inventory=inventory,
+            feedback=feedback,
+        )
+        self._check_input(value, self.record.discovery_messages)
+        try:
+            result = await self._call(
+                lambda limit: self.generator.discover(
+                    value, messages=self.record.discovery_messages, max_requests=limit
+                ),
+                stage="discovering",
+            )
+        except InferenceError as error:
+            self.record = self.record.model_copy(
+                update={"discovery_messages": error.messages or self.record.discovery_messages}
+            )
+            await self._store()
+            raise
+        self.record = self.record.model_copy(
+            update={
+                "discovered_inventory": result.output,
+                "discovery_messages": result.messages,
+                "inventory_review_rounds": self.record.inventory_review_rounds + int(inventory is not None),
             }
         )
         await self._store()
