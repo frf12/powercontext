@@ -610,6 +610,47 @@ def test_learning_saves_exact_tool_dependencies_and_revises_previous_bundle(tmp_
     asyncio.run(scenario())
 
 
+def test_active_learning_revision_survives_out_of_order_run_completion(tmp_path):
+    async def scenario():
+        from datetime import UTC, datetime
+
+        from sqlalchemy import update
+
+        from powercontext.builtin.persistence.dream import ticks
+        from powercontext.builtin.persistence.tables import TRACE_LEARNING_RUNS_TABLE
+        from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest
+
+        manager, service = await setup_service(tmp_path, Generator())
+        try:
+            first = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data())
+            )
+            await invoke(service)
+            second = await service.import_traces(
+                "learning", "runtime", ImportTraceLearningRequest.model_validate(request_data("second"))
+            )
+            await invoke(service)
+            latest = await service.get_run("learning", "runtime", second.run_id)
+            # Persist the ordering of an earlier accepted run that finishes last.
+            # Acceptance order must not decide which published revision is visible.
+            async with service.database.transaction() as connection:
+                for run_id, year in ((first.run_id, 2021), (second.run_id, 2020)):
+                    await connection.execute(
+                        update(TRACE_LEARNING_RUNS_TABLE)
+                        .where(TRACE_LEARNING_RUNS_TABLE.c.run_id == run_id)
+                        .values(accepted_at=ticks(datetime(year, 1, 1, tzinfo=UTC)))
+                    )
+                recalled = await service.learned_artifacts(connection, "learning")
+            assert {artifact.as_ref().model_dump_json() for artifact in recalled} == {
+                ref.model_dump_json() for ref in latest.artifacts
+            }
+            assert {artifact.family for artifact in recalled} == {"experience", "skill", "tool"}
+        finally:
+            await manager.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
 def test_changed_sql_cannot_pass_using_recorded_result(tmp_path):
     async def scenario():
         from powercontext.builtin.trace_learning.models import ImportTraceLearningRequest

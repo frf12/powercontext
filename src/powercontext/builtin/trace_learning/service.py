@@ -220,7 +220,6 @@ class TraceLearningService:
                 key = (ref.family, ref.artifact_id)
                 if key in seen:
                     continue
-                seen.add(key)
                 state = await connection.scalar(
                     select(ARTIFACT_HEADS_TABLE.c.lifecycle_state).where(
                         ARTIFACT_HEADS_TABLE.c.scope_id == scope_id,
@@ -231,6 +230,7 @@ class TraceLearningService:
                 )
                 if state != "active":
                     continue
+                seen.add(key)
                 result.append(await self.contexts.repositories.artifacts.get(connection, scope_id, ref))
                 if limit is not None and len(result) >= limit:
                     return tuple(result)
