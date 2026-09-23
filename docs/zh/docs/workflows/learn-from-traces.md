@@ -68,6 +68,16 @@ Tool reviewer 完全独立：只接收候选的 `ToolContent`，看不到 trace�
 候选生成器在修复时沿保存的原始 `messages` 继续。它必须对每条 finding 恰好返回一次 `accept`、`partial` 或 `reject`，并给出
 理由。review 建议只是质量反馈；确定性的校验错误（包括硬 SQL 校验）不能靠 review decision 豁免。
 
+工具审查继承 `inference.generation_model_settings`。可选的
+`inference.trace_learning_tool_review_model_settings` 只覆盖独立 reviewer 的模型参数，包括其结构化输出修正请求；
+候选发现与生成仍使用原参数。例如，支持 OpenAI 推理参数的模型可配置 `{"openai_reasoning_effort": "low"}`，减少审查阶段的
+思考量，同时保留生成模型。参数是否生效取决于模型服务。reviewer 的 `max_tokens` 可以进一步降低输出上限，但不能超过
+`trace_learning_budget.max_output_tokens`；思考 token 也可能消耗同一输出预算。HTTP 200 但达到长度上限、正文为空的响应仍是
+审查失败，不代表 Tool 获准发布。此配置不会跳过校验，也不会发布此前延期的候选。
+
+省略配置或使用空对象会保留默认检查点身份。启用或修改非空 override 会改变推理配置身份，切换前应排空 queued/running Run。
+已经结束但只发布部分候选的 Run 仍保持结束状态，配置变化不会使它自动重跑。
+
 候选失败相互隔离。被拒绝或延期的候选不会回滚已经发布的候选。Run 的 `status=succeeded` 只表示至少有一个候选产出了可发布
 产物，并不表示所有计划候选都完成。检查 `candidate_outcomes`，确认候选是否全部为 `published`，以及是否存在 `rejected` 或
 `deferred`。预算或截止时间中止时可以保留部分已发布产物，同时在候选 outcome 或 Run 的 error 状态中保留剩余工作被中止的原因。

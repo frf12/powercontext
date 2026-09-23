@@ -28,6 +28,7 @@ from pydantic import (
     JsonValue,
     PrivateAttr,
     SecretStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -214,6 +215,7 @@ class InferenceConfig(BaseModel):
     generation_base_url: AnyHttpUrl | None = None
     generation_headers: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
     generation_model_settings: dict[str, JsonValue] = Field(default_factory=dict)
+    trace_learning_tool_review_model_settings: dict[str, JsonValue] = Field(default_factory=dict)
     generation_timeout_seconds: float = Field(default=30.0, gt=0)
     generation_max_requests: int = Field(default=2, ge=1)
     generation_allow_python_literals: bool = True
@@ -269,13 +271,30 @@ class InferenceConfig(BaseModel):
             normalized_names.add(normalized_name)
         return value
 
-    @field_validator("generation_model_settings", "embedding_model_settings", "rerank_model_settings")
+    @field_validator(
+        "generation_model_settings",
+        "trace_learning_tool_review_model_settings",
+        "embedding_model_settings",
+        "rerank_model_settings",
+    )
     @classmethod
     def reserve_headers_field(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
         if "extra_headers" in value:
             raise ValueError(  # noqa: TRY003
                 "configure credentials and static headers through the dedicated headers field"
             )
+        return value
+
+    @field_validator("generation_model_settings", "trace_learning_tool_review_model_settings")
+    @classmethod
+    def validate_generation_output_budget(
+        cls, value: dict[str, JsonValue], info: ValidationInfo
+    ) -> dict[str, JsonValue]:
+        max_tokens = value.get("max_tokens")
+        if max_tokens is not None and (
+            not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1
+        ):
+            raise ValueError(f"{info.field_name}.max_tokens must be a positive integer")  # noqa: TRY003
         return value
 
     @model_validator(mode="after")
@@ -289,6 +308,10 @@ class InferenceConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_workload_overrides(self) -> Self:
+        if self.generation_model is None and self.trace_learning_tool_review_model_settings:
+            raise ValueError(  # noqa: TRY003
+                "trace_learning_tool_review_model_settings requires generation_model"
+            )
         if self.generation_model is None and self.generation_model_settings:
             raise ValueError("generation_model_settings requires generation_model")  # noqa: TRY003
         if self.generation_model is None and (self.generation_base_url is not None or self.generation_headers):
@@ -305,11 +328,6 @@ class InferenceConfig(BaseModel):
             and (self.rerank_headers or self.rerank_model_settings)
         ):
             raise ValueError("rerank overrides require rerank_model or generation_model")  # noqa: TRY003
-        max_tokens = self.generation_model_settings.get("max_tokens")
-        if max_tokens is not None and (
-            not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1
-        ):
-            raise ValueError("generation_model_settings.max_tokens must be a positive integer")  # noqa: TRY003
         if self.generation_model is not None:
             try:
                 budget = topic_memory_stage_budget(

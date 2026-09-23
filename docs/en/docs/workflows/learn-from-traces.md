@@ -82,6 +82,19 @@ original saved `messages` when it repairs a candidate. It must answer every find
 `partial`, or `reject` and a reason. Review suggestions are advisory. Deterministic validation errors, including hard
 SQL validation, cannot be waived by a review decision.
 
+Tool review inherits `inference.generation_model_settings`. Optional
+`inference.trace_learning_tool_review_model_settings` overrides only the independent reviewer, including its
+structured-output repair requests; discovery and candidate generation retain their original settings. For a compatible
+OpenAI model, `{"openai_reasoning_effort": "low"}` can reduce review deliberation without changing the generation model.
+Provider support determines which settings have an effect. A reviewer `max_tokens` can lower its output ceiling but
+cannot exceed `trace_learning_budget.max_output_tokens`; reasoning tokens can consume this same output budget.
+HTTP 200 with a length-limited empty answer is still a failed review, not an accepted Tool. This setting does not
+bypass validation or publish previously deferred candidates.
+
+An omitted or empty review override preserves the default checkpoint identity. Enabling or changing a nonempty
+override changes the inference identity: drain queued/running Runs before changing it. Completed partial Runs remain
+completed; they are not automatically reprocessed after a configuration change.
+
 Candidate failures are isolated. A rejected or deferred candidate does not roll back candidates that were already
 published. A Run with `status=succeeded` means that at least one candidate produced a publishable artifact; it does not
 mean that every planned candidate finished. Inspect `candidate_outcomes` to determine whether all candidates are

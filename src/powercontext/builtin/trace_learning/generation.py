@@ -109,8 +109,11 @@ class CandidateLearningGenerator(LLMTraceLearningGenerator):
         limits: InferenceLimits,
         config_id: str,
         model_settings: ModelSettings | None = None,
+        review_model_settings: ModelSettings | None = None,
         legacy_config_id: str | None = None,
     ) -> None:
+        from pydantic_ai.settings import merge_model_settings
+
         from powercontext.builtin.inference.pydantic_ai import PydanticAIStructuredGenerator
 
         self.max_requests = limits.max_requests
@@ -151,10 +154,16 @@ class CandidateLearningGenerator(LLMTraceLearningGenerator):
                 ("skill", GeneratedSkill),
             )
         }
+        review_limits = limits
+        if review_model_settings is not None and review_model_settings.get("max_tokens") is not None:
+            review_max = review_model_settings["max_tokens"]
+            if limits.max_output_tokens_per_request is not None:
+                review_max = min(review_max, limits.max_output_tokens_per_request)
+            review_limits = limits.model_copy(update={"max_output_tokens_per_request": review_max})
         self._reviewer = PydanticAIStructuredGenerator(
             model=model,
-            limits=limits,
-            model_settings=model_settings,
+            limits=review_limits,
+            model_settings=merge_model_settings(model_settings, review_model_settings),
             instructions=TOOL_REVIEW_INSTRUCTIONS,
             input_type=ToolReviewInput,
             output_type=ToolReview,
@@ -209,19 +218,22 @@ async def open_trace_learning_generator(
     model_settings["max_tokens"] = min(
         int(model_settings.get("max_tokens") or budget.max_output_tokens), budget.max_output_tokens
     )
-    identity = settings.model_dump_json(
-        include={
-            "generation_model",
-            "generation_base_url",
-            "generation_model_settings",
-            "generation_timeout_seconds",
-            "generation_max_requests",
-            "generation_allow_python_literals",
-        }
-    )
+    identity_fields = {
+        "generation_model",
+        "generation_base_url",
+        "generation_model_settings",
+        "generation_timeout_seconds",
+        "generation_max_requests",
+        "generation_allow_python_literals",
+    }
+    # Empty overrides retain the identity stored by existing learning checkpoints.
+    if settings.trace_learning_tool_review_model_settings:
+        identity_fields.add("trace_learning_tool_review_model_settings")
+    identity = settings.model_dump_json(include=identity_fields)
     return CandidateLearningGenerator(
         model=model,
         model_settings=model_settings,
+        review_model_settings=cast(ModelSettings, dict(settings.trace_learning_tool_review_model_settings)),
         limits=InferenceLimits(
             timeout_seconds=min(settings.generation_timeout_seconds, budget.timeout_seconds),
             max_requests=settings.generation_max_requests,
