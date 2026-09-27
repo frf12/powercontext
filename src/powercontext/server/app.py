@@ -350,6 +350,9 @@ from powercontext.builtin.trace_learning.models import (
     ImportTraceLearningRequest as RuntimeImportTraceLearningRequest,
 )
 from powercontext.builtin.trace_learning.models import (
+    ResumeLearningRunRequest as RuntimeResumeLearningRunRequest,
+)
+from powercontext.builtin.trace_learning.models import (
     TraceLearningError,
 )
 from powercontext.builtin.work import (
@@ -526,6 +529,7 @@ from powercontext.http import (
     ResolveExternalSkillRequest,
     ResolveScopeBindingRequest,
     ResolveScopeSelectionRequest,
+    ResumeLearningRunRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
@@ -741,6 +745,7 @@ from powercontext.http._generated.operations import (
     RESOLVE_EXTERNAL_SKILL,
     RESOLVE_SCOPE_BINDING,
     RESOLVE_SCOPE_SELECTION,
+    RESUME_LEARNING_RUN,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
@@ -1368,6 +1373,7 @@ def create_app(
 
     _add_route(app, IMPORT_TRACE_LEARNING, import_trace_learning)
     _add_route(app, GET_LEARNING_RUN, get_learning_run)
+    _add_route(app, RESUME_LEARNING_RUN, resume_learning_run)
     _add_route(app, CREATE_DREAM_RUN, create_dream_run)
     _add_route(app, GET_DREAM_RUN, get_dream_run)
     _add_route(app, LIST_DREAM_RUNS, list_dream_runs)
@@ -2926,6 +2932,9 @@ async def search_tools(
         "host_profile": request.host_profile.model_dump(mode="json"),
         "max_bytes": request.max_bytes,
         "tool_limit": request.limit,
+        "learned_retrieval_options": request.learned_retrieval_options.model_dump(mode="json")
+        if request.learned_retrieval_options is not None
+        else None,
         "learned_families": ["tool"],
         "assembly": {"sections": []},
     })
@@ -3236,6 +3245,22 @@ async def get_learning_run(
     result = await application.trace_learning.for_scope(scope_id, principal_id=_dream_principal(http_request)).get(
         RuntimeGetLearningRunRequest(run_id=run_id)
     )
+    return LearningRun.model_validate_json(result.model_dump_json())
+
+
+async def resume_learning_run(
+    scope_id: str,
+    run_id: str,
+    request: ResumeLearningRunRequest,
+    response: Response,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+    http_request: Request,
+) -> LearningRun:
+    result = await application.trace_learning.for_scope(scope_id, principal_id=_dream_principal(http_request)).resume(
+        run_id,
+        RuntimeResumeLearningRunRequest.model_validate_json(request.model_dump_json(exclude_unset=True)),
+    )
+    response.status_code = 200 if result.terminal else 202
     return LearningRun.model_validate_json(result.model_dump_json())
 
 
@@ -5219,6 +5244,8 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
             "capability_unavailable": 503,
             "access_unavailable": 503,
             "capacity_exceeded": 429,
+            "learning_run_active": 409,
+            "resume_configuration_changed": 409,
         }
         return (
             statuses.get(error.code, 422),

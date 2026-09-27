@@ -24,12 +24,14 @@ from typing import Any, cast
 from uuid import uuid4
 
 import rfc8785
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.memory import MemoryCitation, MemoryEntryVersion, MemoryService
+from powercontext.builtin.artifacts.skill import SkillContent, build_instruction_skill_package
+from powercontext.builtin.persistence.artifact_vectors import ArtifactVectorService, PreparedArtifactVector
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
 from powercontext.builtin.persistence.database import AsyncDatabase
@@ -109,6 +111,7 @@ class RelationalRecordService:
         family_writers: FamilyManagementWriterRegistry,
         /,
         *,
+        artifact_vectors: ArtifactVectorService | None = None,
         clock: Clock | None = None,
         id_factory: IdFactory | None = None,
         cursor_secret: bytes | None = None,
@@ -120,6 +123,7 @@ class RelationalRecordService:
         self._database = database
         self._sources = sources
         self._artifacts = artifacts
+        self._artifact_vectors = artifact_vectors
         self._family_writers = family_writers
         self._clock = _utc_now if clock is None else clock
         self._id_factory = _resource_id if id_factory is None else id_factory
@@ -293,6 +297,7 @@ class RelationalRecordService:
     ) -> ArtifactCreated:
         writer = self._family_writers.get(family)
         command = writer.validate_create(write.content)
+        vector = await self._prepare_vector(family, command)
         if family == "prompt":
             if write.prompt_key is None:
                 raise InvalidBaseAccessRequestError("prompt_key", "is required for Prompt Create")
@@ -328,9 +333,18 @@ class RelationalRecordService:
             async with self._database.transaction() as connection:
                 stored = await self._sources.add(connection, scope_id, source)
                 artifact = await writer.create(connection, scope_id, artifact_id, command, stored.ref)
+                if self._artifact_vectors is not None:
+                    await self._artifact_vectors.commit(connection, scope_id, artifact, vector)
         except (StoredPayloadConflictError, RevisionConflictError) as error:
             raise BaseValueConflictError("artifact", (scope_id, family, artifact_id)) from error
         return _artifact_created(scope_id, artifact)
+
+    async def _prepare_vector(self, family: str, content: BaseModel) -> PreparedArtifactVector | None:
+        if self._artifact_vectors is None:
+            return None
+        if isinstance(content, SkillContent) and content.package is None:
+            content = build_instruction_skill_package(content).as_skill_content()
+        return await self._artifact_vectors.prepare(family, content)
 
     async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord:
         self._require_family(family)
@@ -565,6 +579,7 @@ class RelationalRecordService:
             raise InvalidBaseAccessRequestError("prompt_key", "is not accepted for replacement")
         writer = self._family_writers.get(family)
         command = writer.validate_replace(write.content)
+        vector = await self._prepare_vector(family, command)
         async with self._database.transaction() as connection:
             try:
                 current = await self._artifacts.latest(connection, scope_id, family, artifact_id)
@@ -598,6 +613,8 @@ class RelationalRecordService:
             try:
                 stored = await self._sources.add(connection, scope_id, source)
                 revised = await writer.replace(connection, scope_id, current, command, stored.ref)
+                if self._artifact_vectors is not None:
+                    await self._artifact_vectors.commit(connection, scope_id, revised, vector)
             except StoredPayloadConflictError as error:
                 raise BaseValueConflictError("source", (scope_id, CONTENT_SOURCE_NAME, source.name)) from error
             except RevisionConflictError:

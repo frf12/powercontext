@@ -55,6 +55,53 @@ def test_skill_http_mapping_preserves_exact_tool_dependencies():
     assert skill_content(skill_proposal(content)) == content
 
 
+def test_http_resume_is_idempotent_and_cannot_restart_active_or_published_candidates(tmp_path):
+    import asyncio
+
+    from powercontext.builtin.trace_learning.models import LearningBudget
+    from tests.e2e.test_trace_learning import candidate_generator_for, candidate_spec, request_data
+
+    async def scenario():
+        generator, _ = candidate_generator_for(
+            [candidate_spec("tool", "count-country")],
+            findings=[
+                {
+                    "id": "identifier",
+                    "category": "parameterization",
+                    "comment": "Consider table selection.",
+                    "suggestion": "Add a table parameter.",
+                }
+            ],
+            reject_review=True,
+        )
+        async with learning_http(tmp_path, generator) as env:
+            env.runtime._trace_learning_service.budget = LearningBudget(
+                max_model_calls=12, max_candidate_repair_rounds=0
+            )
+            accepted = await env.client.post("/v1/scopes/learning/trace-learning", json=request_data())
+            run_id = accepted.json()["run_id"]
+            path = f"/v1/scopes/learning/trace-learning/{run_id}/resume"
+            body = {"idempotency_key": "complete-review", "candidates": [{"family": "tool", "key": "count-country"}]}
+            active = await env.client.post(path, json=body)
+            assert active.status_code == 409, active.text
+            await env.controller.process()
+            resumed = await env.client.post(path, json=body)
+            assert resumed.status_code == 202, resumed.text
+            replay = await env.client.post(path, json=body)
+            assert replay.json()["budget"] == resumed.json()["budget"]
+            assert replay.json()["resume_count"] == 1
+            conflict = await env.client.post(path, json=body | {"additional_model_calls": 33})
+            assert conflict.status_code == 409, conflict.text
+            await env.controller.process()
+            finished = await env.client.post(path, json=body)
+            assert finished.status_code == 200, finished.text
+            assert finished.json()["candidate_outcomes"][0]["status"] == "published"
+            republish = await env.client.post(path, json=body | {"idempotency_key": "repeat-published"})
+            assert republish.status_code == 422, republish.text
+
+    asyncio.run(scenario())
+
+
 def test_authenticated_http_import_recall_and_legacy_compatibility(tmp_path):
     import asyncio
 
@@ -198,7 +245,7 @@ def test_revoked_importer_cannot_publish_generated_artifacts(tmp_path):
 
 
 @asynccontextmanager
-async def learning_http(tmp_path, generator):
+async def learning_http(tmp_path, generator, embedding_model=None, *, runtime_overrides=None, inference=None):
     from types import SimpleNamespace
     from typing import cast
 
@@ -206,7 +253,7 @@ async def learning_http(tmp_path, generator):
     from starlette.middleware import Middleware
 
     from powercontext.builtin.persistence.sqlite import SQLiteConfig
-    from powercontext.builtin.runtime import BuiltinConfig, RuntimeConfig
+    from powercontext.builtin.runtime import BuiltinConfig, InferenceConfig, RuntimeConfig
     from powercontext.builtin.runtime.artifact_processing import ArtifactProcessingBinding
     from powercontext.builtin.runtime.composition import open_builtin_runtime
     from powercontext.builtin.scope import ScopeDraft
@@ -236,12 +283,15 @@ async def learning_http(tmp_path, generator):
         open_builtin_runtime(
             BuiltinConfig(
                 database=database,
+                inference=inference or InferenceConfig(),
                 runtime=RuntimeConfig(
                     trace_learning_enabled=True,
                     artifact_processing_families=("tool",),
+                    **(runtime_overrides or {}),
                 ),
             ),
             trace_learning_generator=generator,
+            embedding_model=embedding_model,
             artifact_processing_bindings=(binding_config,),
         ) as runtime,
     ):

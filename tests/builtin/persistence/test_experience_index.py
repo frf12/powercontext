@@ -53,6 +53,61 @@ def _skill() -> SkillContent:
     )
 
 
+def test_skill_reindex_searches_name_and_description_without_workflow_text() -> None:
+    async def scenario() -> None:
+        async with open_builtin_contexts(BuiltinConfig(database=SQLiteConfig())) as contexts:
+            context = await contexts.get("project")
+            source, _ = await context.sources.capture(
+                ContentCapture(source_id="skill-projection-test", content="Reviewed procedure.")
+            )
+            candidate = await contexts.review("project").propose_skill(
+                SkillContent(
+                    name="orbital-planning",
+                    description="Forecast eclipse observations.",
+                    instructions="Execute bodyneedle from the attached procedure.",
+                    validation=("validationneedle passes",),
+                    metadata={"owner": "metadataneedle"},
+                    compatibility="compatibilityneedle",
+                    allowed_tools="toolneedle",
+                    license="licenseneedle",
+                ),
+                sources=(context.sources.catalog.as_ref(source),),
+                artifacts=(),
+                target=None,
+                reason=None,
+            )
+            approved = await contexts.review("project").approve(candidate.candidate_id, candidate.version)
+            assert approved.result_artifact is not None
+            async with contexts.database.transaction() as connection:
+                before = await contexts.repositories.artifacts.get(connection, "project", approved.result_artifact)
+                # Model an existing deployment's legacy body-inclusive projection.
+                await connection.execute(
+                    ARTIFACT_HEADS_TABLE
+                    .update()
+                    .where(ARTIFACT_HEADS_TABLE.c.family == "skill")
+                    .values(searchable_text="orbital planning eclipse bodyneedle validationneedle metadataneedle")
+                )
+                await contexts.experience_index.initialize(connection)
+                after = await contexts.repositories.artifacts.get(connection, "project", approved.result_artifact)
+            assert after == before
+            for query in ("orbital", "eclipse"):
+                hits = await contexts.search_skills("project", query, 8)
+                assert tuple(hit.artifact_ref for hit in hits) == (approved.result_artifact,)
+                assert hits[0].content.instructions == before.content.instructions
+                assert hits[0].content.package == before.content.package
+            for query in (
+                "bodyneedle",
+                "validationneedle",
+                "metadataneedle",
+                "compatibilityneedle",
+                "toolneedle",
+                "licenseneedle",
+            ):
+                assert await contexts.search_skills("project", query, 8) == ()
+
+    asyncio.run(scenario())
+
+
 def test_artifact_head_search_projection_schema_is_mysql_compilable() -> None:
     statement = str(CreateTable(ARTIFACT_HEADS_TABLE).compile(dialect=mysql.dialect()))
 
@@ -172,7 +227,7 @@ def test_sqlite_experience_fts_tracks_only_approved_current_heads_and_rebuilds()
             )
             skill_approval = await review.approve(skill_candidate.candidate_id, skill_candidate.version)
             assert skill_approval.result_artifact is not None
-            skill_hits = await contexts.search_skills("project", "regenerate client", 8)
+            skill_hits = await contexts.search_skills("project", "generated client", 8)
             assert tuple(hit.artifact_ref for hit in skill_hits) == (skill_approval.result_artifact,)
             governance = await contexts.update_skill_lifecycle(
                 "project",
@@ -182,7 +237,7 @@ def test_sqlite_experience_fts_tracks_only_approved_current_heads_and_rebuilds()
                 None,
             )
             assert governance.governance_generation == 1
-            assert await contexts.search_skills("project", "regenerate client", 8) == ()
+            assert await contexts.search_skills("project", "generated client", 8) == ()
             deprecated = await contexts.list_skills("project", True, 8)
             assert deprecated[0][1].lifecycle_state is ArtifactLifecycleState.DEPRECATED
             reactivated = await contexts.update_skill_lifecycle(
@@ -193,7 +248,7 @@ def test_sqlite_experience_fts_tracks_only_approved_current_heads_and_rebuilds()
                 None,
             )
             assert reactivated.governance_generation == 2
-            assert tuple(hit.artifact_ref for hit in await contexts.search_skills("project", "regenerate", 8)) == (
+            assert tuple(hit.artifact_ref for hit in await contexts.search_skills("project", "generated", 8)) == (
                 skill_approval.result_artifact,
             )
 
@@ -213,7 +268,7 @@ def test_sqlite_experience_fts_tracks_only_approved_current_heads_and_rebuilds()
                 assert experience_searchable_text is not None
                 assert "falconcurrent" in experience_searchable_text
                 assert skill_searchable_text is not None
-                assert "regenerate" in skill_searchable_text
+                assert "generated" in skill_searchable_text
 
                 await connection.execute(
                     ARTIFACT_HEADS_TABLE

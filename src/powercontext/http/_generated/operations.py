@@ -141,6 +141,7 @@ from powercontext.http._generated.models import (
     ResolveExternalSkillRequest,
     ResolveScopeBindingRequest,
     ResolveScopeSelectionRequest,
+    ResumeLearningRunRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
@@ -1455,6 +1456,44 @@ GET_LEARNING_RUN = Operation[None, LearningRun](
         500: {"$ref": "#/components/responses/InternalError"},
     },
     access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="path_scope_read_access"),
+)
+
+RESUME_LEARNING_RUN = Operation[ResumeLearningRunRequest, LearningRun](
+    method="POST",
+    path="/v1/scopes/{scope_id}/trace-learning/{run_id}/resume",
+    operation_id="resume_learning_run",
+    request_type=ResumeLearningRunRequest,
+    request_location="body",
+    path_parameters=("scope_id", "run_id"),
+    response_type=LearningRun,
+    success_status=202,
+    summary="Resume selected unfinished candidates from their saved checkpoints",
+    tags=("trace-learning",),
+    scope_mode="none",
+    responses={
+        202: {
+            "description": "The resumed or already pending run.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        200: {
+            "description": "The terminal run from an idempotent replay.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        429: {
+            "description": "The configured pending-work capacity was reached.",
+            "headers": {"Retry-After": {"schema": {"type": "integer", "minimum": 1.0}}},
+        },
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(
+        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
+    ),
 )
 
 LIST_DREAM_RUNS = Operation[ListDreamRunsRequest, DreamRunPage](

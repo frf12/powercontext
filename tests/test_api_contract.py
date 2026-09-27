@@ -476,6 +476,9 @@ def test_prepared_context_is_a_generic_typed_operation_outside_the_mcp_memory_to
         "max_bytes",
         "assembly",
         "learned_tools",
+        "learned_skill_rerank",
+        "learned_skill_min_similarity",
+        "learned_retrieval_options",
         "learned_families",
         "tool_limit",
         "host_profile",
@@ -931,7 +934,11 @@ def test_base_access_uses_a_dedicated_source_type_reference() -> None:
         "ReplaceHandoffArtifactRequest",
     ):
         assert "sources" not in schemas[request_name]["properties"]
-    assert SourceTypeReference(source_type=SourceType.CONTENT, source_id="source").source_type is SourceType.CONTENT
+    assert SourceTypeReference(source_type=SourceType.CONTENT, source_id="source").source_type == SourceType.CONTENT
+    assert (
+        SourceTypeReference(source_type="skill-package-upload", source_id="source").source_type
+        == "skill-package-upload"
+    )
 
 
 def test_base_access_operations_describe_create_and_conditional_get() -> None:

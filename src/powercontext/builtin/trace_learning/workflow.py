@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypedDict, TypeVar
 
 from pydantic import ValidationError
 
@@ -32,16 +32,18 @@ from powercontext.builtin.inference.errors import (
 from powercontext.builtin.inference.models import GenerationResult, InferenceUsage
 from powercontext.builtin.inference.usage import report_generation_usage
 from powercontext.builtin.persistence.dream import database_now
+from powercontext.builtin.trace_learning.consolidation import CandidateConsolidator, redirect_tool_dependencies
 from powercontext.builtin.trace_learning.generation import (
     CandidateDiscoveryInput,
     CandidateGenerationInput,
-    ToolReviewInput,
+    tool_review_input,
 )
 from powercontext.builtin.trace_learning.models import (
     CandidateFeedback,
     CandidateInventory,
     CandidateOutcome,
     CandidateResponse,
+    CandidateStageFailure,
     GeneratedCandidate,
     GeneratedExperience,
     GeneratedSkill,
@@ -56,12 +58,20 @@ from powercontext.builtin.trace_learning.models import (
 from powercontext.errors import RevisionConflictError
 
 if TYPE_CHECKING:
+    from powercontext.builtin.artifacts.tool import ToolContent
     from powercontext.builtin.runtime.processing_execution import ScopeInvocation
     from powercontext.builtin.trace_learning.generation import CandidateLearningGenerator
+    from powercontext.builtin.trace_learning.models import ReviewDecision, ToolReview
     from powercontext.builtin.trace_learning.service import TraceLearningService
 
 T = TypeVar("T")
 _TERMINAL = {"published", "rejected", "deferred"}
+
+
+class _ReviewHistory(TypedDict, total=False):
+    previous_tool: ToolContent
+    previous_review: ToolReview
+    decisions: tuple[ReviewDecision, ...]
 
 
 class CandidateWorkflow:
@@ -76,6 +86,7 @@ class CandidateWorkflow:
         self.invocation = invocation
         self.record = record
         self.generator = generator
+        self.consolidator = CandidateConsolidator(self)
 
     async def _store(self) -> None:
         self.record = self.record.model_copy(
@@ -98,10 +109,12 @@ class CandidateWorkflow:
         return candidates[index]
 
     async def _status(self, index: int, status: str, reason: str | None = None, **changes) -> LearningCandidate:
-        outcome = self.record.candidates[index].outcome.model_copy(
-            update={"status": status, "reason": reason, **changes}
-        )
-        return await self._update(index, outcome=outcome)
+        candidate = self.record.candidates[index]
+        outcome = candidate.outcome.model_copy(update={"status": status, "reason": reason, **changes})
+        checkpoint = {}
+        if status in {"deferred", "rejected"} and candidate.outcome.status not in _TERMINAL:
+            checkpoint["resume_status"] = candidate.outcome.status
+        return await self._update(index, outcome=outcome, **checkpoint)
 
     async def _authorize_evidence(self) -> None:
         scope, principal = self.record.run.scope_id, self.record.principal_id
@@ -114,6 +127,9 @@ class CandidateWorkflow:
             refs.extend(item.tool_ref for item in context.resolved_tool_calls)
             for ref in refs:
                 await self.service._authorize(scope, principal, "read", ref)
+        for candidate in self.record.candidates:
+            for previous in (*(candidate.history or ()), *(candidate.consolidation_history or ())):
+                await self.service._authorize(scope, principal, "read", previous.ref)
 
     async def _call(
         self, dispatch: Callable[[int], Awaitable[GenerationResult[T]]], *, stage: str
@@ -204,22 +220,62 @@ class CandidateWorkflow:
     async def execute(self) -> None:
         if not self.record.candidate_plan_ready:
             await self._discover()
-        for index in range(len(self.record.candidates)):
-            if self.record.candidates[index].outcome.status in _TERMINAL:
-                continue
-            try:
-                await self._process(index)
-            except (InvalidInferenceOutputError, ValidationError):
-                await self._status(index, "deferred", "invalid_generation_output")
-            except RevisionConflictError:
-                await self._status(index, "deferred", "artifact_revision_conflict")
-            except SkillPackageError:
-                await self._status(index, "rejected", "invalid_skill_package")
-            except TraceLearningError as error:
-                await self._status(
-                    index, "deferred" if error.code.endswith("budget_exceeded") else "rejected", error.code
-                )
+        indices = sorted(
+            range(len(self.record.candidates)),
+            key=lambda i: {"tool": 0, "experience": 1, "skill": 2}[self.record.candidates[i].spec.family],
+        )
+        # Give every executable capability a first draft before one repair conversation
+        # consumes the Run. Preserve inventory indices for durable checkpoints.
+        for index in indices:
+            candidate = self.record.candidates[index]
+            if (
+                candidate.spec.family == "tool"
+                and not candidate.revisions
+                and candidate.outcome.status not in _TERMINAL
+            ):
+                await self._attempt(index, generate_only=True)
+        while True:
+            await self._unblock_skills()
+            pending = [i for i in indices if self.record.candidates[i].outcome.status not in _TERMINAL]
+            if not pending:
+                break
+            for index in pending:
+                await self._attempt(index)
         await self._finish()
+
+    async def _attempt(self, index: int, *, generate_only: bool = False) -> None:
+        try:
+            if generate_only:
+                await self._generate(index)
+            else:
+                await self._process(index)
+        except (InvalidInferenceOutputError, ValidationError):
+            await self._status(index, "deferred", "invalid_generation_output")
+        except RevisionConflictError:
+            await self._status(index, "deferred", "artifact_revision_conflict")
+        except SkillPackageError:
+            await self._status(index, "rejected", "invalid_skill_package")
+        except TraceLearningError as error:
+            await self._status(
+                index,
+                "deferred"
+                if error.code.endswith("budget_exceeded")
+                or error.code in {"consolidation_disputed", "unavailable_tool_dependency"}
+                else "rejected",
+                error.code,
+            )
+
+    async def _unblock_skills(self) -> None:
+        available = {item.key for item in self._tools()}
+        for index, candidate in enumerate(self.record.candidates):
+            if (
+                candidate.spec.family == "skill"
+                and candidate.outcome.reason == "unavailable_tool_dependency"
+                and set(candidate.spec.tool_keys) <= available
+            ):
+                await self._status(
+                    index, candidate.resume_status or ("reviewing" if candidate.revisions else "planned")
+                )
 
     async def _discover(self) -> None:
         if self.record.generation_input is None:
@@ -356,56 +412,84 @@ class CandidateWorkflow:
             if not candidate.revisions or candidate.outcome.status in {"planned", "generating", "repairing"}:
                 await self._generate(index)
                 candidate = self.record.candidates[index]
-            errors = await self._validate(candidate)
+            if self.consolidator.enabled and not candidate.consolidation_applied and candidate.spec.family == "tool":
+                errors = await self._validate(index, preliminary=True)
+                if errors:
+                    await self._repair(index, CandidateFeedback(validation_errors=errors))
+                    return
+            if await self.consolidator.reconcile(index):
+                return
+            candidate = self.record.candidates[index]
+            errors = await self._validate(index)
             if errors:
-                if not await self._repair(
+                await self._repair(
                     index,
                     CandidateFeedback(
                         validation_errors=errors, review=candidate.feedback.review if candidate.feedback else None
                     ),
-                ):
-                    return
-                continue
+                )
+                return
             item = candidate.revisions[-1].candidate
             if isinstance(item, GeneratedTool) and not candidate.review_resolved:
                 if candidate.reviewed_revision == len(candidate.revisions):
-                    if not await self._repair(index, CandidateFeedback(review=candidate.reviews[-1])):
-                        return
-                    continue
-                if self._declined_unchanged_review(candidate):
-                    await self._update(index, review_resolved=True)
+                    await self._repair(index, CandidateFeedback(review=candidate.reviews[-1]))
+                    return
+                if self._generator_closed_review(candidate):
+                    await self._update(index, review_resolved=True, review_resolution="generator_self_pass")
                 else:
                     await self._review(index, item)
                     candidate = self.record.candidates[index]
                     review = candidate.reviews[-1]
                     if review.findings:
-                        if not await self._repair(index, CandidateFeedback(review=review)):
-                            return
-                        continue
+                        await self._repair(index, CandidateFeedback(review=review))
+                        return
             await self._status(index, "ready")
 
     @staticmethod
-    def _declined_unchanged_review(candidate: LearningCandidate) -> bool:
+    def _generator_closed_review(candidate: LearningCandidate) -> bool:
         if len(candidate.revisions) < 2 or candidate.feedback is None or candidate.feedback.review is None:
             return False
         last, previous = candidate.revisions[-1], candidate.revisions[-2]
-        return last.candidate == previous.candidate and all(item.decision == "reject" for item in last.decisions)
+        return last.self_pass or (
+            last.candidate == previous.candidate and all(item.decision == "reject" for item in last.decisions)
+        )
 
     async def _generate(self, index: int) -> None:
+        await self.consolidator.prepare(index)
         candidate = self.record.candidates[index]
         context = self.record.generation_input
         if context is None:
             raise TraceLearningError("invalid_checkpoint")
+        tool_sources = ()
+        if (
+            candidate.spec.family == "tool"
+            and self.generator.parameter_plans
+            and (candidate.generation_format == "parameter_plan" or not candidate.messages)
+        ):
+            from powercontext.builtin.trace_learning.parameter_plan import recorded_tool_sources
+
+            tool_sources = recorded_tool_sources(context, candidate.spec.trace_ids, candidate.spec.source_calls)
+            if not tool_sources:
+                raise TraceLearningError("trace_sql_unavailable")
+            candidate = await self._update(index, generation_format="parameter_plan")
         if candidate.messages:
             context = None
         else:
             context = context.model_copy(
                 update={
-                    "traces": tuple(trace for trace in context.traces if trace.trace_id in candidate.spec.trace_ids)
+                    "traces": tuple(trace for trace in context.traces if trace.trace_id in candidate.spec.trace_ids),
+                    "previous_artifacts": context.previous_artifacts
+                    if candidate.history is None
+                    else candidate.history,
                 }
             )
         value = CandidateGenerationInput(
-            candidate=candidate.spec, context=context, available_tools=self._tools(), feedback=candidate.feedback
+            candidate=candidate.spec,
+            context=context,
+            available_tools=self._tools(),
+            feedback=candidate.feedback,
+            tool_sources=tool_sources,
+            host_profile=self.record.run.host_profile if tool_sources else None,
         )
         self._check_input(value, candidate.messages)
         await self._status(index, "generating")
@@ -415,7 +499,19 @@ class CandidateWorkflow:
                 stage="generating",
             )
         except InferenceError as error:
-            await self._update(index, messages=error.messages or candidate.messages)
+            await self._update(
+                index,
+                messages=error.messages or candidate.messages,
+                stage_failures=(
+                    *candidate.stage_failures,
+                    CandidateStageFailure(
+                        stage="generating",
+                        code=type(error).__name__,
+                        revision=len(candidate.revisions),
+                        model_calls=self.record.run.usage.model_calls,
+                    ),
+                ),
+            )
             raise
         response = CandidateResponse[GeneratedCandidate].model_validate(result.output.model_dump())
         await self._update(
@@ -423,13 +519,17 @@ class CandidateWorkflow:
             messages=result.messages,
             revisions=(*candidate.revisions, response),
             review_resolved=False,
+            review_resolution=None,
             outcome=candidate.outcome.model_copy(update={"status": "reviewing", "reason": None}),
         )
 
-    async def _validate(self, candidate: LearningCandidate) -> tuple[str, ...]:
+    async def _validate(self, index: int, *, preliminary: bool = False) -> tuple[str, ...]:  # noqa: C901 - identity, contract and recorded-path validation
         from powercontext.builtin.trace_learning.service import validate_bundle
 
+        candidate = self.record.candidates[index]
         response = candidate.revisions[-1]
+        if response.consolidation_conflict is not None:
+            raise TraceLearningError("consolidation_disputed")
         item = response.candidate
         kind = {"experience": GeneratedExperience, "tool": GeneratedTool, "skill": GeneratedSkill}[
             candidate.spec.family
@@ -445,15 +545,33 @@ class CandidateWorkflow:
             actual = [decision.finding_id for decision in response.decisions]
             if set(actual) != expected or len(actual) != len(expected):
                 return ("Respond to every review finding exactly once with a decision and nonempty reason.",)
-        if isinstance(item, GeneratedTool) and any(
-            old.content.name == item.content.name and old.key != item.key for old in self._tools()
+        if (
+            not preliminary
+            and isinstance(item, GeneratedTool)
+            and any(old.content.name == item.content.name and old.key != item.key for old in self._tools())
         ):
             return ("Another tool has this callable name; give distinct capabilities distinct callable names.",)
         if isinstance(item, GeneratedSkill) and set(item.tool_keys) != set(candidate.spec.tool_keys):
             return ("Skill tool_keys must match its planned dependencies.",)
         bundle = _bundle(item, self._tools() if isinstance(item, GeneratedSkill) else ())
         async with self.service._transaction(self.invocation) as connection:
-            previous = await self.service.repository.list_completed(connection, self.record.run.scope_id, limit=None)
+            previous = await self.service.repository.list_completed(
+                connection, self.record.run.scope_id, limit=None, include_partial=self.consolidator.enabled
+            )
+        if self.consolidator.enabled:
+            previous = (*tuple(old for old in previous if old.run.run_id != self.record.run.run_id), self.record)
+        decision = candidate.consolidation
+        if isinstance(item, GeneratedTool) and decision is not None and decision.target is not None:
+            target = next(old for old in candidate.consolidation_history or () if old.ref == decision.target)
+            old_content = target.content
+            if item.content.name != old_content.get("name"):
+                return ("Preserve the historical Tool's callable name when revising its identity.",)
+            for field in ("input_schema", "output_schema"):
+                if _schema_contract(getattr(item.content, field)) != _schema_contract(old_content.get(field)):
+                    return (
+                        f"Preserve the historical Tool's {field} validation contract; documentation may be clarified. "
+                        "Do not narrow accepted values or change parameter/output meanings when reusing an identity.",
+                    )
         try:
             validation = validate_bundle(
                 bundle,
@@ -466,40 +584,94 @@ class CandidateWorkflow:
             return tuple(feedback.model_dump_json() for feedback in error.feedback)
         except (TraceLearningError, ValidationError, ValueError) as error:
             return (str(error)[:8000],)
-        index = next(i for i, value in enumerate(self.record.candidates) if value.spec == candidate.spec)
         await self._update(index, validation=validation)
         return ()
 
     async def _review(self, index: int, item: GeneratedTool) -> None:
         candidate = self.record.candidates[index]
-        self._check_input(ToolReviewInput(tool=item.content))
-        try:
-            result = await self._call(
-                lambda limit: self.generator.review_tool(item.content, max_requests=limit), stage="reviewing"
-            )
-        except InferenceError as error:
-            await self._update(index, review_messages=(*candidate.review_messages, error.messages))
-            raise
+        followup: _ReviewHistory = {}
+        if candidate.reviewed_revision and candidate.reviews:
+            previous = candidate.revisions[candidate.reviewed_revision - 1].candidate
+            if isinstance(previous, GeneratedTool):
+                followup = {
+                    "previous_tool": previous.content,
+                    "previous_review": candidate.reviews[-1],
+                    "decisions": candidate.revisions[-1].decisions,
+                }
+        self._check_input(tool_review_input(item.content, **followup))
+        for attempt in range(self.record.run.budget.max_candidate_review_retries + 1):
+            candidate = self.record.candidates[index]
+            try:
+                result = await self._call(
+                    lambda limit: self.generator.review_tool(item.content, max_requests=limit, **followup),
+                    stage="reviewing",
+                )
+                break
+            except InferenceError as error:
+                await self._update(
+                    index,
+                    review_messages=(*candidate.review_messages, error.messages),
+                    stage_failures=(
+                        *candidate.stage_failures,
+                        CandidateStageFailure(
+                            stage="reviewing",
+                            code=type(error).__name__,
+                            revision=len(candidate.revisions),
+                            model_calls=self.record.run.usage.model_calls,
+                        ),
+                    ),
+                )
+                if not isinstance(error, InvalidInferenceOutputError) or (
+                    attempt == self.record.run.budget.max_candidate_review_retries
+                ):
+                    raise
+        else:
+            raise TraceLearningError("invalid_checkpoint")
+        candidate = self.record.candidates[index]
         await self._update(
             index,
             reviews=(*candidate.reviews, result.output),
             review_messages=(*candidate.review_messages, result.messages),
             reviewed_revision=len(candidate.revisions),
             review_resolved=not result.output.findings,
-            feedback=CandidateFeedback(review=result.output),
+            review_resolution=None if result.output.findings else "reviewer_pass",
+            feedback=CandidateFeedback(
+                review=result.output,
+                consolidation=None if candidate.feedback is None else candidate.feedback.consolidation,
+            ),
             outcome=candidate.outcome.model_copy(update={"review_rounds": candidate.outcome.review_rounds + 1}),
         )
 
     async def _repair(self, index: int, feedback: CandidateFeedback) -> bool:
         candidate = self.record.candidates[index]
+        if candidate.feedback is not None and candidate.feedback.consolidation is not None:
+            feedback = feedback.model_copy(update={"consolidation": candidate.feedback.consolidation})
         await self._update(index, feedback=feedback)
-        if candidate.outcome.repair_rounds >= self.record.run.budget.max_candidate_repair_rounds:
+        validation = bool(feedback.validation_errors)
+        budget = self.record.run.budget
+        limit = (
+            (
+                candidate.validation_repair_limit
+                if candidate.validation_repair_limit is not None
+                else budget.max_candidate_validation_repairs
+            )
+            if validation
+            else (candidate.repair_limit if candidate.repair_limit is not None else budget.max_candidate_repair_rounds)
+        )
+        rounds = (
+            candidate.validation_repair_rounds
+            if validation
+            else candidate.outcome.repair_rounds - candidate.validation_repair_rounds
+        )
+        if rounds >= limit:
             await self._status(
                 index,
                 "rejected" if feedback.validation_errors else "deferred",
                 "validation_failed" if feedback.validation_errors else "review_unresolved",
             )
             return False
+        if validation:
+            await self._update(index, validation_repair_rounds=candidate.validation_repair_rounds + 1)
         await self._status(index, "repairing", repair_rounds=candidate.outcome.repair_rounds + 1)
         return True
 
@@ -507,18 +679,32 @@ class CandidateWorkflow:
         candidate = self.record.candidates[index]
         item = candidate.revisions[-1].candidate
         existing = self.record.generated or GeneratedTraceLearningBundle()
+        context = self.record.generation_input
+        publication = self.record.model_copy(
+            update={
+                "generated": _bundle(item),
+                "generation_input": context
+                if context is None or candidate.history is None
+                else context.model_copy(update={"previous_artifacts": candidate.history}),
+            }
+        )
+        await self._authorize_evidence()
+        vectors = await self.service._prepare_bundle_vectors(publication)
         async with self.service._transaction(self.invocation) as connection:
             await self._authorize_evidence()
-            saved = await self.service._save_bundle(
-                connection, self.record.model_copy(update={"generated": _bundle(item)})
-            )
+            saved = await self.service._save_bundle(connection, publication, vectors)
             group = {"experience": "experiences", "tool": "tools", "skill": "skills"}[candidate.spec.family]
-            aggregate = existing.model_copy(update={group: (*getattr(existing, group), item)})
+            aggregate = existing.model_copy(
+                update={group: (*(old for old in getattr(existing, group) if old.key != item.key), item)}
+            )
             candidates = list(saved.candidates)
+            redirect_tool_dependencies(candidates, candidate)
             candidates[index] = candidate.model_copy(
                 update={"outcome": candidate.outcome.model_copy(update={"status": "published", "reason": None})}
             )
-            self.record = saved.model_copy(update={"generated": aggregate, "candidates": tuple(candidates)})
+            self.record = saved.model_copy(
+                update={"generated": aggregate, "candidates": tuple(candidates), "generation_input": context}
+            )
             self.record = self.record.model_copy(
                 update={
                     "run": self.record.run.model_copy(
@@ -567,3 +753,40 @@ def _bundle(item: GeneratedCandidate, tools: tuple[GeneratedTool, ...] = ()) -> 
 
 def _sum(previous: int | None, current: int | None) -> int | None:
     return None if previous is None and current is None else (previous or 0) + (current or 0)
+
+
+def _schema_contract(value):
+    """Ignore documentation while preserving validation keywords and parameter names."""
+    if isinstance(value, list):
+        return [_schema_contract(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        if key in {"description", "title", "examples", "$comment"}:
+            continue
+        if key in {"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"} and isinstance(
+            item, dict
+        ):
+            result[key] = {name: _schema_contract(schema) for name, schema in item.items()}
+        elif key in {
+            "allOf",
+            "anyOf",
+            "oneOf",
+            "not",
+            "if",
+            "then",
+            "else",
+            "items",
+            "prefixItems",
+            "contains",
+            "additionalProperties",
+            "unevaluatedProperties",
+            "propertyNames",
+            "additionalItems",
+            "unevaluatedItems",
+        }:
+            result[key] = _schema_contract(item)
+        else:
+            result[key] = item
+    return result

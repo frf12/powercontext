@@ -1727,6 +1727,87 @@ paths:
           $ref: '#/components/responses/Unavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/scopes/{scope_id}/trace-learning/{run_id}/resume:
+    post:
+      tags:
+      - trace-learning
+      summary: Resume selected unfinished candidates from their saved checkpoints
+      operationId: resume_learning_run
+      x-powercontext-access:
+        action: scope.contribute
+        resource:
+          type: scope
+          scope-id-from: scope_id
+      description: >-
+        Resume selected candidates from a terminal run owned by the caller. Published candidates,
+        prior failures, messages and cumulative usage are preserved. The same idempotency key and
+        request replay the current run without extending its budget again. Configuration changes
+        require use_current_configuration. Active runs cannot be restarted.
+      parameters:
+      - name: scope_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeLearningRunRequest'
+      responses:
+        '202':
+          description: The resumed or already pending run.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningRun'
+        '200':
+          description: The terminal run from an idempotent replay.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+        '429':
+          description: The configured pending-work capacity was reached.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/scopes/{scope_id}/dream:
     post:
       tags:
@@ -8251,6 +8332,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EntryChange"
+    LearnedRetrievalOptions:
+      type: object
+      additionalProperties: false
+      description: >-
+        Request-local fusion controls for learned Experience, Skill and Tool candidates. Weights must be
+        finite and nonnegative, with at least one positive weight. The normalized score is the weighted
+        sum of 1/(60+rank), divided by the maximum possible weighted score (all enabled channels rank 1).
+        Scores range from 0 to 1 and are not cosine similarities or relevance probabilities. Missing hits
+        contribute zero. A configured vector channel remains in the denominator on inference failure;
+        without vector configuration, only the FTS channel is enabled. Existing semantic admission still
+        applies even when a channel has zero fusion weight. Required exact Tool dependencies of an admitted
+        Skill may be included below the independent-match cutoff. Ordinary Memory and Topic Memory are unaffected.
+      properties:
+        fts_weight:
+          type: number
+          minimum: 0
+          default: 1
+          description: Relative contribution of full-text ranking; zero removes its fusion contribution.
+        vector_weight:
+          type: number
+          minimum: 0
+          default: 1
+          description: Relative contribution of vector ranking; normalized together with the FTS weight.
+        min_rrf_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0
+          description: >-
+            Minimum normalized RRF score, inclusive, applied after fusion and before optional Skill model
+            selection and context budgeting. No below-threshold matches are added to fill a minimum count.
+            Zero disables additional filtering. Rejected learned Experiences cannot re-enter ordinary assembly.
     PrepareContextRequest:
       type: object
       additionalProperties: false
@@ -8277,6 +8390,25 @@ components:
           type: boolean
           default: false
           description: Opt into complete learned tool contracts and their associated methods.
+        learned_skill_rerank:
+          type: boolean
+          default: false
+          description: >-
+            Opt into a model-based Skill applicability check for this request only. Omitted or false disables
+            the check, preserving hybrid retrieval and its semantic threshold. Requires a configured rerank
+            or generation model; otherwise returns capability_not_supported. Applies only when learned Skills
+            are selected. Adds model usage and context-preparation latency; other requests are unaffected.
+        learned_skill_min_similarity:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: >-
+            Override the learned Skill cosine similarity threshold for this request only. Omitted or null
+            retains the server threshold (default 0.3) when model selection is off, or its candidate policy
+            when model selection is on. An explicit value filters Skills before optional model selection.
+            Experience and Tool thresholds, Skill library searches and other requests are unaffected.
+            Applies when vector retrieval is available; lexical-only fallback does not enforce a cosine threshold.
         learned_families:
           type: array
           maxItems: 3
@@ -8288,6 +8420,11 @@ components:
             Explicit selection applied before budgeting, overriding learned_tools. An empty array disables
             learned E/S/T. Omitting this field preserves the learned_tools opt-in behavior. Disabling Experience
             also disables ordinary Experience assembly. Skills requiring disabled or unavailable tools are skipped.
+        learned_retrieval_options:
+          allOf:
+            - $ref: "#/components/schemas/LearnedRetrievalOptions"
+          nullable: true
+          description: Omitted or null preserves equal-weight learned retrieval without an additional RRF cutoff.
         tool_limit:
           type: integer
           minimum: 1
@@ -9450,7 +9587,8 @@ components:
       properties:
         source_type:
           type: string
-          enum: [content]
+          minLength: 1
+          description: Stable source type, including registered internal provenance sources.
         source_id:
           type: string
           minLength: 1
@@ -10162,6 +10300,51 @@ components:
       - idempotency_key
       - traces
       - host_profile
+    LearningCandidateSelection:
+      type: object
+      additionalProperties: false
+      required: [family, key]
+      properties:
+        family:
+          type: string
+          enum: [experience, tool, skill]
+        key:
+          type: string
+          minLength: 1
+          maxLength: 128
+    ResumeLearningRunRequest:
+      type: object
+      additionalProperties: false
+      required: [idempotency_key, candidates]
+      properties:
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+        candidates:
+          type: array
+          minItems: 1
+          maxItems: 384
+          items:
+            $ref: '#/components/schemas/LearningCandidateSelection'
+        additional_model_calls:
+          type: integer
+          minimum: 1
+          maximum: 1024
+          default: 32
+        additional_repair_rounds:
+          type: integer
+          minimum: 0
+          maximum: 8
+          default: 2
+        timeout_seconds:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 7200
+          default: 1800
+        use_current_configuration:
+          type: boolean
+          default: false
     LearningBudget:
       properties:
         max_model_calls:
@@ -10176,9 +10359,21 @@ components:
           default: 32
         max_candidate_repair_rounds:
           type: integer
+          maximum: 16.0
+          minimum: 0.0
+          default: 4
+          description: Semantic review repair rounds per candidate, separate from deterministic validation repairs.
+        max_candidate_validation_repairs:
+          type: integer
           maximum: 8.0
           minimum: 0.0
           default: 2
+        max_candidate_review_retries:
+          type: integer
+          maximum: 4.0
+          minimum: 0.0
+          default: 1
+          description: Additional attempts after invalid independent review output; still bounded by the run budget.
         max_output_tokens:
           type: integer
           maximum: 64000.0
@@ -10322,7 +10517,7 @@ components:
           default: 0
         prompt_version:
           type: string
-          default: powercontext.trace-learning.v3
+          default: powercontext.trace-learning.v7
         model_config_id:
           type: string
           nullable: true
@@ -10339,6 +10534,9 @@ components:
           default: []
           items:
             $ref: '#/components/schemas/LearningCandidateOutcome'
+        resume_count:
+          type: integer
+          default: 0
         error:
           type: string
           nullable: true
@@ -10443,6 +10641,11 @@ components:
       additionalProperties: false
       required: [scope_id, query, host_profile]
       properties:
+        learned_retrieval_options:
+          allOf:
+            - $ref: "#/components/schemas/LearnedRetrievalOptions"
+          nullable: true
+          description: Same per-request fusion controls as context preparation, applied to learned Tool matches.
         scope_id:
           type: string
           minLength: 1

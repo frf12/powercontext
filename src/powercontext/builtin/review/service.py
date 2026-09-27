@@ -29,6 +29,7 @@ from powercontext.builtin.artifacts.profile.review import decide_profile, revise
 from powercontext.builtin.artifacts.skill import Skill, SkillContent, SkillDraft, build_instruction_skill_package
 from powercontext.builtin.evidence.models import EvidenceResolutionError, unique_references
 from powercontext.builtin.evidence.resolver import AuthorizationContext, EvidenceAuthorizer, EvidenceResolver
+from powercontext.builtin.persistence.artifact_vectors import ArtifactVectorService, PreparedArtifactVector
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.candidates import CandidateRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
@@ -73,6 +74,7 @@ class ReviewService:
         skill_packages: SkillPackageRepository,
         sources: GenerationSourceAccess,
         id_factory: IdFactory,
+        artifact_vectors: ArtifactVectorService | None = None,
         evidence: EvidenceResolver | None = None,
         authorization_context: Callable[[], AbstractAsyncContextManager[None]] = nullcontext,
         connection: AsyncConnection | None = None,
@@ -81,6 +83,7 @@ class ReviewService:
         self._scope_id = scope_id
         self._candidates = candidates
         self._artifacts = artifacts
+        self._artifact_vectors = artifact_vectors
         self._experience_index = experience_index
         self._skill_packages = skill_packages
         self._sources = sources
@@ -359,6 +362,8 @@ class ReviewService:
     ) -> ReviewedCandidate:
         """Atomically commit the reviewed Artifact and Candidate result."""
 
+        vector = await self._prepare_approval_vector(candidate_id, expected_version)
+
         async with self._connection() as connection:
             current = await self._candidates.get(connection, self._scope_id, candidate_id)
             if current.family == "profile":
@@ -402,6 +407,8 @@ class ReviewService:
             elif isinstance(artifact, Skill) and artifact.content.package is not None:
                 package = await self._skill_packages.get(connection, self._scope_id, artifact.content.package)
                 await self._experience_index.replace_skill(connection, self._scope_id, artifact, package)
+            if self._artifact_vectors is not None:
+                await self._artifact_vectors.commit(connection, self._scope_id, artifact, vector)
             approved = await self._candidates.mark_approved(
                 connection,
                 self._scope_id,
@@ -410,6 +417,27 @@ class ReviewService:
                 artifact.as_ref(),
             )
         return _reviewed_candidate(approved)
+
+    async def _prepare_approval_vector(
+        self,
+        candidate_id: str,
+        expected_version: int,
+    ) -> PreparedArtifactVector | None:
+        if self._artifact_vectors is None:
+            return None
+        async with self._connection() as connection:
+            # Validate the expected pending version before paying for embedding.
+            # approve takes this CAS again after the model call.
+            snapshot = _reviewed_candidate(
+                await self._candidates.lock_pending(connection, self._scope_id, candidate_id, expected_version)
+            )
+            if snapshot.family == "profile":
+                return None
+            _validate_approval_lineage(snapshot)
+            await self._validate_evidence(connection, snapshot.sources, snapshot.artifacts, snapshot.memory_citations)
+            if isinstance(snapshot.proposal, SkillContent):
+                await self._canonical_skill_proposal(connection, snapshot.proposal)
+        return await self._artifact_vectors.prepare(snapshot.family, snapshot.proposal)
 
     async def get_experience(self, ref: ArtifactRef, /) -> Experience:
         return cast(Experience, await self._get_artifact(ref, Experience))

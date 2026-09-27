@@ -53,6 +53,12 @@ from powercontext.builtin.artifacts.prompt import PromptRegistry
 from powercontext.builtin.artifacts.prompt.builtin import builtin_prompt_definitions
 from powercontext.builtin.artifacts.prompt.service import DemonstrationGenerator
 from powercontext.builtin.artifacts.skill import AgentSkillProvider, ExternalSkillProvider, SkillGenerator
+from powercontext.builtin.artifacts.skill.reranking import (
+    SKILL_RERANK_INSTRUCTIONS,
+    LLMSkillReranker,
+    SkillRerankInput,
+    SkillRerankOutput,
+)
 from powercontext.builtin.artifacts.topic_memory import TOPIC_MEMORY_SOURCE_WINDOW_BINDING
 from powercontext.builtin.artifacts.topic_memory.generation import (
     TopicMemoryGenerationError,
@@ -78,6 +84,7 @@ from powercontext.builtin.inference.usage import (
 )
 from powercontext.builtin.persistence.dream_schema import ensure_dream_schema
 from powercontext.builtin.persistence.memory_index import CompositeMemoryIndex, MemoryIndex
+from powercontext.builtin.persistence.oceanbase.artifact_vector_index import OceanBaseArtifactVectorIndex
 from powercontext.builtin.persistence.oceanbase.experience_index import OceanBaseExperienceFTSIndex
 from powercontext.builtin.persistence.oceanbase.memory_index import (
     OceanBaseMemoryFTSIndex,
@@ -95,6 +102,7 @@ from powercontext.builtin.persistence.processing_migration import (
 from powercontext.builtin.persistence.scope_search_schema import ensure_scope_search_schema
 from powercontext.builtin.persistence.seekdb.profile import SeekDBConfig, SeekDBProfile
 from powercontext.builtin.persistence.skill_distribution_schema import ensure_skill_distribution_schema
+from powercontext.builtin.persistence.sqlite.artifact_vector_index import SQLiteArtifactVectorIndex
 from powercontext.builtin.persistence.sqlite.experience_index import SQLiteExperienceFTSIndex
 from powercontext.builtin.persistence.sqlite.memory_index import SQLiteMemoryFTSIndex, SQLiteMemoryVectorIndex
 from powercontext.builtin.persistence.sqlite.profile import SQLiteConfig, SQLiteProfile
@@ -172,6 +180,7 @@ class BuiltinConfigurationError(RuntimeError):
             ),
             "inference-profile": "validated inference profile is incomplete",
             "memory-reranker": "Memory reranking requires a configured generation or rerank model, or injected reranker",
+            "skill-reranker": "Skill applicability reranking requires a configured generation or rerank model",
             "scheduled-experience-pipeline": "scheduled Experience incubation requires a candidate pipeline",
             "scheduled-pipeline": "scheduled Source processing requires a candidate pipeline",
             "scheduled-profile-generation": "scheduled Profile processing requires reconstructible generation",
@@ -305,6 +314,7 @@ async def open_builtin_runtime(
             generated_skill,
             generated_handoff,
             generated_reranker,
+            generated_skill_reranker,
             generation_readiness,
             rerank_readiness,
         ) = (
@@ -324,8 +334,10 @@ async def open_builtin_runtime(
                 or skill_generator is None
                 or handoff_pipeline is None
                 or (config.runtime.memory_rerank_enabled and memory_reranker is None)
+                or config.inference.generation_model is not None
+                or config.inference.rerank_model is not None
             )
-            else (None, None, None, None, None, None, None, None, None)
+            else (None, None, None, None, None, None, None, None, None, None)
         )
         configured_pipeline = generated_memory if candidate_pipeline is None else candidate_pipeline
         configured_incubation = generated_incubation if experience_pipeline is None else experience_pipeline
@@ -499,6 +511,8 @@ async def open_builtin_runtime(
                     attest_candidate=dream_candidate_attester,
                 ),
                 generation_concurrency=config.runtime.generation_concurrency,
+                learned_skill_reranker=generated_skill_reranker,
+                learned_skill_rerank_candidate_limit=config.runtime.learned_skill_rerank_candidate_limit,
                 trace_learning_service=TraceLearningService(
                     contexts=contexts,
                     generator=configured_trace_generator,
@@ -561,8 +575,7 @@ async def open_builtin_runtime(
                 contexts.scopes,
                 RuntimeHandoffReadAdapter(runtime.handoff),
             )
-        if config.runtime.memory_rerank_enabled and configured_reranker is None:
-            raise BuiltinConfigurationError("memory-reranker")
+        _require_rerankers(config.runtime, configured_reranker)
         yield runtime
 
 
@@ -775,7 +788,7 @@ async def _open_artifact_processing_supervisor(
 
 
 @asynccontextmanager
-async def open_builtin_contexts(
+async def open_builtin_contexts(  # noqa: C901 - compose the native FTS/vector adapters for each backend
     config: BuiltinConfig,
     *,
     candidate_pipeline: CandidatePipeline | None = None,
@@ -800,6 +813,9 @@ async def open_builtin_contexts(
     configured_token_estimator = character_token_estimator() if token_estimator is None else token_estimator
     if isinstance(database, SQLiteConfig):
         experience_index = SQLiteExperienceFTSIndex()
+        artifact_vector_index = (
+            SQLiteArtifactVectorIndex(embedding_model.profile) if embedding_model is not None else None
+        )
         indexes: list[MemoryIndex] = [SQLiteMemoryFTSIndex()]
         if embedding_model is not None:
             indexes.append(SQLiteMemoryVectorIndex(embedding_model.profile))
@@ -810,7 +826,10 @@ async def open_builtin_contexts(
         topic_index = CompositeTopicMemoryIndex(*topic_indexes)
         async with SQLiteProfile.open(
             database,
-            tables=BUILTIN_TABLES + index.tables + topic_index.tables,
+            tables=BUILTIN_TABLES
+            + index.tables
+            + topic_index.tables
+            + (() if artifact_vector_index is None else artifact_vector_index.tables),
             load_vector_extension=embedding_model is not None,
         ) as profile:
             async with profile.database.transaction() as connection:
@@ -819,6 +838,8 @@ async def open_builtin_contexts(
                 await ensure_skill_distribution_schema(connection)
                 await ensure_dream_schema(connection)
                 await ensure_scope_search_schema(connection)
+                if artifact_vector_index is not None:
+                    await artifact_vector_index.initialize(connection)
                 # A Topic child reuses its parent's schema. It never reads or
                 # writes Memory/Experience projections; rebuilding their FTS
                 # indexes here would take the shared SQLite write lock once
@@ -834,6 +855,7 @@ async def open_builtin_contexts(
                 index=index,
                 topic_memory_index=topic_index,
                 experience_index=experience_index,
+                artifact_vector_index=artifact_vector_index,
                 candidate_pipeline=candidate_pipeline,
                 experience_pipeline=experience_pipeline,
                 experience_generator=experience_generator,
@@ -844,6 +866,7 @@ async def open_builtin_contexts(
                 token_estimator=configured_token_estimator,
                 memory_reranker=memory_reranker,
                 memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
+                artifact_recall_min_similarity=config.runtime.artifact_recall_min_similarity,
                 prompt_registry=prompt_registry,
                 prompt_demonstrators=prompt_demonstrators,
                 handoff_verification_keys=handoff_verification_keys,
@@ -854,6 +877,9 @@ async def open_builtin_contexts(
             yield contexts
         return
     experience_index = OceanBaseExperienceFTSIndex()
+    artifact_vector_index = (
+        OceanBaseArtifactVectorIndex(embedding_model.profile) if embedding_model is not None else None
+    )
     indexes = [OceanBaseMemoryFTSIndex()]
     if embedding_model is not None:
         indexes.append(OceanBaseMemoryVectorIndex(embedding_model.profile))
@@ -862,7 +888,12 @@ async def open_builtin_contexts(
     if embedding_model is not None:
         topic_indexes.append(OceanBaseTopicMemoryVectorIndex(embedding_model.profile))
     topic_index = CompositeTopicMemoryIndex(*topic_indexes)
-    tables = BUILTIN_TABLES + index.tables + topic_index.tables
+    tables = (
+        BUILTIN_TABLES
+        + index.tables
+        + topic_index.tables
+        + (() if artifact_vector_index is None else artifact_vector_index.tables)
+    )
     if isinstance(database, OceanBaseConfig):
         profile_context = OceanBaseProfile.open(database, tables=tables)
     elif isinstance(database, SeekDBConfig):
@@ -876,6 +907,8 @@ async def open_builtin_contexts(
             await ensure_skill_distribution_schema(connection)
             await ensure_dream_schema(connection)
             await ensure_scope_search_schema(connection)
+            if artifact_vector_index is not None:
+                await artifact_vector_index.initialize(connection)
             if not _topic_memory_worker:
                 await index.initialize(connection)
                 await experience_index.initialize(connection)
@@ -887,6 +920,7 @@ async def open_builtin_contexts(
             index=index,
             topic_memory_index=topic_index,
             experience_index=experience_index,
+            artifact_vector_index=artifact_vector_index,
             candidate_pipeline=candidate_pipeline,
             experience_pipeline=experience_pipeline,
             experience_generator=experience_generator,
@@ -897,6 +931,7 @@ async def open_builtin_contexts(
             token_estimator=configured_token_estimator,
             memory_reranker=memory_reranker,
             memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
+            artifact_recall_min_similarity=config.runtime.artifact_recall_min_similarity,
             prompt_registry=prompt_registry,
             prompt_demonstrators=prompt_demonstrators,
             handoff_verification_keys=handoff_verification_keys,
@@ -985,6 +1020,66 @@ async def _dream_generator(
     )
 
 
+def _require_rerankers(
+    runtime: RuntimeConfig,
+    memory_reranker: MemoryReranker | None,
+) -> None:
+    if runtime.memory_rerank_enabled and memory_reranker is None:
+        raise BuiltinConfigurationError("memory-reranker")
+
+
+def _artifact_rerankers(
+    model: Model,
+    runtime: RuntimeConfig,
+    settings: InferenceConfig,
+    model_settings: ModelSettings | None,
+) -> tuple[MemoryReranker | None, LLMSkillReranker | None]:
+    from powercontext.builtin.artifacts.memory import (
+        MEMORY_RERANK_INSTRUCTIONS,
+        LLMMemoryReranker,
+        MemoryRerankInput,
+        MemoryRerankOutput,
+    )
+    from powercontext.builtin.inference.pydantic_ai import InferenceLimits, PydanticAIStructuredGenerator
+
+    limits = InferenceLimits(
+        timeout_seconds=settings.rerank_timeout_seconds or settings.generation_timeout_seconds,
+        max_requests=settings.rerank_max_requests or settings.generation_max_requests,
+        allow_python_literals=settings.generation_allow_python_literals,
+    )
+    memory, skill = None, None
+    if runtime.memory_rerank_enabled:
+        memory = LLMMemoryReranker(
+            UsageReportingStructuredGenerator(
+                PydanticAIStructuredGenerator(
+                    model=model,
+                    instructions=MEMORY_RERANK_INSTRUCTIONS,
+                    input_type=MemoryRerankInput,
+                    output_type=MemoryRerankOutput,
+                    limits=limits,
+                    model_settings=model_settings,
+                    name="memory_rerank",
+                    prompt_key="memory.rerank",
+                )
+            )
+        )
+    # Construct the adapter without invoking it. Each prepare request opts in separately.
+    skill = LLMSkillReranker(
+        UsageReportingStructuredGenerator(
+            PydanticAIStructuredGenerator(
+                model=model,
+                instructions=SKILL_RERANK_INSTRUCTIONS,
+                input_type=SkillRerankInput,
+                output_type=SkillRerankOutput,
+                limits=limits,
+                model_settings=model_settings,
+                name="learned_skill_rerank",
+            )
+        )
+    )
+    return memory, skill
+
+
 async def _generation_pipelines(
     settings: InferenceConfig,
     runtime: RuntimeConfig,
@@ -1001,11 +1096,15 @@ async def _generation_pipelines(
     SkillGenerator | None,
     HandoffGenerationPipeline | None,
     MemoryReranker | None,
+    LLMSkillReranker | None,
     ReadinessProbe | None,
     ReadinessProbe | None,
 ]:
-    if settings.generation_model is None and (not runtime.memory_rerank_enabled or settings.rerank_model is None):
-        return None, None, None, None, None, None, None, None, None
+    rerank_enabled = (
+        runtime.memory_rerank_enabled or settings.generation_model is not None or settings.rerank_model is not None
+    )
+    if settings.generation_model is None and (not rerank_enabled or settings.rerank_model is None):
+        return None, None, None, None, None, None, None, None, None, None
 
     from pydantic_ai.settings import ModelSettings, merge_model_settings
 
@@ -1026,13 +1125,9 @@ async def _generation_pipelines(
         LLMHandoffGenerationPipeline,
     )
     from powercontext.builtin.artifacts.memory import (
-        MEMORY_RERANK_INSTRUCTIONS,
         LLMMemoryCandidatePipeline,
-        LLMMemoryReranker,
         MemoryExtractionInput,
         MemoryExtractionOutput,
-        MemoryRerankInput,
-        MemoryRerankOutput,
         memory_extraction_instructions,
     )
     from powercontext.builtin.artifacts.skill import (
@@ -1053,6 +1148,7 @@ async def _generation_pipelines(
     generated_skill: SkillGenerator | None = None
     generated_handoff: HandoffGenerationPipeline | None = None
     generated_reranker: MemoryReranker | None = None
+    generated_skill_reranker: LLMSkillReranker | None = None
     generation_readiness: ReadinessProbe | None = None
     rerank_readiness: ReadinessProbe | None = None
 
@@ -1175,7 +1271,7 @@ async def _generation_pipelines(
             dependency_readiness_probe(probe_generation, timeout_seconds=settings.generation_timeout_seconds)
         )
 
-    if runtime.memory_rerank_enabled:
+    if rerank_enabled:
         rerank_provider_model = generation_provider_model
         rerank_model = generation_model
         inherits_generation = settings.rerank_model is None
@@ -1209,21 +1305,9 @@ async def _generation_pipelines(
                 rerank_request_settings,
                 ModelSettings(temperature=0.0),
             )
-            rerank_generator = PydanticAIStructuredGenerator(
-                model=rerank_model,
-                instructions=MEMORY_RERANK_INSTRUCTIONS,
-                input_type=MemoryRerankInput,
-                output_type=MemoryRerankOutput,
-                limits=InferenceLimits(
-                    timeout_seconds=settings.rerank_timeout_seconds or settings.generation_timeout_seconds,
-                    max_requests=settings.rerank_max_requests or settings.generation_max_requests,
-                    allow_python_literals=settings.generation_allow_python_literals,
-                ),
-                model_settings=rerank_request_settings,
-                name="memory_rerank",
-                prompt_key="memory.rerank",
+            generated_reranker, generated_skill_reranker = _artifact_rerankers(
+                rerank_model, runtime, settings, rerank_request_settings
             )
-            generated_reranker = LLMMemoryReranker(UsageReportingStructuredGenerator(rerank_generator))
             _register_prompt_demonstrators(
                 prompt_demonstrators,
                 ("memory.rerank",),
@@ -1261,6 +1345,7 @@ async def _generation_pipelines(
         generated_skill,
         generated_handoff,
         generated_reranker,
+        generated_skill_reranker,
         generation_readiness,
         rerank_readiness,
     )

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from powercontext._logging import log_safely
-from powercontext.artifacts import ArtifactRef
+from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.experience import (
     EXPERIENCE_INCUBATION_WINDOW_LIMIT,
     Experience,
@@ -98,6 +98,7 @@ from powercontext.builtin.artifacts.skill.publication import (
     ManagedSkillPublicationStatus,
 )
 from powercontext.builtin.artifacts.skill.registry import ExternalSkillRegistryService
+from powercontext.builtin.artifacts.skill.reranking import LLMSkillReranker, SkillRerankCandidate
 from powercontext.builtin.artifacts.topic_memory import (
     MAX_TOPIC_MEMORY_QUERY_LENGTH,
     MAX_TOPIC_MEMORY_QUERY_TERMS,
@@ -116,6 +117,7 @@ from powercontext.builtin.dream.service import CandidateAttester, DreamAuthorize
 from powercontext.builtin.evidence.resolver import AuthorizationContext, ScopedEvidenceAuthorizer
 from powercontext.builtin.inference import (
     EmbeddingModel,
+    InferenceError,
     InferenceTimeoutError,
     InferenceUnavailableError,
     InvalidInferenceOutputError,
@@ -152,6 +154,7 @@ from powercontext.builtin.runtime._scope_cache import (
 )
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
 from powercontext.builtin.runtime.learned_context import prepare_learned_context
+from powercontext.builtin.runtime.learned_retrieval import artifact_key
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
@@ -726,12 +729,44 @@ class ScopedContextApplication:
                 return PreparedContextBuilder().empty()
             if authorize_scopes is not None:
                 await authorize_scopes((self.scope_id, *scope.context_references))
+            skill_rerank = request.learned_skill_rerank and "skill" in request.selected_learned_families
+            if skill_rerank and self._runtime._learned_skill_reranker is None:
+                raise CapabilityNotSupportedError("learned-skill-rerank")
             service = self._runtime._trace_learning_service
             if not request.selected_learned_families or request.host_profile is None or service is None:
                 return await self._prepare(request, scope)
             async with service.database.transaction() as connection:
                 artifacts = await service.learned_artifacts(
                     connection, self.scope_id, host_profile=request.host_profile
+                )
+            artifacts = tuple(item for item in artifacts if item.family in request.selected_learned_families)
+            with self._runtime._stage("learned.search", attributes={}) as span:
+                ranking = await service.retrieval.rank(
+                    self.scope_id,
+                    artifacts,
+                    request.query,
+                    skill_rerank=skill_rerank,
+                    skill_min_similarity=request.learned_skill_min_similarity,
+                    **(request.learned_retrieval_options.model_dump() if request.learned_retrieval_options else {}),
+                )
+                if span is not None:
+                    span.set_attributes({
+                        "powercontext.learned.search.fts_count": len(ranking.fts),
+                        "powercontext.learned.search.vector_count": len(ranking.vector),
+                        "powercontext.learned.search.degraded": ranking.degraded,
+                    })
+            artifacts = tuple(item for item in artifacts if artifact_key(item.as_ref()) in ranking.active_keys)
+            scores = ranking.scores
+            rejected_experiences = frozenset(
+                (item.artifact_id, item.revision)
+                for item in artifacts
+                if request.learned_retrieval_options is not None
+                and item.family == "experience"
+                and artifact_key(item.as_ref()) not in scores
+            )
+            if skill_rerank:
+                scores = await self._rerank_skills(
+                    request.query, artifacts, scores, authorize_artifacts=authorize_artifacts
                 )
             learned = prepare_learned_context(
                 artifacts,
@@ -741,22 +776,74 @@ class ScopedContextApplication:
                 max_bytes=request.max_bytes,
                 families=request.selected_learned_families,
                 tool_limit=request.tool_limit,
+                scores=scores,
             )
             if not learned.refs:
-                return await self._prepare(request, scope)
+                return await self._prepare(request, scope, exclude_experiences=rejected_experiences)
             if authorize_artifacts is not None:
                 await authorize_artifacts(learned.refs)
             remaining = request.max_bytes - len(learned.model_dump_json().encode("utf-8"))
             prepared = await self._prepare(
                 request.model_copy(update={"max_bytes": remaining}),
                 scope,
-                exclude_experiences=frozenset(
-                    (item.ref.artifact_id, item.ref.revision) for item in learned.experiences
-                ),
+                exclude_experiences=rejected_experiences
+                | frozenset((item.ref.artifact_id, item.ref.revision) for item in learned.experiences),
             )
             return PreparedContext(
                 status="ready", content=prepared.content, content_bytes=prepared.content_bytes, learned_context=learned
             )
+
+    async def _rerank_skills(
+        self,
+        query: str,
+        artifacts: Sequence[Artifact[Any]],
+        scores: dict[tuple[str, str, int], float],
+        *,
+        authorize_artifacts: Callable[[tuple[ArtifactRef, ...]], Awaitable[None]] | None,
+    ) -> dict[tuple[str, str, int], float]:
+        reranker = self._runtime._learned_skill_reranker
+        if reranker is None:
+            return scores
+        candidates = sorted(
+            (item for item in artifacts if isinstance(item, Skill) and scores.get(artifact_key(item.as_ref()), 0) > 0),
+            key=lambda item: scores[artifact_key(item.as_ref())],
+            reverse=True,
+        )[: self._runtime._learned_skill_rerank_candidate_limit]
+        filtered = {key: value for key, value in scores.items() if key[0] != "skill"}
+        if not candidates:
+            return filtered
+        if authorize_artifacts is not None:
+            await authorize_artifacts(tuple(item.as_ref() for item in candidates))
+        with self._runtime._stage(
+            "learned.skill_rerank", attributes={"powercontext.learned.skill_rerank.candidates": len(candidates)}
+        ) as span:
+            try:
+                async with self._runtime._scoped_operation(
+                    self.scope_id, generation_purpose=ModelUsagePurpose.SKILL_RECALL
+                ):
+                    decision = await reranker.rerank(
+                        query,
+                        tuple(
+                            SkillRerankCandidate(
+                                rank=rank, name=item.content.name, description=item.content.description
+                            )
+                            for rank, item in enumerate(candidates, start=1)
+                        ),
+                    )
+                for position, rank in enumerate(decision.selected_ranks, start=1):
+                    filtered[artifact_key(candidates[rank - 1].as_ref())] = 1 / position
+                if span is not None:
+                    span.set_attributes({
+                        "powercontext.learned.skill_rerank.selected": len(decision.selected_ranks),
+                        "powercontext.learned.skill_rerank.discarded": decision.discarded_rank_count,
+                    })
+            except InferenceError as error:
+                # An unavailable applicability check must not promote merely related
+                # procedures. Independent Experience/Tool recall remains usable.
+                logger.warning("Learned Skill applicability failed: %s", type(error).__name__)
+                if span is not None:
+                    span.set_attributes({"powercontext.learned.skill_rerank.error": type(error).__name__})
+        return filtered
 
     async def _prepare(
         self,
@@ -2298,6 +2385,8 @@ class BuiltinRuntime:
         remote_ingestion: RemoteIngestion | None = None,
         dream_service: DreamService | None = None,
         trace_learning_service: TraceLearningService | None = None,
+        learned_skill_reranker: LLMSkillReranker | None = None,
+        learned_skill_rerank_candidate_limit: int = 10,
         generation_concurrency: int = 4,
     ) -> None:
         if source_window_limit < 1:
@@ -2314,6 +2403,8 @@ class BuiltinRuntime:
         self._generation_service = generation_service
         self._dream_service = dream_service
         self._trace_learning_service = trace_learning_service
+        self._learned_skill_reranker = learned_skill_reranker
+        self._learned_skill_rerank_candidate_limit = learned_skill_rerank_candidate_limit
         self._review_evidence_authorizer: ScopedEvidenceAuthorizer | None = None
         self._review_authorization_context: AuthorizationContext = nullcontext
         self._generation_slots = asyncio.Semaphore(generation_concurrency)

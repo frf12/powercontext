@@ -18,15 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from powercontext.builtin.artifacts.fusion import MIN_SEMANTIC_SIMILARITY, reciprocal_rank_scores
 from powercontext.builtin.artifacts.memory.models import (
     MemoryChannelHit,
     MemoryHit,
     MemoryMatchedBy,
 )
 from powercontext.builtin.artifacts.search import admits_fts_text
-
-_RRF_CONSTANT = 60
-_MIN_SEMANTIC_SIMILARITY = 0.3
 
 _HitIdentity = tuple[str, int, str, str]
 
@@ -48,7 +46,7 @@ def admit_vector_candidates(
     return tuple(
         candidate
         for candidate in candidates
-        if candidate.distance is not None and _unit_l2_cosine_similarity(candidate.distance) >= _MIN_SEMANTIC_SIMILARITY
+        if candidate.distance is not None and _unit_l2_cosine_similarity(candidate.distance) >= MIN_SEMANTIC_SIMILARITY
     )
 
 
@@ -68,18 +66,17 @@ def fuse_rankings(
         raise ValueError("memory search limit must be positive")  # noqa: TRY003
 
     candidates: dict[_HitIdentity, MemoryChannelHit] = {}
-    scores: dict[_HitIdentity, float] = {}
+    scores = reciprocal_rank_scores(tuple(tuple(_identity(hit) for hit in ranking) for ranking in (fts, vector)))
     channels: dict[_HitIdentity, set[MemoryMatchedBy]] = {}
 
     for channel, ranking in (("fts", fts), ("vector", vector)):
         seen: set[_HitIdentity] = set()
-        for rank, candidate in enumerate(ranking, start=1):
+        for candidate in ranking:
             identity = _identity(candidate)
             if identity in seen:
                 continue
             seen.add(identity)
             candidates.setdefault(identity, candidate)
-            scores[identity] = scores.get(identity, 0.0) + 1.0 / (_RRF_CONSTANT + rank)
             channels.setdefault(identity, set()).add(channel)
 
     ordered = sorted(

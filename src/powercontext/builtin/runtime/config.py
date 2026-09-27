@@ -33,6 +33,7 @@ from pydantic import (
     model_validator,
 )
 
+from powercontext.builtin.artifacts.fusion import MIN_SEMANTIC_SIMILARITY
 from powercontext.builtin.artifacts.memory.prompts import MemoryExtractionProfile
 from powercontext.builtin.artifacts.skill import AgentSkillTarget, CodexSkillRoot
 from powercontext.builtin.artifacts.topic_memory import MAX_TOPIC_MEMORY_SEARCH_LIMIT
@@ -135,6 +136,11 @@ class RuntimeConfig(BaseModel):
     memory_extraction_profile: MemoryExtractionProfile = MemoryExtractionProfile.CODING
     memory_rerank_enabled: bool = False
     memory_rerank_candidate_limit: int = Field(default=30, ge=1, le=100)
+    learned_skill_rerank_enabled: bool = Field(
+        default=False,
+        deprecated="Use PrepareContextRequest.learned_skill_rerank; this setting no longer enables automatic selection.",
+    )
+    learned_skill_rerank_candidate_limit: int = Field(default=10, ge=1, le=100)
     profile_schedule_enabled: bool = False
     profile_cron: str = "0 2 * * *"
     profile_timezone: str = "Asia/Shanghai"
@@ -163,6 +169,7 @@ class RuntimeConfig(BaseModel):
     dream_budget: DreamBudget = Field(default_factory=DreamBudget)
     trace_learning_enabled: bool = False
     trace_learning_budget: LearningBudget = Field(default_factory=LearningBudget)
+    artifact_recall_min_similarity: float = Field(default=MIN_SEMANTIC_SIMILARITY, ge=0, le=1)
     tool_max_workers: int = Field(default=1, ge=1)
     tool_worker_timeout_seconds: float = Field(default=600, gt=0)
     topic_memory_schedule_seconds: float | None = Field(default=None, gt=0)

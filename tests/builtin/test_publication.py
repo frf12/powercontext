@@ -42,7 +42,7 @@ class _IndexUnavailableError(RuntimeError):
     pass
 
 
-class _FailingExperienceIndex:
+class _FailingExperienceIndex(NoExperienceIndex):
     async def initialize(self, _connection, /) -> None:
         pass
 

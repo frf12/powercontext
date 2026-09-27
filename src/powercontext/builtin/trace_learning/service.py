@@ -31,7 +31,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceDraft
-from powercontext.builtin.artifacts.skill import Skill, SkillDraft, SkillPackageError, build_instruction_skill_package
+from powercontext.builtin.artifacts.skill import (
+    Skill,
+    SkillContent,
+    SkillDraft,
+    SkillPackageError,
+    build_instruction_skill_package,
+)
 from powercontext.builtin.artifacts.tool import Tool, ToolDraft, render_tool_sql
 from powercontext.builtin.evidence.models import content_digest
 from powercontext.builtin.inference.errors import (
@@ -39,11 +45,13 @@ from powercontext.builtin.inference.errors import (
     InferenceUnavailableError,
     InvalidInferenceOutputError,
 )
+from powercontext.builtin.persistence.artifact_vectors import PreparedArtifactVector
 from powercontext.builtin.persistence.dream import database_now
 from powercontext.builtin.persistence.errors import ArtifactProcessingLeadershipLostError
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE, SCOPES_TABLE
 from powercontext.builtin.persistence.trace_learning import TraceLearningRepository
+from powercontext.builtin.runtime.learned_retrieval import LearnedArtifactRetrieval
 from powercontext.builtin.runtime.processing_execution import InvocationAlreadyHandled, ScopeInvocation
 from powercontext.builtin.sources import CONTENT_SOURCE_ADAPTER, ContentCapture
 from powercontext.builtin.trace_learning.models import (
@@ -58,6 +66,7 @@ from powercontext.builtin.trace_learning.models import (
     PreviousLearningArtifact,
     RejectedLearningCandidate,
     ResolvedToolTraceCall,
+    ResumeLearningRunRequest,
     SQLMismatchError,
     SQLMismatchFeedback,
     ToolTraceExample,
@@ -100,6 +109,7 @@ class TraceLearningService:
         self.enabled = enabled
         self.repository = TraceLearningRepository()
         self.intents = ArtifactProcessingIntentRepository()
+        self.retrieval = LearnedArtifactRetrieval(self.database, contexts.experience_index, contexts.artifact_vectors)
 
     def configure_authorization(
         self,
@@ -200,6 +210,13 @@ class TraceLearningService:
         async with self._transaction() as connection:
             return (await self.repository.get(connection, scope_id, run_id)).run
 
+    async def resume_run(
+        self, scope_id: str, principal_id: str, run_id: str, request: ResumeLearningRunRequest
+    ) -> LearningRun:
+        from powercontext.builtin.trace_learning.recovery import resume_learning_run
+
+        return await resume_learning_run(self, scope_id, principal_id, run_id, request)
+
     async def learned_artifacts(
         self,
         connection: AsyncConnection,
@@ -220,18 +237,19 @@ class TraceLearningService:
                 key = (ref.family, ref.artifact_id)
                 if key in seen:
                     continue
-                state = await connection.scalar(
-                    select(ARTIFACT_HEADS_TABLE.c.lifecycle_state).where(
+                revision = await connection.scalar(
+                    select(ARTIFACT_HEADS_TABLE.c.revision).where(
                         ARTIFACT_HEADS_TABLE.c.scope_id == scope_id,
                         ARTIFACT_HEADS_TABLE.c.family == ref.family,
                         ARTIFACT_HEADS_TABLE.c.artifact_id == ref.artifact_id,
-                        ARTIFACT_HEADS_TABLE.c.revision == ref.revision,
+                        ARTIFACT_HEADS_TABLE.c.lifecycle_state == "active",
                     )
                 )
-                if state != "active":
+                if revision is None:
                     continue
                 seen.add(key)
-                result.append(await self.contexts.repositories.artifacts.get(connection, scope_id, ref))
+                active_ref = ref.model_copy(update={"revision": revision})
+                result.append(await self.contexts.repositories.artifacts.get(connection, scope_id, active_ref))
                 if limit is not None and len(result) >= limit:
                     return tuple(result)
         return tuple(result)
@@ -263,6 +281,73 @@ class TraceLearningService:
                 )
             )
         return tuple(result)
+
+    async def related_previous(
+        self,
+        record: LearningRecord,
+        queries: tuple[str, ...],
+        *,
+        family: str | None = None,
+        key: str | None = None,
+    ) -> tuple[PreviousLearningArtifact, ...]:
+        """Rank authorized historical capabilities, including this run's published candidates."""
+        limit = record.run.budget.previous_artifact_limit
+        if not limit:
+            return ()
+        scope = record.run.scope_id
+        async with self._transaction() as connection:
+            records = await self.repository.list_completed(connection, scope, limit=None, include_partial=True)
+            keys = {}
+            for previous in reversed(records):
+                if previous.run.host_profile == record.run.host_profile:
+                    keys.update({
+                        (ref.family, ref.artifact_id): name.split(":", 1)[1]
+                        for name, ref in previous.artifact_keys.items()
+                    })
+            values = await self.learned_artifacts(connection, scope, host_profile=record.run.host_profile)
+        allowed = []
+        for value in values:
+            if (value.family, value.artifact_id) not in keys or (family is not None and value.family != family):
+                continue
+            try:
+                await self._authorize(scope, record.principal_id, "read", value.as_ref())
+            except TraceLearningError as error:
+                if error.code != "access_revoked":
+                    raise
+                continue
+            allowed.append(value)
+        scores: dict[tuple[str, str, int], float] = {}
+        active = set()
+        for query in dict.fromkeys(query.strip()[:8000] for query in queries if query.strip()):
+            # Embedding and the ranker's own short transactions must not run under an outer transaction.
+            ranking = await self.retrieval.rank(scope, allowed, query)
+            active.update(ranking.active_keys)
+            for ref_key, score in ranking.scores.items():
+                scores[ref_key] = max(scores.get(ref_key, 0.0), score)
+        selected = [
+            value
+            for value in allowed
+            if _ref_key(value.as_ref()) in active
+            and (
+                _ref_key(value.as_ref()) in scores
+                or (key is not None and keys[(value.family, value.artifact_id)] == key)
+            )
+        ]
+        selected.sort(
+            key=lambda value: (
+                keys[(value.family, value.artifact_id)] != key,
+                -scores.get(_ref_key(value.as_ref()), 0.0),
+                _ref_key(value.as_ref()),
+            )
+        )
+        return tuple(
+            PreviousLearningArtifact(
+                ref=value.as_ref(),
+                key=keys[(value.family, value.artifact_id)],
+                content=value.content.model_dump(mode="json"),
+            )
+            for value in selected[:limit]
+        )
 
     async def execute(self, invocation: ScopeInvocation) -> bool:  # noqa: C901 - fenced claim and bounded failure categories
         work = invocation.assignment
@@ -334,13 +419,25 @@ class TraceLearningService:
         ):
             allowed_config_ids.add(self.generator.legacy_config_id)
         if run.model_config_id not in allowed_config_ids or (
-            not legacy and run.prompt_version != TRACE_LEARNING_PROMPT_VERSION
+            not legacy
+            and run.prompt_version
+            not in {
+                TRACE_LEARNING_PROMPT_VERSION,
+                "powercontext.trace-learning.v4",
+                "powercontext.trace-learning.v9",
+            }
         ):
             raise TraceLearningError("capability_unavailable")
         await self._authorize(run.scope_id, record.principal_id, "contribute")
         if record.generation_input is None:
+            related = (
+                await self.related_previous(record, tuple(trace.question for trace in record.request.traces))
+                if isinstance(self.generator, CandidateLearningGenerator)
+                and run.prompt_version == TRACE_LEARNING_PROMPT_VERSION
+                else None
+            )
             async with self._transaction(invocation) as connection:
-                previous = await self._previous(connection, record)
+                previous = await self._previous(connection, record) if related is None else related
                 for ref in run.sources:
                     await self._authorize(run.scope_id, record.principal_id, "read", ref)
                     await self.contexts.repositories.sources.get(connection, run.scope_id, ref)
@@ -406,11 +503,15 @@ class TraceLearningService:
         record = record.model_copy(
             update={"run": record.run.model_copy(update={"stage": "saving", "validation": validation})}
         )
+        await self._authorize(run.scope_id, record.principal_id, "contribute")
+        for resolved in generation_input.resolved_tool_calls:
+            await self._authorize(run.scope_id, record.principal_id, "read", resolved.tool_ref)
+        vectors = await self._prepare_bundle_vectors(record)
         async with self._transaction(invocation) as connection:
             await self._authorize(run.scope_id, record.principal_id, "contribute")
             for resolved in generation_input.resolved_tool_calls:
                 await self._authorize(run.scope_id, record.principal_id, "read", resolved.tool_ref)
-            record = await self._save_bundle(connection, record)
+            record = await self._save_bundle(connection, record, vectors)
             finished = record.run.model_copy(
                 update={
                     "status": "succeeded",
@@ -515,7 +616,77 @@ class TraceLearningService:
                 )
         return tuple(resolved)
 
-    async def _save_bundle(self, connection: AsyncConnection, record: LearningRecord) -> LearningRecord:  # noqa: C901 - atomic typed bundle write
+    async def _index_artifact(self, connection: AsyncConnection, scope: str, artifact: Artifact[Any]) -> None:
+        index = self.contexts.experience_index
+        if isinstance(artifact, Experience):
+            await index.replace(connection, scope, artifact)
+        elif isinstance(artifact, Tool):
+            await index.replace_tool(connection, scope, artifact)
+        elif isinstance(artifact, Skill):
+            if artifact.content.package is None:
+                raise TraceLearningError("invalid_skill_package")
+            package = await self.contexts.repositories.skill_packages.get(connection, scope, artifact.content.package)
+            await index.replace_skill(connection, scope, artifact, package)
+
+    async def _prepare_bundle_vectors(self, record: LearningRecord) -> dict[str, PreparedArtifactVector | None]:
+        vectors = self.contexts.artifact_vectors
+        if vectors is None or record.generated is None:
+            return {}
+        prepared: dict[str, PreparedArtifactVector | None] = {}
+        for family, items in (
+            ("experience", record.generated.experiences),
+            ("tool", record.generated.tools),
+            ("skill", record.generated.skills),
+        ):
+            for item in items:
+                content = item.content
+                if isinstance(content, SkillContent):
+                    # Package canonicalization determines searchable text. Resolved
+                    # dependency refs are attached during commit, not embedded.
+                    content = build_instruction_skill_package(
+                        content.model_copy(update={"package": None})
+                    ).as_skill_content()
+                prepared[family + ":" + item.key] = await vectors.prepare(family, content)
+        return prepared
+
+    async def _confirm_reuse(
+        self, connection: AsyncConnection, record: LearningRecord, key: str, old: Artifact[Any]
+    ) -> None:
+        if not record.candidate_plan_ready or record.run.prompt_version != TRACE_LEARNING_PROMPT_VERSION:
+            return
+        if not any(
+            candidate.spec.family == old.family
+            and candidate.spec.key == key
+            and candidate.consolidation is not None
+            and candidate.consolidation.target == old.as_ref()
+            and candidate.consolidation_applied
+            for candidate in record.candidates
+        ):
+            raise TraceLearningError("unconfirmed_artifact_reuse")
+        scope = record.run.scope_id
+        locked = await connection.execute(
+            update(ARTIFACT_HEADS_TABLE)
+            .where(
+                ARTIFACT_HEADS_TABLE.c.scope_id == scope,
+                ARTIFACT_HEADS_TABLE.c.family == old.family,
+                ARTIFACT_HEADS_TABLE.c.artifact_id == old.artifact_id,
+                ARTIFACT_HEADS_TABLE.c.revision == old.revision,
+                ARTIFACT_HEADS_TABLE.c.lifecycle_state == "active",
+            )
+            .values(revision=old.revision)
+        )
+        if locked.rowcount != 1:
+            head = await self.contexts.repositories.artifacts.latest(connection, scope, old.family, old.artifact_id)
+            if head.revision != old.revision:
+                raise RevisionConflictError(old, head)
+            raise TraceLearningError("inactive_consolidation_target")
+
+    async def _save_bundle(  # noqa: C901 - atomic typed bundle write
+        self,
+        connection: AsyncConnection,
+        record: LearningRecord,
+        vectors: dict[str, PreparedArtifactVector | None] | None = None,
+    ) -> LearningRecord:
         if record.generated is None or record.generation_input is None:
             raise TraceLearningError("invalid_checkpoint")
         scope = record.run.scope_id
@@ -550,6 +721,7 @@ class TraceLearningService:
                 if family == "skill" and record.candidate_plan_ready and skill_reuses.get(item.key) != old.as_ref():
                     # The bounded catalog may omit a same-key head. Never silently revise it.
                     raise TraceLearningError("invalid_skill_reuse")
+                await self._confirm_reuse(connection, record, item.key, old)
                 await self._authorize(scope, record.principal_id, "write", old.as_ref())
             sources = _unique_refs((*(() if old is None else old.lineage.sources), *record.run.sources))
             lineage = _unique_refs((*(() if old is None else (old.as_ref(),)), *dependencies))
@@ -561,13 +733,11 @@ class TraceLearningService:
                 artifact = await repositories.artifacts.revise(connection, scope, old, draft)
             if self.attest_artifact is not None:
                 await self.attest_artifact(connection, scope, record.principal_id, artifact.as_ref())
-            if isinstance(artifact, Experience):
-                await self.contexts.experience_index.replace(connection, scope, artifact)
-            elif isinstance(artifact, Skill):
-                if artifact.content.package is None:
-                    raise TraceLearningError("invalid_skill_package")
-                package = await repositories.skill_packages.get(connection, scope, artifact.content.package)
-                await self.contexts.experience_index.replace_skill(connection, scope, artifact, package)
+            await self._index_artifact(connection, scope, artifact)
+            if self.contexts.artifact_vectors is not None:
+                await self.contexts.artifact_vectors.commit(
+                    connection, scope, artifact, (vectors or {}).get(family + ":" + item.key)
+                )
             saved[family + ":" + item.key] = artifact.as_ref()
             return artifact
 
@@ -624,7 +794,8 @@ class TraceLearningService:
                                             "status": "deferred",
                                             "reason": code,
                                         }
-                                    )
+                                    ),
+                                    "resume_status": candidate.outcome.status,
                                 }
                             )
                             for candidate in current.candidates

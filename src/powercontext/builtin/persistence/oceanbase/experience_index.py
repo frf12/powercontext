@@ -16,21 +16,25 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, tuple_
 from sqlalchemy.dialects.mysql import match
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceSearchHit
 from powercontext.builtin.artifacts.memory import CapabilityNotSupportedError
 from powercontext.builtin.artifacts.search import analyze_text
 from powercontext.builtin.artifacts.skill import Skill, SkillPackageSnapshot, SkillSearchHit
+from powercontext.builtin.artifacts.tool import Tool
 from powercontext.builtin.persistence.experience_index import (
     ensure_artifact_head_searchable_text,
     experience_search_hits,
     rebuild_experience_projections,
     rebuild_skill_projections,
+    rebuild_tool_projections,
     replace_experience_projection,
     replace_skill_projection,
+    replace_tool_projection,
     skill_search_hits,
 )
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE, ARTIFACTS_TABLE
@@ -60,6 +64,7 @@ class OceanBaseExperienceFTSIndex:
         await ensure_artifact_head_searchable_text(connection)
         await rebuild_experience_projections(connection)
         await rebuild_skill_projections(connection)
+        await rebuild_tool_projections(connection)
         count = await connection.scalar(
             _OCEANBASE_FTS_INDEX_EXISTS_SQL,
             {"index_name": _OCEANBASE_FTS_INDEX_NAME},
@@ -68,6 +73,33 @@ class OceanBaseExperienceFTSIndex:
             await connection.exec_driver_sql(_OCEANBASE_CREATE_FTS_SQL)
         probe = match(ARTIFACT_HEADS_TABLE.c.searchable_text, against="powercontext")
         await connection.execute(select(ARTIFACT_HEADS_TABLE.c.artifact_id).where(probe).limit(1))
+
+    async def replace_tool(self, connection: AsyncConnection, scope_id: str, tool: Tool, /) -> None:
+        await replace_tool_projection(connection, scope_id, tool)
+
+    async def search_artifacts(
+        self, connection: AsyncConnection, scope_id: str, query: str, allowed: tuple[ArtifactRef, ...], /
+    ) -> tuple[ArtifactRef, ...]:
+        analyzed = analyze_text(query)
+        if not analyzed or not allowed:
+            return ()
+        heads = ARTIFACT_HEADS_TABLE.c
+        score = match(heads.searchable_text, against=analyzed)
+        rows = (
+            await connection.execute(
+                select(heads.family, heads.artifact_id, heads.revision)
+                .where(
+                    heads.scope_id == scope_id,
+                    heads.lifecycle_state == "active",
+                    score,
+                    tuple_(heads.family, heads.artifact_id, heads.revision).in_([
+                        (ref.family, ref.artifact_id, ref.revision) for ref in allowed
+                    ]),
+                )
+                .order_by(score.desc(), heads.family, heads.artifact_id, heads.revision)
+            )
+        ).mappings()
+        return tuple(ArtifactRef.model_validate(dict(row)) for row in rows)
 
     async def replace(
         self,

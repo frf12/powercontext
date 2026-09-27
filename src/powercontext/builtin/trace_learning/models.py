@@ -32,7 +32,7 @@ from powercontext.errors import PowerContextError
 from powercontext.sources import SourceRef
 
 TRACE_LEARNING_BINDING = "tool.trace-learning.v1"
-TRACE_LEARNING_PROMPT_VERSION = "powercontext.trace-learning.v4"
+TRACE_LEARNING_PROMPT_VERSION = "powercontext.trace-learning.v10"
 
 
 class TraceLearningError(PowerContextError, ValueError):
@@ -106,7 +106,9 @@ class ImportTraceLearningRequest(BaseModel):
 class LearningBudget(BaseModel):
     max_model_calls: int = Field(default=128, ge=1, le=1024)
     max_candidates_per_family: int = Field(default=32, ge=1, le=128)
-    max_candidate_repair_rounds: int = Field(default=2, ge=0, le=8)
+    max_candidate_repair_rounds: int = Field(default=4, ge=0, le=16)
+    max_candidate_validation_repairs: int = Field(default=2, ge=0, le=8)
+    max_candidate_review_retries: int = Field(default=1, ge=0, le=4)
     # Per generation request; LearningUsage.output_tokens remains cumulative across the Run.
     max_output_tokens: int = Field(default=16_000, ge=1024, le=64_000)
     max_input_chars: int = Field(default=400_000, ge=1024, le=4 * 1024 * 1024)
@@ -122,12 +124,14 @@ class LearningUsage(BaseModel):
     output_tokens: int | None = Field(default=None, ge=0)
 
 
-class ToolTraceExample(BaseModel):
+class ToolSourceReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     trace_id: str
     call_id: str
     query_index: int = Field(default=0, ge=0)
+
+
+class ToolTraceExample(ToolSourceReference):
     arguments: dict[str, JsonValue] = Field(
         description=(
             "Parameter bindings for the GENERATED Tool's input_schema, not the source call's arguments. "
@@ -210,6 +214,11 @@ class CandidateSpec(BaseModel):
     key: str = Field(min_length=1, max_length=128)
     purpose: str = Field(min_length=1, max_length=2000)
     trace_ids: tuple[str, ...] = Field(min_length=1, max_length=32)
+    source_calls: tuple[ToolSourceReference, ...] = Field(
+        default=(),
+        max_length=32,
+        description="For Tool candidates, exact successful whole SQL calls supporting this capability; never an unexecuted inner SELECT.",
+    )
     tool_keys: tuple[str, ...] = Field(default=(), max_length=16)
     skill_reuse: SkillReuseDecision | None = Field(
         default=None,
@@ -258,11 +267,32 @@ class CandidateResponse(BaseModel, Generic[CandidateT]):
     model_config = ConfigDict(extra="forbid")
     candidate: CandidateT
     decisions: tuple[ReviewDecision, ...] = Field(default=(), max_length=32)
+    consolidation_conflict: str | None = Field(default=None, min_length=1, max_length=2000)
+    self_pass: bool = Field(
+        default=False,
+        description="After addressing every current review finding, explicitly close advisory review without another reviewer round. Does not bypass deterministic validation.",
+    )
 
 
 class CandidateFeedback(BaseModel):
     validation_errors: tuple[str, ...] = ()
     review: ToolReview | None = None
+    consolidation: ConsolidationFeedback | None = None
+
+
+class ConsolidationDecision(BaseModel):
+    """An advisory semantic match; the server resolves and validates its exact target."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    target: ArtifactRef | None = None
+    reason: str = Field(min_length=1, max_length=2000)
+    guidance: str = Field(default="", max_length=4000)
+
+
+class ConsolidationFeedback(BaseModel):
+    previous: PreviousLearningArtifact
+    reason: str
+    guidance: str
 
 
 class CandidateOutcome(BaseModel):
@@ -276,17 +306,36 @@ class CandidateOutcome(BaseModel):
     review_rounds: int = 0
 
 
+class CandidateStageFailure(BaseModel):
+    stage: Literal["generating", "reviewing"]
+    code: str
+    revision: int
+    model_calls: int
+
+
 class LearningCandidate(BaseModel):
     spec: CandidateSpec
     outcome: CandidateOutcome
     messages: tuple[dict[str, JsonValue], ...] = ()
+    generation_format: Literal["tool", "parameter_plan"] | None = None
     revisions: tuple[CandidateResponse[GeneratedCandidate], ...] = ()
     reviews: tuple[ToolReview, ...] = ()
     review_messages: tuple[tuple[dict[str, JsonValue], ...], ...] = ()
     reviewed_revision: int = 0
     review_resolved: bool = False
+    review_resolution: Literal["reviewer_pass", "generator_self_pass"] | None = None
     feedback: CandidateFeedback | None = None
     validation: ValidationReport | None = None
+    history: tuple[PreviousLearningArtifact, ...] | None = None
+    consolidation_history: tuple[PreviousLearningArtifact, ...] | None = None
+    consolidation: ConsolidationDecision | None = None
+    consolidation_messages: tuple[dict[str, JsonValue], ...] = ()
+    consolidation_applied: bool = False
+    resume_status: Literal["planned", "generating", "reviewing", "repairing", "ready"] | None = None
+    repair_limit: int | None = None
+    validation_repair_limit: int | None = None
+    validation_repair_rounds: int = 0
+    stage_failures: tuple[CandidateStageFailure, ...] = ()
 
 
 class PreviousLearningArtifact(BaseModel):
@@ -367,6 +416,7 @@ class LearningRun(BaseModel):
     validation: ValidationReport | None = None
     error: str | None = None
     candidate_outcomes: tuple[CandidateOutcome, ...] = ()
+    resume_count: int = 0
 
     @property
     def terminal(self) -> bool:
@@ -375,6 +425,41 @@ class LearningRun(BaseModel):
 
 class GetLearningRunRequest(BaseModel):
     run_id: str = Field(min_length=1, max_length=64)
+
+
+class LearningCandidateSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    family: ArtifactFamily
+    key: str = Field(min_length=1, max_length=128)
+
+
+class ResumeLearningRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    candidates: tuple[LearningCandidateSelection, ...] = Field(min_length=1, max_length=384)
+    additional_model_calls: int = Field(default=32, ge=1, le=1024)
+    additional_repair_rounds: int = Field(default=2, ge=0, le=8)
+    timeout_seconds: float = Field(default=1800, gt=0, le=7200)
+    use_current_configuration: bool = False
+
+    @model_validator(mode="after")
+    def unique_candidates(self):
+        if self.idempotency_key != self.idempotency_key.strip():
+            raise ValueError("idempotency_key must not contain surrounding whitespace")  # noqa: TRY003
+        if len({(item.family, item.key) for item in self.candidates}) != len(self.candidates):
+            raise ValueError("Resume candidates must be unique")  # noqa: TRY003
+        return self
+
+
+class LearningResume(BaseModel):
+    request: ResumeLearningRunRequest
+    principal_id: str
+    accepted_at: datetime
+    outcomes: tuple[CandidateOutcome, ...]
+    usage: LearningUsage
+    error: str | None = None
+    prompt_version: str
+    model_config_id: str | None = None
 
 
 class LearningRecord(BaseModel):
@@ -395,6 +480,9 @@ class LearningRecord(BaseModel):
     inventory_review_rounds: int = 0
     inventory_review_error: str | None = None
     candidates: tuple[LearningCandidate, ...] = ()
+    resume_history: tuple[LearningResume, ...] = ()
 
 
+ConsolidationFeedback.model_rebuild()
+CandidateFeedback.model_rebuild()
 LearningCandidate.model_rebuild()

@@ -19,20 +19,25 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceSearchHit, experience_searchable_text
 from powercontext.builtin.artifacts.memory import CapabilityNotSupportedError
-from powercontext.builtin.artifacts.search import fts_match_query
+from powercontext.builtin.artifacts.search import analyze_text, fts_match_query
 from powercontext.builtin.artifacts.skill import Skill, SkillPackageSnapshot, SkillSearchHit, skill_searchable_text
+from powercontext.builtin.artifacts.tool import Tool
+from powercontext.builtin.artifacts.tool.search import tool_search_text
 from powercontext.builtin.persistence.experience_index import (
     ensure_artifact_head_searchable_text,
     experience_search_hits,
     rebuild_experience_projections,
     rebuild_skill_projections,
+    rebuild_tool_projections,
     replace_experience_projection,
     replace_skill_projection,
+    replace_tool_projection,
     skill_search_hits,
 )
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE
@@ -91,6 +96,7 @@ class SQLiteExperienceFTSIndex:
         await ensure_artifact_head_searchable_text(connection)
         await rebuild_experience_projections(connection)
         await rebuild_skill_projections(connection)
+        await rebuild_tool_projections(connection)
         await connection.exec_driver_sql(_CREATE_FTS_SQL)
         await connection.exec_driver_sql(_DELETE_ALL_FTS_SQL)
         rows = (
@@ -102,7 +108,7 @@ class SQLiteExperienceFTSIndex:
                     ARTIFACT_HEADS_TABLE.c.revision,
                     ARTIFACT_HEADS_TABLE.c.searchable_text,
                 ).where(
-                    ARTIFACT_HEADS_TABLE.c.family.in_((Experience.family, Skill.family)),
+                    ARTIFACT_HEADS_TABLE.c.family.in_((Experience.family, Skill.family, Tool.family)),
                     ARTIFACT_HEADS_TABLE.c.lifecycle_state == "active",
                     ARTIFACT_HEADS_TABLE.c.searchable_text.is_not(None),
                 )
@@ -111,6 +117,57 @@ class SQLiteExperienceFTSIndex:
         for row in rows:
             await self._insert_row(connection, row)
         await connection.exec_driver_sql(_PROBE_FTS_SQL)
+
+    async def replace_tool(self, connection: AsyncConnection, scope_id: str, tool: Tool, /) -> None:
+        await replace_tool_projection(connection, scope_id, tool)
+        await connection.execute(
+            _DELETE_FTS_SQL,
+            {
+                "scope_id": scope_id,
+                "family": Tool.family,
+                "artifact_id": tool.artifact_id,
+            },
+        )
+        await self._insert_row(
+            connection,
+            {
+                "scope_id": scope_id,
+                "family": Tool.family,
+                "artifact_id": tool.artifact_id,
+                "revision": tool.revision,
+                "searchable_text": analyze_text(tool_search_text(tool.content)),
+            },
+        )
+
+    async def search_artifacts(
+        self, connection: AsyncConnection, scope_id: str, query: str, allowed: tuple[ArtifactRef, ...], /
+    ) -> tuple[ArtifactRef, ...]:
+        match_query = fts_match_query(query)
+        if not allowed or match_query is None:
+            return ()
+        # Restrict before ranking: another host's or a stale revision's hits
+        # must not consume the current host's candidate allowance.
+        statement = text("""
+            SELECT f.family, f.artifact_id, f.revision
+            FROM pc_artifact_fts AS f
+            JOIN pc_artifact_heads AS h ON h.scope_id=f.scope_id AND h.family=f.family
+                AND h.artifact_id=f.artifact_id AND h.revision=f.revision
+            WHERE pc_artifact_fts MATCH :query AND f.scope_id=:scope_id
+                AND h.lifecycle_state='active'
+                AND (f.family, f.artifact_id, f.revision) IN :allowed
+            ORDER BY bm25(pc_artifact_fts), f.family, f.artifact_id, f.revision
+        """).bindparams(bindparam("allowed", expanding=True))
+        rows = (
+            await connection.execute(
+                statement,
+                {
+                    "scope_id": scope_id,
+                    "query": match_query,
+                    "allowed": [(ref.family, ref.artifact_id, ref.revision) for ref in allowed],
+                },
+            )
+        ).mappings()
+        return tuple(ArtifactRef.model_validate(dict(row)) for row in rows)
 
     async def replace(
         self,

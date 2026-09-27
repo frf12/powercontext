@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -86,6 +86,20 @@ def _score(query: set[str], text: str) -> float:
     return len(query & terms) / max(1, len(query))
 
 
+def _artifact_score(
+    artifact: Artifact[Any], terms: set[str], scores: Mapping[tuple[str, str, int], float] | None
+) -> float:
+    if scores is not None:
+        return scores.get(_ref_key(artifact.as_ref()), 0.0)
+    if isinstance(artifact, (Skill, Tool)):
+        text = artifact.content.name + " " + artifact.content.description
+    elif isinstance(artifact, Experience):
+        text = artifact.content.situation + " " + artifact.content.lesson
+    else:
+        return 0.0
+    return _score(terms, text)
+
+
 def _fits(context: LearnedContext, budget: int) -> bool:
     return len(context.model_dump_json().encode("utf-8")) <= budget
 
@@ -99,11 +113,12 @@ def prepare_learned_context(
     max_bytes: int,
     families: Sequence[LearnedArtifactFamily] = LEARNED_ARTIFACT_FAMILIES,
     tool_limit: int = 3,
+    scores: Mapping[tuple[str, str, int], float] | None = None,
 ) -> LearnedContext:
     """Select enabled methods, independent tools and experience within one budget.
 
-    This initial deterministic retrieval policy uses only learned descriptions
-    and instructions. It does not read held-out answers or request another model.
+    Runtime supplies hybrid scores. Direct callers may retain lexical scoring;
+    semantic hits must not be discarded or re-sorted by that legacy fallback.
     """
 
     enabled = set(families)
@@ -120,9 +135,13 @@ def prepare_learned_context(
         and artifact.content.implementation.dialect == dialect
         and artifact.content.implementation.database_name == database_name
     }
-    context = _select_skill(artifacts, tools, terms, max_bytes, tool_limit) if "skill" in enabled else LearnedContext()
-    context = _add_tools(context, tools, terms, max_bytes, tool_limit)
-    return _add_experiences(context, artifacts, terms, max_bytes) if "experience" in enabled else context
+    context = (
+        _select_skill(artifacts, tools, terms, max_bytes, tool_limit, scores)
+        if "skill" in enabled
+        else LearnedContext()
+    )
+    context = _add_tools(context, tools, terms, max_bytes, tool_limit, scores)
+    return _add_experiences(context, artifacts, terms, max_bytes, scores) if "experience" in enabled else context
 
 
 def _select_skill(
@@ -131,14 +150,15 @@ def _select_skill(
     terms: set[str],
     max_bytes: int,
     tool_limit: int,
+    scores: Mapping[tuple[str, str, int], float] | None,
 ) -> LearnedContext:
     skills = sorted(
         (artifact for artifact in artifacts if isinstance(artifact, Skill)),
-        key=lambda artifact: _score(terms, artifact.content.description + " " + artifact.content.instructions),
+        key=lambda artifact: _artifact_score(artifact, terms, scores),
         reverse=True,
     )
     for skill in skills:
-        if not _score(terms, skill.content.description + " " + skill.content.instructions):
+        if not _artifact_score(skill, terms, scores):
             continue
         dependencies = skill.content.tool_dependencies
         if any(_ref_key(ref) not in tools for ref in dependencies):
@@ -153,7 +173,7 @@ def _select_skill(
         # Reserve a matching callable before a standalone method consumes its
         # space. Method text alone must not displace the only usable tool.
         if not dependencies:
-            selected_tools = _add_tools(LearnedContext(), tools, terms, max_bytes, 1).tools
+            selected_tools = _add_tools(LearnedContext(), tools, terms, max_bytes, 1, scores).tools
         candidate = LearnedContext(
             skills=(
                 LearnedSkill(
@@ -173,10 +193,11 @@ def _add_tools(
     terms: set[str],
     max_bytes: int,
     limit: int,
+    scores: Mapping[tuple[str, str, int], float] | None,
 ) -> LearnedContext:
     ranked_tools = sorted(
         tools.values(),
-        key=lambda tool: _score(terms, tool.content.name + " " + tool.content.description),
+        key=lambda tool: _artifact_score(tool, terms, scores),
         reverse=True,
     )
     for tool in ranked_tools:
@@ -184,7 +205,7 @@ def _add_tools(
             break
         if any(selected.name == tool.content.name for selected in context.tools):
             continue
-        if not _score(terms, tool.content.name + " " + tool.content.description):
+        if not _artifact_score(tool, terms, scores):
             continue
         candidate = context.model_copy(
             update={"tools": (*context.tools, LearnedTool(ref=tool.as_ref(), **tool.content.model_dump()))}
@@ -199,17 +220,18 @@ def _add_experiences(
     artifacts: Sequence[Artifact[Any]],
     terms: set[str],
     max_bytes: int,
+    scores: Mapping[tuple[str, str, int], float] | None,
 ) -> LearnedContext:
     experiences = sorted(
         (artifact for artifact in artifacts if isinstance(artifact, Experience)),
-        key=lambda artifact: _score(terms, artifact.content.situation + " " + artifact.content.lesson),
+        key=lambda artifact: _artifact_score(artifact, terms, scores),
         reverse=True,
     )
     for experience in experiences:
         if len(context.experiences) == 2:
             break
         content = experience.content
-        if not _score(terms, content.situation + " " + content.lesson):
+        if not _artifact_score(experience, terms, scores):
             continue
         candidate = context.model_copy(
             update={

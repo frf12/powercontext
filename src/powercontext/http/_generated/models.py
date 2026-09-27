@@ -1364,6 +1364,28 @@ class MemoryCitation(BaseModel):
     entry_version_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
 
 
+class LearnedRetrievalOptions(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    fts_weight: Annotated[
+        StrictFloat,
+        Field(description="Relative contribution of full-text ranking; zero removes its fusion contribution.", ge=0.0),
+    ] = 1
+    vector_weight: Annotated[
+        StrictFloat,
+        Field(description="Relative contribution of vector ranking; normalized together with the FTS weight.", ge=0.0),
+    ] = 1
+    min_rrf_score: Annotated[
+        StrictFloat,
+        Field(
+            description="Minimum normalized RRF score, inclusive, applied after fusion and before optional Skill model selection and context budgeting. No below-threshold matches are added to fill a minimum count. Zero disables additional filtering. Rejected learned Experiences cannot re-enter ordinary assembly.",
+            ge=0.0,
+            le=1.0,
+        ),
+    ] = 0
+
+
 class LearnedFamily(StrEnum):
     EXPERIENCE = "experience"
     SKILL = "skill"
@@ -1895,7 +1917,10 @@ class SourceTypeReference(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    source_type: SourceType
+    source_type: Annotated[
+        StrictStr,
+        Field(description="Stable source type, including registered internal provenance sources.", min_length=1),
+    ]
     source_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern="^[\\x21-\\x7E]+$")]
 
 
@@ -2476,10 +2501,52 @@ class TraceToolCall(BaseModel):
     succeeded: StrictBool = True
 
 
+class Family7(StrEnum):
+    EXPERIENCE = "experience"
+    TOOL = "tool"
+    SKILL = "skill"
+
+
+class LearningCandidateSelection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Family7
+    key: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+
+
+class ResumeLearningRunRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    idempotency_key: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+    candidates: Annotated[list[LearningCandidateSelection], Field(max_length=384, min_length=1)]
+    additional_model_calls: Annotated[StrictInt, Field(ge=1, le=1024)] = 32
+    additional_repair_rounds: Annotated[StrictInt, Field(ge=0, le=8)] = 2
+    timeout_seconds: Annotated[StrictFloat, Field(gt=0.0, le=7200.0)] = 1800
+    use_current_configuration: StrictBool = False
+
+
 class LearningBudget(BaseModel):
     max_model_calls: Annotated[StrictInt, Field(ge=1, le=1024)] = 128
     max_candidates_per_family: Annotated[StrictInt, Field(ge=1, le=128)] = 32
-    max_candidate_repair_rounds: Annotated[StrictInt, Field(ge=0, le=8)] = 2
+    max_candidate_repair_rounds: Annotated[
+        StrictInt,
+        Field(
+            description="Semantic review repair rounds per candidate, separate from deterministic validation repairs.",
+            ge=0,
+            le=16,
+        ),
+    ] = 4
+    max_candidate_validation_repairs: Annotated[StrictInt, Field(ge=0, le=8)] = 2
+    max_candidate_review_retries: Annotated[
+        StrictInt,
+        Field(
+            description="Additional attempts after invalid independent review output; still bounded by the run budget.",
+            ge=0,
+            le=4,
+        ),
+    ] = 1
     max_output_tokens: Annotated[StrictInt, Field(ge=1024, le=64000)] = 16000
     max_input_chars: Annotated[StrictInt, Field(ge=1024, le=4194304)] = 400000
     timeout_seconds: Annotated[StrictFloat, Field(gt=0.0, le=7200.0)] = 1800
@@ -2510,12 +2577,6 @@ class ValidationReport(BaseModel):
     checked_examples: StrictInt = 0
     method: Method = Method.RECORDED_SQL_AST_EQUIVALENCE
     detail: StrictStr = "Checks parameter binding against recorded successful SQL; does not rerun a live database."
-
-
-class Family7(StrEnum):
-    EXPERIENCE = "experience"
-    TOOL = "tool"
-    SKILL = "skill"
 
 
 class Status3(StrEnum):
@@ -2591,6 +2652,10 @@ class SearchToolsRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    learned_retrieval_options: Annotated[
+        LearnedRetrievalOptions | None,
+        Field(description="Same per-request fusion controls as context preparation, applied to learned Tool matches."),
+    ] = None
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
     query: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern=".*\\S.*")]
     host_profile: TraceLearningHostProfile
@@ -3516,12 +3581,13 @@ class LearningRun(BaseModel):
     started_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
     attempt_count: StrictInt = 0
-    prompt_version: StrictStr = "powercontext.trace-learning.v3"
+    prompt_version: StrictStr = "powercontext.trace-learning.v7"
     model_config_id: StrictStr | None = None
     usage: LearningUsage | None = None
     budget: LearningBudget | None = None
     validation: ValidationReport | None = None
     candidate_outcomes: Annotated[list[LearningCandidateOutcome], Field(validate_default=True)] = []
+    resume_count: StrictInt = 0
     error: StrictStr | None = None
 
 
@@ -3789,12 +3855,30 @@ class PrepareContextRequest(BaseModel):
     learned_tools: Annotated[
         StrictBool, Field(description="Opt into complete learned tool contracts and their associated methods.")
     ] = False
+    learned_skill_rerank: Annotated[
+        StrictBool,
+        Field(
+            description="Opt into a model-based Skill applicability check for this request only. Omitted or false disables the check, preserving hybrid retrieval and its semantic threshold. Requires a configured rerank or generation model; otherwise returns capability_not_supported. Applies only when learned Skills are selected. Adds model usage and context-preparation latency; other requests are unaffected."
+        ),
+    ] = False
+    learned_skill_min_similarity: Annotated[
+        StrictFloat | None,
+        Field(
+            description="Override the learned Skill cosine similarity threshold for this request only. Omitted or null retains the server threshold (default 0.3) when model selection is off, or its candidate policy when model selection is on. An explicit value filters Skills before optional model selection. Experience and Tool thresholds, Skill library searches and other requests are unaffected. Applies when vector retrieval is available; lexical-only fallback does not enforce a cosine threshold.",
+            ge=0.0,
+            le=1.0,
+        ),
+    ] = None
     learned_families: Annotated[
         list[LearnedFamily] | None,
         Field(
             description="Explicit selection applied before budgeting, overriding learned_tools. An empty array disables learned E/S/T. Omitting this field preserves the learned_tools opt-in behavior. Disabling Experience also disables ordinary Experience assembly. Skills requiring disabled or unavailable tools are skipped.",
             max_length=3,
         ),
+    ] = None
+    learned_retrieval_options: Annotated[
+        LearnedRetrievalOptions | None,
+        Field(description="Omitted or null preserves equal-weight learned retrieval without an additional RRF cutoff."),
     ] = None
     tool_limit: Annotated[
         StrictInt,

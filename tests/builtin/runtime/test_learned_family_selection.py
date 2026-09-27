@@ -65,6 +65,30 @@ def test_standalone_skill_does_not_prevent_independent_tool_selection():
     assert result.tools[0].name == "count_stations"
 
 
+def test_direct_skill_selection_ignores_keywords_only_in_instructions():
+    _, skill, _ = standalone_artifacts()
+    skill = skill.model_copy(
+        update={
+            "content": skill.content.model_copy(
+                update={
+                    "name": "count-stations",
+                    "description": "Count gas stations by country.",
+                    "instructions": "Run describe_table and query revenue afterwards.",
+                }
+            )
+        }
+    )
+    result = prepare_learned_context(
+        (skill,),
+        query="describe_table revenue",
+        dialect="mysql",
+        database_name="debit_card",
+        max_bytes=8000,
+        families=("skill",),
+    )
+    assert not result.skills
+
+
 def test_tool_disabled_does_not_activate_it_through_a_skill_dependency():
     result = prepare_learned_context(
         _learned_artifacts(),

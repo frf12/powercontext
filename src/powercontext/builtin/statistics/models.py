@@ -49,6 +49,7 @@ class ModelUsagePurpose(StrEnum):
     MEMORY_RECALL = "memory_recall"
     EXPERIENCE_GENERATION = "experience_generation"
     SKILL_GENERATION = "skill_generation"
+    SKILL_RECALL = "skill_recall"
     HANDOFF_GENERATION = "handoff_generation"
     TOPIC_MEMORY_GENERATION = "topic_memory_generation"
     TOPIC_MEMORY_RECALL = "topic_memory_recall"

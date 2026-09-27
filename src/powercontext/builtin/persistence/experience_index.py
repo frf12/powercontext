@@ -30,7 +30,7 @@ from powercontext.builtin.artifacts.experience import (
     experience_search_text,
     experience_searchable_text,
 )
-from powercontext.builtin.artifacts.search import admits_fts_text
+from powercontext.builtin.artifacts.search import admits_fts_text, analyze_text
 from powercontext.builtin.artifacts.skill import (
     Skill,
     SkillContent,
@@ -40,6 +40,8 @@ from powercontext.builtin.artifacts.skill import (
     skill_searchable_text,
 )
 from powercontext.builtin.artifacts.skill.package import capture_skill_archive
+from powercontext.builtin.artifacts.tool import Tool, ToolContent
+from powercontext.builtin.artifacts.tool.search import tool_search_text
 from powercontext.builtin.persistence.codec import load_model, stored_bytes
 from powercontext.builtin.persistence.errors import RepositoryNotFoundError
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE, ARTIFACTS_TABLE, SKILL_PACKAGES_TABLE
@@ -76,6 +78,12 @@ class ExperienceIndex(Protocol):
     """A rebuildable query projection updated with approved Artifact heads."""
 
     async def initialize(self, connection: AsyncConnection, /) -> None: ...
+
+    async def replace_tool(self, connection: AsyncConnection, scope_id: str, tool: Tool, /) -> None: ...
+
+    async def search_artifacts(
+        self, connection: AsyncConnection, scope_id: str, query: str, allowed: tuple[ArtifactRef, ...], /
+    ) -> tuple[ArtifactRef, ...]: ...
 
     async def replace(
         self,
@@ -118,6 +126,14 @@ class NoExperienceIndex:
 
     async def initialize(self, _connection: AsyncConnection, /) -> None:
         pass
+
+    async def replace_tool(self, _connection: AsyncConnection, _scope_id: str, _tool: Tool, /) -> None:
+        pass
+
+    async def search_artifacts(
+        self, _connection: AsyncConnection, _scope_id: str, _query: str, _allowed: tuple[ArtifactRef, ...], /
+    ) -> tuple[ArtifactRef, ...]:
+        return ()
 
     async def replace(
         self,
@@ -257,6 +273,40 @@ async def rebuild_skill_projections(connection: AsyncConnection, /) -> None:
             revision=int(row["revision"]),
             searchable_text=skill_searchable_text(content, package),
         )
+
+
+async def rebuild_tool_projections(connection: AsyncConnection, /) -> None:
+    """Backfill callable contracts for learned Tools already in a frozen pool."""
+    heads, artifacts = ARTIFACT_HEADS_TABLE.c, ARTIFACTS_TABLE.c
+    rows = (
+        await connection.execute(
+            select(heads.scope_id, heads.artifact_id, heads.revision, artifacts.content)
+            .join(
+                ARTIFACTS_TABLE,
+                (heads.scope_id == artifacts.scope_id)
+                & (heads.family == artifacts.family)
+                & (heads.artifact_id == artifacts.artifact_id)
+                & (heads.revision == artifacts.revision),
+            )
+            .where(heads.family == Tool.family)
+        )
+    ).mappings()
+    for row in rows:
+        content = load_model(ToolContent, stored_bytes(row["content"], column="content"), kind="artifact", name="tool")
+        await replace_tool_projection(
+            connection, row["scope_id"], Tool(artifact_id=row["artifact_id"], revision=row["revision"], content=content)
+        )
+
+
+async def replace_tool_projection(connection: AsyncConnection, scope_id: str, tool: Tool, /) -> None:
+    await _update_searchable_text(
+        connection,
+        scope_id=scope_id,
+        family=Tool.family,
+        artifact_id=tool.artifact_id,
+        revision=tool.revision,
+        searchable_text=analyze_text(tool_search_text(tool.content)),
+    )
 
 
 async def replace_experience_projection(

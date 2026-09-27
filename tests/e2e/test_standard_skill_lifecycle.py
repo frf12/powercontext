@@ -46,6 +46,9 @@ def test_standard_skill_package_review_revision_usage_and_governance(tmp_path: P
         first_candidate = _propose_package(client, scope_id, first_archive)
         first_approved = _approve(client, scope_id, first_candidate)
         first_ref = first_approved["result_artifact"]
+        read = client.get(f"/v1/scopes/{scope_id}/artifacts/skill/{first_ref['artifact_id']}")
+        assert read.status_code == 200, read.text
+        assert read.json()["sources"][0]["source_type"] == "skill-package-upload"
 
         manifest = client.post(
             "/v1/skill/package/manifest",
@@ -58,6 +61,10 @@ def test_standard_skill_package_review_revision_usage_and_governance(tmp_path: P
         searched_reference = client.post(
             "/v1/skill/library",
             json={"scope_id": scope_id, "query": "reference-search-needle", "limit": 20},
+        )
+        searched_metadata = client.post(
+            "/v1/skill/library",
+            json={"scope_id": scope_id, "query": "release-verification", "limit": 20},
         )
         searched_script_body = client.post(
             "/v1/skill/library",
@@ -161,7 +168,8 @@ def test_standard_skill_package_review_revision_usage_and_governance(tmp_path: P
     assert download.status_code == 200
     downloaded = capture_skill_archive(base64.b64decode(download.json()["archive_base64"], validate=True))
     assert downloaded.reference.model_dump(mode="json") == first_candidate["proposal"]["package"]
-    assert len(searched_reference.json()["skills"]) == 1
+    assert searched_reference.json()["skills"] == []
+    assert len(searched_metadata.json()["skills"]) == 1
     assert searched_script_body.json()["skills"] == []
 
     assert second_ref == {**first_ref, "revision": first_ref["revision"] + 1}

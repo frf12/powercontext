@@ -639,7 +639,8 @@ def test_experience_and_skill_writers_update_owned_search_projections() -> None:
 
             async with profile.database.transaction() as connection:
                 experience_hits = await index.search(connection, "scope-a", "rollback", 10)
-                skill_hits = await index.search_skills(connection, "scope-a", "matrix", 10)
+                assert await index.search_skills(connection, "scope-a", "matrix", 10) == ()
+                skill_hits = await index.search_skills(connection, "scope-a", "compatibility", 10)
                 package_count = await connection.scalar(select(func.count()).select_from(SKILL_PACKAGES_TABLE))
             assert [hit.artifact_ref for hit in experience_hits] == [
                 ArtifactRef(

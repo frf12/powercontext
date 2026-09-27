@@ -133,3 +133,120 @@ def test_invalid_review_settings_are_rejected(override):
 def test_review_settings_require_a_generation_model():
     with pytest.raises(ValidationError):
         InferenceConfig(trace_learning_tool_review_model_settings={"openai_reasoning_effort": "low"})
+
+
+def test_followup_review_receives_tool_changes_and_findings_without_teaching_evidence():
+    from powercontext.builtin.inference.pydantic_ai import InferenceLimits
+    from powercontext.builtin.trace_learning.models import ReviewDecision, ToolReview
+
+    received = []
+
+    def respond(messages, info):
+        prompt = next(
+            part.content for message in reversed(messages) for part in message.parts if isinstance(part, UserPromptPart)
+        )
+        received.append(json.loads(prompt))
+        return ModelResponse(parts=[TextPart('{"findings": []}')])
+
+    async def scenario():
+        tool = ToolContent(
+            name="list_items",
+            description="List up to six items.",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={"type": "object"},
+            implementation=SqlToolImplementation(
+                sql="SELECT id FROM items LIMIT 6", parameter_order=(), dialect="sqlite", database_name="example"
+            ),
+        )
+        review = ToolReview.model_validate({
+            "findings": [
+                {
+                    "id": "row-limit",
+                    "category": "parameterization",
+                    "comment": "Six is a result-size input.",
+                    "suggestion": "Assess a bounded count parameter.",
+                }
+            ]
+        })
+        generator = CandidateLearningGenerator(
+            model=FunctionModel(respond), limits=InferenceLimits(max_requests=1), config_id="review-followup"
+        )
+        await generator.review_tool(
+            tool,
+            max_requests=1,
+            previous_tool=tool,
+            previous_review=review,
+            decisions=(ReviewDecision(finding_id="row-limit", decision="reject", reason="Algorithm bound is six."),),
+        )
+        value = received[0]
+        assert value["followup"]["review"]["findings"][0]["id"] == "row-limit"
+        assert value["followup"]["decisions"][0]["decision"] == "reject"
+        assert any(item["value"] == "6" for item in value["literals"])
+        assert "traces" not in value and "context" not in value and "messages" not in value
+
+    asyncio.run(scenario())
+
+
+def test_review_exposes_actual_property_validation_without_inventing_a_domain():
+    from powercontext.builtin.trace_learning.generation import tool_review_input
+
+    def review_input(**constraints):
+        return tool_review_input(
+            ToolContent(
+                name="list_items",
+                description="List a positive number of items.",
+                input_schema={
+                    "type": "object",
+                    "properties": {"count": {"type": "integer", "description": "Must be positive", **constraints}},
+                    "required": ["count"],
+                    # Probes must not claim to cover root-level constraints or a complete invocation.
+                    "allOf": [{"properties": {"count": {"maximum": 5}}}],
+                },
+                output_schema={"type": "object"},
+                implementation=SqlToolImplementation(
+                    sql="SELECT id FROM items LIMIT ?", parameter_order=("count",), dialect="sqlite"
+                ),
+            )
+        ).model_dump(mode="json")
+
+    missing = review_input()["property_probes"]
+    bounded = review_input(minimum=1, maximum=10)["property_probes"]
+    assert missing[0]["parameter"] == "count"
+    assert missing[0]["scope"] == "property_schema_only"
+    assert {sample["value"]: sample["accepted"] for sample in missing[0]["samples"]} == {
+        -1: True,
+        0: True,
+        1: True,
+    }
+    tested = {sample["value"]: sample["accepted"] for sample in bounded[0]["samples"]}
+    assert tested[0] is False and tested[1] is True
+    assert tested[10] is True and tested[11] is False
+
+
+def test_review_probes_report_string_constraints_and_boolean_domains():
+    from powercontext.builtin.trace_learning.generation import tool_review_input
+
+    value = tool_review_input(
+        ToolContent(
+            name="filter_items",
+            description="Filter items by their code and enabled flag.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "enum": ["active", "archived"]},
+                    "enabled": {"type": "boolean"},
+                },
+                "required": ["code", "enabled"],
+            },
+            output_schema={"type": "object"},
+            implementation=SqlToolImplementation(
+                sql="SELECT id FROM items WHERE code = ? AND enabled = ?",
+                parameter_order=("code", "enabled"),
+                dialect="sqlite",
+            ),
+        )
+    ).model_dump(mode="json")
+    by_name = {probe["parameter"]: probe["samples"] for probe in value["property_probes"]}
+    tested = {sample["value"]: sample["accepted"] for sample in by_name["code"]}
+    assert tested[""] is False and tested["active"] is True
+    assert all(sample["accepted"] for sample in by_name["enabled"])

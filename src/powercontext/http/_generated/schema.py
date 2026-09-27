@@ -1552,6 +1552,106 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
             }
         },
+        "/v1/scopes/{scope_id}/trace-learning/{run_id}/resume": {
+            "post": {
+                "tags": ["trace-learning"],
+                "summary": "Resume selected unfinished candidates from their saved checkpoints",
+                "operationId": "resume_learning_run",
+                "x-powercontext-access": {
+                    "action": "scope.contribute",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
+                "description": "Resume "
+                "selected "
+                "candidates "
+                "from "
+                "a "
+                "terminal "
+                "run "
+                "owned "
+                "by "
+                "the "
+                "caller. "
+                "Published "
+                "candidates, "
+                "prior "
+                "failures, "
+                "messages "
+                "and "
+                "cumulative "
+                "usage "
+                "are "
+                "preserved. "
+                "The "
+                "same "
+                "idempotency "
+                "key "
+                "and "
+                "request "
+                "replay "
+                "the "
+                "current "
+                "run "
+                "without "
+                "extending "
+                "its "
+                "budget "
+                "again. "
+                "Configuration "
+                "changes "
+                "require "
+                "use_current_configuration. "
+                "Active "
+                "runs "
+                "cannot "
+                "be "
+                "restarted.",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256},
+                    },
+                    {
+                        "name": "run_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 64},
+                    },
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/ResumeLearningRunRequest"}}
+                    },
+                },
+                "responses": {
+                    "202": {
+                        "description": "The resumed or already pending run.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LearningRun"}}},
+                    },
+                    "200": {
+                        "description": "The terminal run from an idempotent replay.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LearningRun"}}},
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"$ref": "#/components/responses/Forbidden"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "409": {"$ref": "#/components/responses/Conflict"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "429": {
+                        "description": "The configured pending-work capacity was reached.",
+                        "headers": {"Retry-After": {"schema": {"type": "integer", "minimum": 1}}},
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+                    },
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
         "/v1/scopes/{scope_id}/dream": {
             "post": {
                 "tags": ["dream"],
@@ -7043,6 +7143,121 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["memory_ref", "changes"],
             },
+            "LearnedRetrievalOptions": {
+                "properties": {
+                    "fts_weight": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "description": "Relative "
+                        "contribution "
+                        "of "
+                        "full-text "
+                        "ranking; "
+                        "zero "
+                        "removes "
+                        "its "
+                        "fusion "
+                        "contribution.",
+                        "default": 1,
+                    },
+                    "vector_weight": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "description": "Relative "
+                        "contribution "
+                        "of "
+                        "vector "
+                        "ranking; "
+                        "normalized "
+                        "together "
+                        "with "
+                        "the "
+                        "FTS "
+                        "weight.",
+                        "default": 1,
+                    },
+                    "min_rrf_score": {
+                        "type": "number",
+                        "maximum": 1.0,
+                        "minimum": 0.0,
+                        "description": "Minimum "
+                        "normalized "
+                        "RRF "
+                        "score, "
+                        "inclusive, "
+                        "applied "
+                        "after "
+                        "fusion "
+                        "and "
+                        "before "
+                        "optional "
+                        "Skill "
+                        "model "
+                        "selection "
+                        "and "
+                        "context "
+                        "budgeting. "
+                        "No "
+                        "below-threshold "
+                        "matches "
+                        "are "
+                        "added "
+                        "to "
+                        "fill "
+                        "a "
+                        "minimum "
+                        "count. "
+                        "Zero "
+                        "disables "
+                        "additional "
+                        "filtering. "
+                        "Rejected "
+                        "learned "
+                        "Experiences "
+                        "cannot "
+                        "re-enter "
+                        "ordinary "
+                        "assembly.",
+                        "default": 0,
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "description": "Request-local fusion "
+                "controls for learned "
+                "Experience, Skill and Tool "
+                "candidates. Weights must "
+                "be finite and nonnegative, "
+                "with at least one positive "
+                "weight. The normalized "
+                "score is the weighted sum "
+                "of 1/(60+rank), divided by "
+                "the maximum possible "
+                "weighted score (all "
+                "enabled channels rank 1). "
+                "Scores range from 0 to 1 "
+                "and are not cosine "
+                "similarities or relevance "
+                "probabilities. Missing "
+                "hits contribute zero. A "
+                "configured vector channel "
+                "remains in the denominator "
+                "on inference failure; "
+                "without vector "
+                "configuration, only the "
+                "FTS channel is enabled. "
+                "Existing semantic "
+                "admission still applies "
+                "even when a channel has "
+                "zero fusion weight. "
+                "Required exact Tool "
+                "dependencies of an "
+                "admitted Skill may be "
+                "included below the "
+                "independent-match cutoff. "
+                "Ordinary Memory and Topic "
+                "Memory are unaffected.",
+            },
             "PrepareContextRequest": {
                 "properties": {
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
@@ -7053,6 +7268,136 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "type": "boolean",
                         "description": "Opt into complete learned tool contracts and their associated methods.",
                         "default": False,
+                    },
+                    "learned_skill_rerank": {
+                        "type": "boolean",
+                        "description": "Opt "
+                        "into "
+                        "a "
+                        "model-based "
+                        "Skill "
+                        "applicability "
+                        "check "
+                        "for "
+                        "this "
+                        "request "
+                        "only. "
+                        "Omitted "
+                        "or "
+                        "false "
+                        "disables "
+                        "the "
+                        "check, "
+                        "preserving "
+                        "hybrid "
+                        "retrieval "
+                        "and "
+                        "its "
+                        "semantic "
+                        "threshold. "
+                        "Requires "
+                        "a "
+                        "configured "
+                        "rerank "
+                        "or "
+                        "generation "
+                        "model; "
+                        "otherwise "
+                        "returns "
+                        "capability_not_supported. "
+                        "Applies "
+                        "only "
+                        "when "
+                        "learned "
+                        "Skills "
+                        "are "
+                        "selected. "
+                        "Adds "
+                        "model "
+                        "usage "
+                        "and "
+                        "context-preparation "
+                        "latency; "
+                        "other "
+                        "requests "
+                        "are "
+                        "unaffected.",
+                        "default": False,
+                    },
+                    "learned_skill_min_similarity": {
+                        "type": "number",
+                        "maximum": 1.0,
+                        "minimum": 0.0,
+                        "description": "Override "
+                        "the "
+                        "learned "
+                        "Skill "
+                        "cosine "
+                        "similarity "
+                        "threshold "
+                        "for "
+                        "this "
+                        "request "
+                        "only. "
+                        "Omitted "
+                        "or "
+                        "null "
+                        "retains "
+                        "the "
+                        "server "
+                        "threshold "
+                        "(default "
+                        "0.3) "
+                        "when "
+                        "model "
+                        "selection "
+                        "is "
+                        "off, "
+                        "or "
+                        "its "
+                        "candidate "
+                        "policy "
+                        "when "
+                        "model "
+                        "selection "
+                        "is "
+                        "on. "
+                        "An "
+                        "explicit "
+                        "value "
+                        "filters "
+                        "Skills "
+                        "before "
+                        "optional "
+                        "model "
+                        "selection. "
+                        "Experience "
+                        "and "
+                        "Tool "
+                        "thresholds, "
+                        "Skill "
+                        "library "
+                        "searches "
+                        "and "
+                        "other "
+                        "requests "
+                        "are "
+                        "unaffected. "
+                        "Applies "
+                        "when "
+                        "vector "
+                        "retrieval "
+                        "is "
+                        "available; "
+                        "lexical-only "
+                        "fallback "
+                        "does "
+                        "not "
+                        "enforce "
+                        "a "
+                        "cosine "
+                        "threshold.",
+                        "nullable": True,
                     },
                     "learned_families": {
                         "items": {"type": "string", "enum": ["experience", "skill", "tool"]},
@@ -7095,6 +7440,22 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "tools "
                         "are "
                         "skipped.",
+                    },
+                    "learned_retrieval_options": {
+                        "allOf": [{"$ref": "#/components/schemas/LearnedRetrievalOptions"}],
+                        "description": "Omitted "
+                        "or "
+                        "null "
+                        "preserves "
+                        "equal-weight "
+                        "learned "
+                        "retrieval "
+                        "without "
+                        "an "
+                        "additional "
+                        "RRF "
+                        "cutoff.",
+                        "nullable": True,
                     },
                     "tool_limit": {
                         "type": "integer",
@@ -8476,7 +8837,11 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "SourceTypeReference": {
                 "properties": {
-                    "source_type": {"type": "string", "enum": ["content"]},
+                    "source_type": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Stable source type, including registered internal provenance sources.",
+                    },
                     "source_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
                 },
                 "additionalProperties": False,
@@ -9105,11 +9470,79 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["idempotency_key", "traces", "host_profile"],
             },
+            "LearningCandidateSelection": {
+                "properties": {
+                    "family": {"type": "string", "enum": ["experience", "tool", "skill"]},
+                    "key": {"type": "string", "maxLength": 128, "minLength": 1},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "key"],
+            },
+            "ResumeLearningRunRequest": {
+                "properties": {
+                    "idempotency_key": {"type": "string", "maxLength": 128, "minLength": 1},
+                    "candidates": {
+                        "items": {"$ref": "#/components/schemas/LearningCandidateSelection"},
+                        "type": "array",
+                        "maxItems": 384,
+                        "minItems": 1,
+                    },
+                    "additional_model_calls": {"type": "integer", "maximum": 1024.0, "minimum": 1.0, "default": 32},
+                    "additional_repair_rounds": {"type": "integer", "maximum": 8.0, "minimum": 0.0, "default": 2},
+                    "timeout_seconds": {"type": "number", "maximum": 7200.0, "exclusiveMinimum": 0.0, "default": 1800},
+                    "use_current_configuration": {"type": "boolean", "default": False},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["idempotency_key", "candidates"],
+            },
             "LearningBudget": {
                 "properties": {
                     "max_model_calls": {"type": "integer", "maximum": 1024.0, "minimum": 1.0, "default": 128},
                     "max_candidates_per_family": {"type": "integer", "maximum": 128.0, "minimum": 1.0, "default": 32},
-                    "max_candidate_repair_rounds": {"type": "integer", "maximum": 8.0, "minimum": 0.0, "default": 2},
+                    "max_candidate_repair_rounds": {
+                        "type": "integer",
+                        "maximum": 16.0,
+                        "minimum": 0.0,
+                        "description": "Semantic "
+                        "review "
+                        "repair "
+                        "rounds "
+                        "per "
+                        "candidate, "
+                        "separate "
+                        "from "
+                        "deterministic "
+                        "validation "
+                        "repairs.",
+                        "default": 4,
+                    },
+                    "max_candidate_validation_repairs": {
+                        "type": "integer",
+                        "maximum": 8.0,
+                        "minimum": 0.0,
+                        "default": 2,
+                    },
+                    "max_candidate_review_retries": {
+                        "type": "integer",
+                        "maximum": 4.0,
+                        "minimum": 0.0,
+                        "description": "Additional "
+                        "attempts "
+                        "after "
+                        "invalid "
+                        "independent "
+                        "review "
+                        "output; "
+                        "still "
+                        "bounded "
+                        "by "
+                        "the "
+                        "run "
+                        "budget.",
+                        "default": 1,
+                    },
                     "max_output_tokens": {"type": "integer", "maximum": 64000.0, "minimum": 1024.0, "default": 16000},
                     "max_input_chars": {"type": "integer", "maximum": 4194304.0, "minimum": 1024.0, "default": 400000},
                     "timeout_seconds": {"type": "number", "maximum": 7200.0, "exclusiveMinimum": 0.0, "default": 1800},
@@ -9232,7 +9665,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "started_at": {"type": "string", "format": "date-time", "nullable": True},
                     "completed_at": {"type": "string", "format": "date-time", "nullable": True},
                     "attempt_count": {"type": "integer", "default": 0},
-                    "prompt_version": {"type": "string", "default": "powercontext.trace-learning.v3"},
+                    "prompt_version": {"type": "string", "default": "powercontext.trace-learning.v7"},
                     "model_config_id": {"type": "string", "nullable": True},
                     "usage": {"$ref": "#/components/schemas/LearningUsage"},
                     "budget": {"$ref": "#/components/schemas/LearningBudget"},
@@ -9242,6 +9675,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "type": "array",
                         "default": [],
                     },
+                    "resume_count": {"type": "integer", "default": 0},
                     "error": {"type": "string", "nullable": True},
                 },
                 "type": "object",
@@ -9295,6 +9729,22 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "SearchToolsRequest": {
                 "properties": {
+                    "learned_retrieval_options": {
+                        "allOf": [{"$ref": "#/components/schemas/LearnedRetrievalOptions"}],
+                        "description": "Same "
+                        "per-request "
+                        "fusion "
+                        "controls "
+                        "as "
+                        "context "
+                        "preparation, "
+                        "applied "
+                        "to "
+                        "learned "
+                        "Tool "
+                        "matches.",
+                        "nullable": True,
+                    },
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
                     "query": {"type": "string", "maxLength": 8192, "minLength": 1, "pattern": ".*\\S.*"},
                     "host_profile": {"$ref": "#/components/schemas/TraceLearningHostProfile"},

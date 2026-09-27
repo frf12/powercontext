@@ -161,6 +161,7 @@ from powercontext.http import (
     ResolveExternalSkillRequest,
     ResolveScopeBindingRequest,
     ResolveScopeSelectionRequest,
+    ResumeLearningRunRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
@@ -296,6 +297,7 @@ from powercontext.http._generated.operations import (
     RESOLVE_EXTERNAL_SKILL,
     RESOLVE_SCOPE_BINDING,
     RESOLVE_SCOPE_SELECTION,
+    RESUME_LEARNING_RUN,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
@@ -597,6 +599,12 @@ class PowerContextClient:
     async def get_learning_run(self, scope_id: str, run_id: str) -> LearningRun:
         """Read the current learning result without starting new work."""
         return await self._request(GET_LEARNING_RUN, path_parameters={"scope_id": scope_id, "run_id": run_id})
+
+    async def resume_learning_run(self, scope_id: str, run_id: str, request: ResumeLearningRunRequest) -> LearningRun:
+        """Continue selected unfinished candidates without repeating published work."""
+        return await self._request(
+            RESUME_LEARNING_RUN, request, path_parameters={"scope_id": scope_id, "run_id": run_id}
+        )
 
     async def create_dream_run(self, scope_id: str, request: CreateDreamRunRequest) -> DreamRun:
         """Accept a Dream or replay its original queued/terminal result."""
@@ -1255,7 +1263,14 @@ def _prepare_request(
             message = "Request must serialize to an object."
             raise TypeError(message)
         if operation is PREPARE_CONTEXT and isinstance(request, PrepareContextRequest):
-            for optional_field in ("assembly", "learned_families", "tool_limit"):
+            for optional_field in (
+                "assembly",
+                "learned_families",
+                "learned_skill_rerank",
+                "learned_skill_min_similarity",
+                "learned_retrieval_options",
+                "tool_limit",
+            ):
                 if optional_field not in request.model_fields_set:
                     payload.pop(optional_field, None)
         if operation.request_location == "query":

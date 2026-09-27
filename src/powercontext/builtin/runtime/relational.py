@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import nullcontext
@@ -31,7 +32,7 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.protocols import Validator
 from referencing import Registry
 from referencing.exceptions import Unresolvable
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import Artifact, ArtifactRef, MemoryCitation
@@ -44,6 +45,7 @@ from powercontext.builtin.artifacts.experience import (
     ExperienceGenerator,
     ExperienceSearchHit,
 )
+from powercontext.builtin.artifacts.fusion import MIN_SEMANTIC_SIMILARITY, reciprocal_rank_scores
 from powercontext.builtin.artifacts.handoff import (
     ActivateHandoff,
     Handoff,
@@ -107,6 +109,7 @@ from powercontext.builtin.dream.models import DreamBudget, DreamOperation
 from powercontext.builtin.dream.service import CandidateAttester, DreamAuthorizer, DreamService
 from powercontext.builtin.evidence.resolver import AuthorizationContext, EvidenceAuthorizer, EvidenceResolver
 from powercontext.builtin.inference import EmbeddingModel, InvalidInferenceOutputError, TokenEstimator
+from powercontext.builtin.inference.errors import InferenceError
 from powercontext.builtin.persistence.agent_skill_targets import RemoteAgentSkillTargetRepository
 from powercontext.builtin.persistence.artifact_governance import (
     ArtifactGovernance,
@@ -114,6 +117,8 @@ from powercontext.builtin.persistence.artifact_governance import (
     ArtifactLifecycleState,
 )
 from powercontext.builtin.persistence.artifact_readers import TopicMemoryArtifactListReader
+from powercontext.builtin.persistence.artifact_vector_index import ArtifactVectorIndex, artifact_key
+from powercontext.builtin.persistence.artifact_vectors import ArtifactVectorService
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.candidates import CandidateRepository
 from powercontext.builtin.persistence.connectors import ConnectorCheckpointRepository
@@ -269,6 +274,7 @@ class _ScopedServices:
     repositories: _Repositories
     index: MemoryIndex
     experience_index: ExperienceIndex
+    artifact_vectors: ArtifactVectorService | None
     candidate_pipeline: CandidatePipeline | None
     experience_pipeline: ExperienceCandidatePipeline | None
     experience_generator: ExperienceGenerator | None
@@ -364,6 +370,7 @@ class _ScopedServices:
             candidates=self.repositories.candidates,
             artifacts=self.repositories.artifacts,
             experience_index=self.experience_index,
+            artifact_vectors=self.artifact_vectors,
             skill_packages=self.repositories.skill_packages,
             sources=self.generation_sources(),
             id_factory=self.id_factory,
@@ -467,6 +474,7 @@ class RelationalContexts:
         index: MemoryIndex | None = None,
         topic_memory_index: TopicMemoryIndex | None = None,
         experience_index: ExperienceIndex | None = None,
+        artifact_vector_index: ArtifactVectorIndex | None = None,
         candidate_pipeline: CandidatePipeline | None = None,
         experience_pipeline: ExperienceCandidatePipeline | None = None,
         experience_generator: ExperienceGenerator | None = None,
@@ -477,6 +485,7 @@ class RelationalContexts:
         token_estimator: TokenEstimator | None = None,
         memory_reranker: MemoryReranker | None = None,
         memory_rerank_candidate_limit: int = 30,
+        artifact_recall_min_similarity: float = MIN_SEMANTIC_SIMILARITY,
         id_factory: IdFactory | None = None,
         handoff_artifact_id: str = "handoff",
         memory_artifact_id: str = "memory",
@@ -496,6 +505,17 @@ class RelationalContexts:
         artifact_repository = ArtifactRepository(
             (Handoff, Memory, Experience, Skill, Profile, Prompt, TopicMemory, Tool),
             sources=source_repository,
+        )
+        self.artifact_vectors = (
+            ArtifactVectorService(
+                database,
+                artifact_repository,
+                artifact_vector_index,
+                embedding_model,
+                min_similarity=artifact_recall_min_similarity,
+            )
+            if artifact_vector_index is not None and embedding_model is not None
+            else None
         )
         topic_memory_repository = TopicMemoryRepository(artifacts=artifact_repository, index=self.topic_memory_index)
         self.repositories = _Repositories(
@@ -581,6 +601,7 @@ class RelationalContexts:
             self.repositories.sources,
             self.repositories.artifacts,
             family_writers,
+            artifact_vectors=self.artifact_vectors,
             id_factory=id_factory,
             cursor_secret=cursor_secret,
             processing_pending=self.repositories.processing_pending,
@@ -596,6 +617,7 @@ class RelationalContexts:
             self.repositories.artifacts,
             self.scopes,
             experience_index=self.experience_index,
+            artifact_vectors=self.artifact_vectors,
         )
         self._candidate_pipeline = candidate_pipeline
         self.memory_extraction = candidate_pipeline is not None
@@ -776,7 +798,9 @@ class RelationalContexts:
             raise ValueError("Experience search limit must be positive")  # noqa: TRY003
         scope = validate_scope_id(scope_id)
         async with self.database.transaction() as connection:
-            return await self.experience_index.search(connection, scope, query, limit)
+            lexical = await self.experience_index.search(connection, scope, query, max(limit * 4, 32))
+        artifacts = await self._hybrid_artifacts(scope, query, "experience", lexical, limit)
+        return tuple(ExperienceSearchHit(artifact_ref=item.as_ref(), content=item.content) for item in artifacts)
 
     async def get_topic_memory(
         self,
@@ -866,7 +890,48 @@ class RelationalContexts:
             raise ValueError("Skill search limit must be positive")  # noqa: TRY003
         scope = validate_scope_id(scope_id)
         async with self.database.transaction() as connection:
-            return await self.experience_index.search_skills(connection, scope, query, limit)
+            lexical = await self.experience_index.search_skills(connection, scope, query, max(limit * 4, 32))
+        artifacts = await self._hybrid_artifacts(scope, query, "skill", lexical, limit)
+        return tuple(SkillSearchHit(artifact_ref=item.as_ref(), content=item.content) for item in artifacts)
+
+    async def _hybrid_artifacts(
+        self, scope: str, query: str, family: str, lexical, limit: int
+    ) -> tuple[Artifact[Any], ...]:
+        vector: tuple[ArtifactRef, ...] = ()
+        semantic_admission: frozenset[tuple[str, str, int]] | None = None
+        if self.artifact_vectors is not None:
+            try:
+                vector = await self.artifact_vectors.search(scope, query, families=(family,), limit=max(limit * 4, 32))
+                semantic_admission = frozenset(artifact_key(ref) for ref in vector)
+            except InferenceError as error:
+                logging.getLogger(__name__).warning("Artifact vector search fell back to FTS: %s", type(error).__name__)
+        refs = {artifact_key(hit.artifact_ref): hit.artifact_ref for hit in lexical}
+        refs.update((artifact_key(ref), ref) for ref in vector)
+        if not refs:
+            return ()
+        scores = reciprocal_rank_scores((
+            tuple(artifact_key(hit.artifact_ref) for hit in lexical),
+            tuple(artifact_key(ref) for ref in vector),
+        ))
+        if semantic_admission is not None:
+            scores = {key: score for key, score in scores.items() if key in semantic_admission}
+        from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE
+
+        heads = ARTIFACT_HEADS_TABLE.c
+        async with self.database.transaction() as connection:
+            active = set(
+                (
+                    await connection.execute(
+                        select(heads.family, heads.artifact_id, heads.revision).where(
+                            heads.scope_id == scope,
+                            heads.lifecycle_state == "active",
+                            tuple_(heads.family, heads.artifact_id, heads.revision).in_(tuple(refs)),
+                        )
+                    )
+                ).tuples()
+            )
+            selected = sorted((key for key in scores if key in active), key=lambda key: (-scores[key], key))[:limit]
+            return tuple([await self.repositories.artifacts.get(connection, scope, refs[key]) for key in selected])
 
     async def get_skill_governance(
         self,
@@ -1278,6 +1343,7 @@ class RelationalContexts:
             repositories=self.repositories,
             index=self.index,
             experience_index=self.experience_index,
+            artifact_vectors=self.artifact_vectors,
             candidate_pipeline=self._candidate_pipeline,
             experience_pipeline=self._experience_pipeline,
             experience_generator=self._experience_generator,

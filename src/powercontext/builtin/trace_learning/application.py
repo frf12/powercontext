@@ -24,6 +24,7 @@ from powercontext.builtin.trace_learning.models import (
     GetLearningRunRequest,
     ImportTraceLearningRequest,
     LearningRun,
+    ResumeLearningRunRequest,
     TraceLearningError,
 )
 
@@ -53,6 +54,13 @@ class ScopedTraceLearningApplication:
     async def get(self, request: GetLearningRunRequest, /) -> LearningRun:
         async with self._runtime._scoped_operation(self.scope_id):
             return await self._service().get_run(self.scope_id, self.principal_id, request.run_id)
+
+    async def resume(self, run_id: str, request: ResumeLearningRunRequest, /) -> LearningRun:
+        async with self._runtime._scoped_operation(self.scope_id):
+            run = await self._service().resume_run(self.scope_id, self.principal_id, run_id, request)
+        if not run.terminal and self._runtime.artifact_processing_supervisor is not None:
+            self._runtime.artifact_processing_supervisor.wake(TRACE_LEARNING_BINDING)
+        return run
 
 
 class TraceLearningApplication:

@@ -227,6 +227,20 @@ class ContextAssembly(_PreparedContextModel):
         return self
 
 
+class LearnedRetrievalOptions(_PreparedContextModel):
+    """Request-local learned E/S/T fusion weights and normalized RRF cutoff."""
+
+    fts_weight: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 1.0
+    vector_weight: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 1.0
+    min_rrf_score: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] = 0.0
+
+    @model_validator(mode="after")
+    def require_positive_weight(self) -> LearnedRetrievalOptions:
+        if self.fts_weight == self.vector_weight == 0:
+            raise ValueError("At least one retrieval weight must be positive")  # noqa: TRY003
+        return self
+
+
 class PrepareContextRequest(_PreparedContextModel):
     """Prepare bounded context for one Agent turn."""
 
@@ -234,6 +248,9 @@ class PrepareContextRequest(_PreparedContextModel):
     max_bytes: Annotated[int, Field(ge=512, le=32768)] = 8000
     assembly: ContextAssembly | None = None
     learned_tools: bool = False
+    learned_skill_rerank: bool = False
+    learned_skill_min_similarity: Annotated[float, Field(ge=0, le=1)] | None = None
+    learned_retrieval_options: LearnedRetrievalOptions | None = None
     learned_families: Annotated[tuple[LearnedArtifactFamily, ...], Field(max_length=3, strict=False)] | None = None
     tool_limit: Annotated[int, Field(ge=1, le=8)] = 3
     host_profile: TraceLearningHostProfile | None = None

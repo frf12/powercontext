@@ -25,6 +25,7 @@ from powercontext.builtin.artifacts.experience import Experience, ExperienceCont
 from powercontext.builtin.artifacts.memory import MemoryEntryInput
 from powercontext.builtin.artifacts.skill import Skill, SkillContent, SkillPackageSnapshot, SkillSearchHit
 from powercontext.builtin.persistence.errors import RepositoryNotFoundError
+from powercontext.builtin.persistence.experience_index import NoExperienceIndex
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import ARTIFACTS_TABLE, BUILTIN_TABLES
 from powercontext.builtin.records import ArtifactWrite
@@ -74,7 +75,7 @@ class _InjectedExperienceProjectionError(RuntimeError):
     pass
 
 
-class _FailingExperienceIndex:
+class _FailingExperienceIndex(NoExperienceIndex):
     async def initialize(self, _connection: AsyncConnection, /) -> None:
         pass
 

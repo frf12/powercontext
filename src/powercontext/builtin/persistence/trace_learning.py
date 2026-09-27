@@ -183,3 +183,23 @@ class TraceLearningRepository:
         )
         if result.rowcount != 1:
             raise TraceLearningError("attempt_conflict")
+
+    async def resume(self, connection: AsyncConnection, previous: LearningRecord, record: LearningRecord) -> None:
+        """Fence a terminal checkpoint before waking the existing processing binding."""
+        result = await connection.execute(
+            update(RUNS)
+            .where(
+                RUNS.c.scope_id == previous.run.scope_id,
+                RUNS.c.run_id == previous.run.run_id,
+                RUNS.c.generation == previous.generation,
+                RUNS.c.status.in_(("succeeded", "failed")),
+            )
+            .values(
+                status=record.run.status,
+                generation=record.generation,
+                request_generation=record.request_generation,
+                payload=_payload(record),
+            )
+        )
+        if result.rowcount != 1:
+            raise TraceLearningError("attempt_conflict")
