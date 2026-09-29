@@ -4,7 +4,7 @@ title: Individual Memory Artifacts and Current Search Projections
 
 - Proposal Name: `memory_artifact_and_search_projection`
 - Start Date: 2026-09-30
-- RFC PR: Not submitted
+- RFC PR: [oceanbase/powercontext#1803](https://github.com/oceanbase/powercontext/pull/1803)
 - Amends RFCs: [0014](0014_memory_layer_design.md), [0019](0019_local_source_memory_runtime.md),
   [1345](1345_scope_organization_and_agent_integration.md), [1652](1652_memory_quality_and_lifecycle.md),
   [1718](1718_memory_capacity_contract.md)

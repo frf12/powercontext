@@ -4,7 +4,7 @@ title: Memory 单条制品模型与当前检索投影
 
 - 提案名称：`memory_artifact_and_search_projection`
 - 起始日期：2026-09-30
-- RFC PR：尚未提交
+- RFC PR：[oceanbase/powercontext#1803](https://github.com/oceanbase/powercontext/pull/1803)
 - 修订 RFC：[0014](0014_memory_layer_design.md)、[0019](0019_local_source_memory_runtime.md)、
   [1345](1345_scope_organization_and_agent_integration.md)、[1652](1652_memory_quality_and_lifecycle.md)、
   [1718](1718_memory_capacity_contract.md)

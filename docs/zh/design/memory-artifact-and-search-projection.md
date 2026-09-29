@@ -7,7 +7,7 @@ title: Memory 单条制品模型与当前检索投影实现方案
 - 提案名称：`memory_artifact_and_search_projection`
 - 起始日期：2026-09-30
 - 文档类型：实现方案
-- 对应 RFC：[Memory 单条制品模型与当前检索投影](../rfcs/0000-memory-artifact-and-search-projection.md)
+- 对应 RFC：[Memory 单条制品模型与当前检索投影](../rfcs/1803-memory-artifact-and-search-projection.md)
 - 代码核对基线：`ae952f7042eecc331441d05f5847e44815fa2dd8`
 - 修订范围：Memory 身份、版本、抽取协调、检索投影及历史升级；Experience、Skill、Topic Memory 的当前检索投影。
 - 相关 RFC：[Memory 设计](../rfcs/0014_memory_layer_design.md)、[Source/Memory Runtime](../rfcs/0019_local_source_memory_runtime.md)、
