@@ -4,7 +4,7 @@ title: Automatic Memory 独立记忆制品
 
 - 提案名称：`automatic_memory`
 - 起始日期：2026-09-30
-- RFC PR：尚未提交
+- RFC PR：[oceanbase/powercontext#1809](https://github.com/oceanbase/powercontext/pull/1809)
 - 前置 RFC：[制品检索宽表与单表召回，#1803](https://github.com/oceanbase/powercontext/pull/1803)
 - 修订 RFC：[0014](0014_memory_layer_design.md)、[0019](0019_local_source_memory_runtime.md)、
   [1345](1345_scope_organization_and_agent_integration.md)、[1652](1652_memory_quality_and_lifecycle.md)、

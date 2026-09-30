@@ -4,7 +4,7 @@ title: Automatic Memory as Independent Artifacts
 
 - Proposal Name: `automatic_memory`
 - Start Date: 2026-09-30
-- RFC PR: Not submitted
+- RFC PR: [oceanbase/powercontext#1809](https://github.com/oceanbase/powercontext/pull/1809)
 - Depends on: [Artifact Search Wide Tables and Single-Table Retrieval, #1803](https://github.com/oceanbase/powercontext/pull/1803)
 - Amends: [0014](0014_memory_layer_design.md), [0019](0019_local_source_memory_runtime.md),
   [1345](1345_scope_organization_and_agent_integration.md), [1652](1652_memory_quality_and_lifecycle.md),

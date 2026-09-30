@@ -7,7 +7,7 @@ title: Automatic Memory 实现方案
 - 提案名称：`automatic_memory`
 - 起始日期：2026-09-30
 - 文档类型：实现方案
-- 对应 RFC：[Automatic Memory 独立记忆制品](../rfcs/0000-automatic-memory.md)
+- 对应 RFC：[Automatic Memory 独立记忆制品](../rfcs/1809-automatic-memory.md)
 - 前置 RFC：[制品检索宽表与单表召回，#1803](https://github.com/oceanbase/powercontext/pull/1803)
 - 代码核对基线：`ae952f7042eecc331441d05f5847e44815fa2dd8`
 - 范围：Automatic Memory 身份、版本、抽取协调、公共检索接入及停服历史迁移。
@@ -550,4 +550,4 @@ SQLite 不支持的原地列/虚拟表变更使用维护期替换和检查点；
 
 公共检索的现状问题、OceanBase 执行边界、每 family 宽表、一致性和后端验收依据集中在
 [RFC #1803](https://github.com/oceanbase/powercontext/pull/1803)。Automatic Memory 的领域契约以
-[对应 RFC](../rfcs/0000-automatic-memory.md) 为准；本文提供其执行步骤、迁移细节和验收清单。
+[对应 RFC](../rfcs/1809-automatic-memory.md) 为准；本文提供其执行步骤、迁移细节和验收清单。
