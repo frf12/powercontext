@@ -9,6 +9,7 @@ title: Artifact Search Wide Tables and Single-Table Retrieval
   [0080](0080_memory_search_reranking.md), [1417](1417_topic_memory.md)
 - Related RFCs: [1396](1396_handoff_access_control.md), [1467](1467_artifact_tags.md),
   [1549](1549_artifact_family_unification.md), [1652](1652_memory_quality_and_lifecycle.md)
+- Dependent RFC: [Automatic Memory as Independent Artifacts, #1809](https://github.com/oceanbase/powercontext/pull/1809)
 - Implementation reference: [implementation design (Chinese)](../../zh/design/artifact-search-projections-design.md)
 
 # Summary
