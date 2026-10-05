@@ -191,7 +191,7 @@ def test_claude_plugin_mcp_supports_explicit_memory_and_handoff_workflows(
 
     assert AUTH_TOKEN not in helper_errors
     assert result == {
-        "memory_state": "inactive",
+        "memory_state": "forgotten",
         "memory_text": "Use the Claude Code plugin MCP transport for explicit operations.",
         "temporary_selection": "prepared",
         "committed_family": "handoff",
@@ -230,23 +230,33 @@ async def _exercise_explicit_mcp_workflows(endpoint: str, headers: dict[str, str
             },
         )
         remembered = remembered_result.structured_content or {}
+        memory = remembered["records"][0]["artifact"]
+        target = {"scope_id": scope_id, "family": memory["family"], "artifact_id": memory["artifact_id"]}
+        head_result = await client.call_tool("get_artifact", target)
+        head = head_result.structured_content or {}
         revised_result = await client.call_tool(
-            "revise_memory_entry",
+            "replace_artifact",
             {
-                "scope_id": scope_id,
-                "citation": remembered["entry"]["citation"],
-                "kind": "decision",
-                "text": "Use the Claude Code plugin MCP transport for explicit operations.",
-                "reason": "Clarify the integration boundary.",
+                **target,
+                "If-Match": head["etag"],
+                "content": {
+                    "kind": "decision",
+                    "text": "Use the Claude Code plugin MCP transport for explicit operations.",
+                },
             },
         )
         revised = revised_result.structured_content or {}
+        state_result = await client.call_tool(
+            "get_atomic_memory_state", {"scope_id": scope_id, "artifact_id": memory["artifact_id"]}
+        )
+        state = state_result.structured_content or {}
+        assert state["artifact"]["revision"] == revised["artifact"]["revision"]
         retired_result = await client.call_tool(
-            "retire_memory_entry",
+            "change_atomic_memory_lifecycle",
             {
                 "scope_id": scope_id,
-                "citation": revised["entry"]["citation"],
-                "reason": "Exercise the complete explicit maintenance lifecycle.",
+                "target": {"artifact": state["artifact"], "state_version": state["state_version"]},
+                "state": "forgotten",
             },
         )
         retired = retired_result.structured_content or {}
@@ -291,8 +301,8 @@ async def _exercise_explicit_mcp_workflows(endpoint: str, headers: dict[str, str
         latest = latest_result.structured_content or {}
 
     return {
-        "memory_state": retired["entry"]["state"],
-        "memory_text": retired["entry"]["text"],
+        "memory_state": retired["records"][0]["state"],
+        "memory_text": retired["records"][0]["text"],
         "temporary_selection": temporary["selection"],
         "committed_family": committed["reference"]["family"],
         "latest_matches_commit": latest["selected_revision"] == committed["reference"],

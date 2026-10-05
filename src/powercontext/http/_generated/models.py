@@ -21,6 +21,75 @@ from pydantic import (
 )
 
 
+class AtomicMemoryState(StrEnum):
+    ACTIVE = "active"
+    FORGOTTEN = "forgotten"
+    MERGED = "merged"
+    RETIRED = "retired"
+
+
+class Family(StrEnum):
+    ATOMIC_MEMORY = "atomic-memory"
+
+
+class AtomicMemoryTarget(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+    revision: Annotated[StrictInt | None, Field(ge=1)] = None
+
+
+class Tag(RootModel[StrictStr]):
+    root: Annotated[StrictStr, Field(min_length=1)]
+
+
+class MatchedByEnum(StrEnum):
+    TEXT = "text"
+    VECTOR = "vector"
+
+
+class AtomicMemoryRestorationItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact_id: Annotated[StrictStr, Field(min_length=1)]
+    source_revision: Annotated[StrictInt, Field(ge=1)]
+    creates_revision: StrictBool
+
+
+class AtomicMemoryRestorationEndpoint(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact_id: Annotated[StrictStr, Field(min_length=1)]
+    revision: Annotated[StrictInt, Field(ge=1)]
+    state_version: Annotated[StrictInt, Field(ge=0)]
+
+
+class UndoMergeResult(RootModel[StrictStr]):
+    root: Annotated[StrictStr, Field(min_length=1)]
+
+
+class AtomicMemoryContentSchema(StrEnum):
+    POWERCONTEXT_ATOMIC_MEMORY_V1 = "powercontext.atomic-memory.v1"
+
+
+class AtomicMemorySearchMode(StrEnum):
+    TEXT = "text"
+    VECTOR = "vector"
+    HYBRID = "hybrid"
+
+
+class AtomicMemoryRestorationOperation(StrEnum):
+    RESTORE = "restore"
+    UNDO_MERGE = "undo_merge"
+
+
+class AtomicMemoryLifecycleState(StrEnum):
+    FORGOTTEN = "forgotten"
+
+
 class SubjectType(StrEnum):
     USER = "user"
 
@@ -113,7 +182,7 @@ class ProfileCandidateProposal(BaseModel):
     created_at: AwareDatetime
 
 
-class Family(StrEnum):
+class Family1(StrEnum):
     PROFILE = "profile"
 
 
@@ -1821,7 +1890,7 @@ class TopicMemoryWriteContent(BaseModel):
     detail: Annotated[StrictStr, Field(max_length=125000, min_length=1, pattern=".*\\S.*")]
 
 
-class Family1(StrEnum):
+class Family2(StrEnum):
     TOPIC_MEMORY = "topic-memory"
 
 
@@ -1840,23 +1909,23 @@ class ReplaceTopicMemoryArtifactRequest(BaseModel):
     content: TopicMemoryWriteContent
 
 
-class Family2(StrEnum):
+class Family3(StrEnum):
     PROMPT = "prompt"
 
 
-class Family3(StrEnum):
+class Family4(StrEnum):
     MEMORY = "memory"
 
 
-class Family4(StrEnum):
+class Family5(StrEnum):
     EXPERIENCE = "experience"
 
 
-class Family5(StrEnum):
+class Family6(StrEnum):
     SKILL = "skill"
 
 
-class Family6(StrEnum):
+class Family7(StrEnum):
     HANDOFF = "handoff"
 
 
@@ -1899,6 +1968,7 @@ class CreateSourceRequest(BaseModel):
 
 class TaggableArtifactFamily(StrEnum):
     MEMORY = "memory"
+    ATOMIC_MEMORY = "atomic-memory"
     EXPERIENCE = "experience"
     SKILL = "skill"
     HANDOFF = "handoff"
@@ -1934,7 +2004,7 @@ class Type1(StrEnum):
     MEMORY_ENTRY = "memory_entry"
 
 
-class Family7(StrEnum):
+class Family8(StrEnum):
     MEMORY = "memory"
 
 
@@ -1943,7 +2013,7 @@ class MemoryEntryTagTarget(BaseModel):
         extra="forbid",
     )
     type: Literal["memory_entry"]
-    family: Family7
+    family: Family8
     artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1)]
     entry_id: Annotated[StrictStr, Field(max_length=128, min_length=1)]
 
@@ -1952,7 +2022,7 @@ class TagTarget(RootModel[ArtifactTagTarget | MemoryEntryTagTarget]):
     root: Annotated[ArtifactTagTarget | MemoryEntryTagTarget, Field(discriminator="type")]
 
 
-class Tag(RootModel[StrictStr]):
+class Tag2(RootModel[StrictStr]):
     root: Annotated[StrictStr, Field(max_length=64, min_length=1)]
 
 
@@ -1960,7 +2030,7 @@ class TagFilter(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    tags: Annotated[list[Tag], Field(max_length=16, min_length=1)]
+    tags: Annotated[list[Tag2], Field(max_length=16, min_length=1)]
     match: TagMatch = TagMatch.ALL
 
 
@@ -1968,14 +2038,14 @@ class ReplaceArtifactTagsRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    tags: Annotated[list[Tag], Field(max_length=32, min_length=0)]
+    tags: Annotated[list[Tag2], Field(max_length=32, min_length=0)]
 
 
 class QueryArtifactTagsRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    tags: Annotated[list[Tag], Field(max_length=16, min_length=1)]
+    tags: Annotated[list[Tag2], Field(max_length=16, min_length=1)]
     match: TagMatch = TagMatch.ALL
     families: Annotated[
         list[TaggableArtifactFamily] | None,
@@ -1997,7 +2067,7 @@ class ArtifactTagSet(BaseModel):
     )
     scope_id: StrictStr
     target: TagTarget
-    tags: Annotated[list[Tag], Field(max_length=32, min_length=0)]
+    tags: Annotated[list[Tag2], Field(max_length=32, min_length=0)]
     tag_digest: Annotated[
         StrictStr,
         Field(
@@ -2013,7 +2083,7 @@ class TaggedTarget(BaseModel):
     )
     scope_id: StrictStr
     target: TagTarget
-    tags: Annotated[list[Tag], Field(max_length=32, min_length=0)]
+    tags: Annotated[list[Tag2], Field(max_length=32, min_length=0)]
     tag_digest: Annotated[
         StrictStr,
         Field(
@@ -2079,6 +2149,8 @@ class ListSourcesRequest(BaseModel):
 class PromptKey(StrEnum):
     MEMORY_EXTRACT = "memory.extract"
     MEMORY_RERANK = "memory.rerank"
+    ATOMIC_MEMORY_EXTRACT = "atomic_memory.extract"
+    ATOMIC_MEMORY_RECONCILE = "atomic_memory.reconcile"
     EXPERIENCE_INCUBATE = "experience.incubate"
     EXPERIENCE_GENERATE = "experience.generate"
     SKILL_GENERATE = "skill.generate"
@@ -2276,6 +2348,7 @@ class CaptureStatus(StrEnum):
 
 class BaseArtifactFamily(StrEnum):
     MEMORY = "memory"
+    ATOMIC_MEMORY = "atomic-memory"
     EXPERIENCE = "experience"
     SKILL = "skill"
     HANDOFF = "handoff"
@@ -2286,6 +2359,7 @@ class BaseArtifactFamily(StrEnum):
 
 class ArtifactReadFamily(StrEnum):
     MEMORY = "memory"
+    ATOMIC_MEMORY = "atomic-memory"
     EXPERIENCE = "experience"
     SKILL = "skill"
     HANDOFF = "handoff"
@@ -2816,6 +2890,186 @@ class AccessAuditPage(BaseModel):
     next_cursor: Annotated[StrictStr | None, Field(max_length=2048)]
 
 
+class AtomicMemoryWriteContent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    schema_: Annotated[AtomicMemoryContentSchema, Field(alias="schema")] = (
+        AtomicMemoryContentSchema.POWERCONTEXT_ATOMIC_MEMORY_V1
+    )
+    kind: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+    text: Annotated[StrictStr, Field(max_length=8192, min_length=1)]
+
+
+class CreateAtomicMemoryArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Literal["atomic-memory"]
+    content: AtomicMemoryWriteContent
+
+
+class ReplaceAtomicMemoryArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: AtomicMemoryWriteContent
+
+
+class AtomicMemoryStateResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact: ArtifactReference
+    state: AtomicMemoryState
+    state_version: Annotated[StrictInt, Field(ge=0)]
+    merged_into_id: Annotated[StrictStr | None, Field(...)]
+
+
+class AtomicMemoryRecord(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact: ArtifactReference
+    kind: Annotated[StrictStr, Field(min_length=1)]
+    text: Annotated[StrictStr, Field(min_length=1)]
+    state: AtomicMemoryState
+    state_version: Annotated[StrictInt, Field(ge=0)]
+    merged_into_id: Annotated[StrictStr | None, Field(...)]
+
+
+class AtomicMemoryInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact: ArtifactReference
+    state_version: Annotated[StrictInt, Field(ge=0)]
+
+
+class ListAtomicMemoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    states: list[AtomicMemoryState] | None = None
+    kind: Annotated[StrictStr | None, Field(min_length=1)] = None
+    tags: Annotated[list[Tag] | None, Field(max_length=16)] = None
+    tag_match: TagMatch | None = None
+    limit: Annotated[StrictInt, Field(ge=1, le=100)] = 50
+    cursor: Annotated[StrictStr | None, Field(max_length=4096)] = None
+
+
+class ListAtomicMemoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: list[AtomicMemoryRecord]
+    next_cursor: Annotated[StrictStr | None, Field(...)]
+
+
+class SearchAtomicMemoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    query: Annotated[StrictStr, Field(max_length=8192, min_length=1)]
+    mode: AtomicMemorySearchMode = AtomicMemorySearchMode.TEXT
+    kind: Annotated[StrictStr | None, Field(min_length=1)] = None
+    tags: Annotated[list[Tag] | None, Field(max_length=16)] = None
+    tag_match: TagMatch | None = None
+    limit: Annotated[StrictInt, Field(ge=1, le=100)] = 20
+
+
+class AtomicMemorySearchHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    memory: AtomicMemoryRecord
+    score: StrictFloat
+    matched_by: list[MatchedByEnum]
+
+
+class SearchAtomicMemoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: AtomicMemorySearchMode
+    hits: list[AtomicMemorySearchHit]
+
+
+class MergeAtomicMemoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    inputs: Annotated[list[AtomicMemoryInput], Field(min_length=2)]
+    content: AtomicMemoryWriteContent
+    source_refs: list[SourceReference] | None = None
+    artifact_refs: list[ArtifactReference] | None = None
+
+
+class AtomicMemoryMutationResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    changed: StrictBool
+    records: list[AtomicMemoryRecord]
+
+
+class AtomicMemoryLifecycleRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    target: AtomicMemoryInput
+    state: AtomicMemoryLifecycleState
+
+
+class AtomicMemoryRestorationRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    target: AtomicMemoryTarget
+    operation: AtomicMemoryRestorationOperation = AtomicMemoryRestorationOperation.RESTORE
+    preview_token: StrictStr | None = None
+
+
+class AtomicMemoryRestorationPreviewRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    target: AtomicMemoryTarget
+    operation: AtomicMemoryRestorationOperation = AtomicMemoryRestorationOperation.RESTORE
+
+
+class AtomicMemoryRestorationPreview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    preview_token: Annotated[StrictStr, Field(min_length=1)]
+    expires_at: AwareDatetime
+    endpoint: AtomicMemoryRestorationEndpoint
+    restore: list[AtomicMemoryRestorationItem]
+    retire: list[ArtifactReference]
+    undo_merge_results: list[UndoMergeResult]
+
+
+class AtomicMemoryRestorationResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    changed: StrictBool
+    restored: list[ArtifactReference]
+    retired: list[ArtifactReference]
+    undo_merge_results: list[UndoMergeResult]
+
+
+class LegacyMemoryTarget(RootModel[MemoryEntryTagTarget]):
+    root: MemoryEntryTagTarget
+
+
 class FlushProfileResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3235,11 +3489,15 @@ class FlushMemoryResponse(BaseModel):
     high_watermark: Annotated[StrictInt, Field(ge=0)]
     processed_source_count: Annotated[StrictInt, Field(ge=0)]
     memory: ArtifactReference | None = None
+    remaining_work: Annotated[
+        StrictBool, Field(description="More Source journal work remains after the committed window.")
+    ] = False
     held_count: Annotated[
-        StrictInt, Field(description="Number of source windows held by the Memory write gate.", ge=0)
+        StrictInt, Field(description="Compatibility field; Atomic Memory processing always returns zero.", ge=0)
     ] = 0
     hold_codes: Annotated[
-        list[StrictStr], Field(description="Structured Memory write gate refusal codes for held windows.")
+        list[StrictStr],
+        Field(description="Compatibility field; Atomic Memory processing always returns an empty array."),
     ] = []
 
 
@@ -3255,7 +3513,16 @@ class GetMemoryEntryRequest(BaseModel):
         extra="forbid",
     )
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
-    citation: MemoryCitation
+    citation: MemoryCitation | None = None
+    target: LegacyMemoryTarget | None = None
+
+    @model_validator(mode="after")
+    def _validate_exclusive_fields(self):
+        fields = ("citation", "target")
+        present = tuple(field for field in fields if field in self.model_fields_set)
+        if len(present) != 1 or getattr(self, present[0]) is None:
+            raise ValueError("exactly one non-null address is required")  # noqa: TRY003
+        return self
 
 
 class GetHandoffReportRequest(BaseModel):
@@ -3284,9 +3551,19 @@ class ListMemoryEntriesRequest(BaseModel):
     )
     tag_filter: TagFilter | None = None
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
-    include_inactive: Annotated[
-        StrictBool, Field(description="Include inactive entries from the current Memory head for explicit audit.")
-    ] = False
+    include_inactive: Annotated[StrictBool, Field(description="Include all four Atomic Memory lifecycle states.")] = (
+        False
+    )
+    limit: Annotated[StrictInt, Field(ge=1, le=100)] = 50
+    cursor: Annotated[StrictStr | None, Field(min_length=1)] = None
+
+
+class ListMemoryEntriesResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    entries: list[AtomicMemoryRecord]
+    next_cursor: StrictStr | None = None
 
 
 class ListArtifactCandidatesRequest(BaseModel):
@@ -3317,8 +3594,8 @@ class MemoryMutationResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    memory: ArtifactReference
-    entry: MemoryEntry | None = None
+    changed: StrictBool
+    records: list[AtomicMemoryRecord]
 
 
 class MemoryRevisionChanges(BaseModel):
@@ -3592,9 +3869,8 @@ class SearchMemoryResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    memory: ArtifactReference | None = None
-    mode: MemoryUsedSearchMode | None = None
-    hits: list[SearchMemoryHit]
+    mode: AtomicMemorySearchMode
+    hits: list[AtomicMemorySearchHit]
 
 
 class TopicMemoryArtifact(BaseModel):
@@ -3718,6 +3994,10 @@ class ListAccessAuditRequest(BaseModel):
     time_range: AccessAuditTimeRange | None = None
     cursor: Annotated[StrictStr | None, Field(max_length=2048)] = None
     limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
+
+
+class GetMemoryEntryResponse(RootModel[MemoryEntry | AtomicMemoryRecord]):
+    root: MemoryEntry | AtomicMemoryRecord
 
 
 class CreateSubjectSourceResponse(BaseModel):
@@ -3937,14 +4217,6 @@ class ListMemoryChangesResponse(BaseModel):
     )
     memory: ArtifactReference | None = None
     revisions: list[MemoryRevisionChanges]
-
-
-class ListMemoryEntriesResponse(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    memory: ArtifactReference | None = None
-    entries: list[MemoryEntry]
 
 
 class PrepareContextRequest(BaseModel):
@@ -4275,7 +4547,8 @@ class HandoffActivation(BaseModel):
 
 class CreateArtifactRequest(
     RootModel[
-        CreateTopicMemoryArtifactRequest
+        CreateAtomicMemoryArtifactRequest
+        | CreateTopicMemoryArtifactRequest
         | CreateMemoryArtifactRequest
         | CreateExperienceArtifactRequest
         | CreateSkillArtifactRequest
@@ -4285,7 +4558,8 @@ class CreateArtifactRequest(
     ]
 ):
     root: Annotated[
-        CreateTopicMemoryArtifactRequest
+        CreateAtomicMemoryArtifactRequest
+        | CreateTopicMemoryArtifactRequest
         | CreateMemoryArtifactRequest
         | CreateExperienceArtifactRequest
         | CreateSkillArtifactRequest
@@ -4298,7 +4572,8 @@ class CreateArtifactRequest(
 
 class ReplaceArtifactRequest(
     RootModel[
-        ReplaceTopicMemoryArtifactRequest
+        ReplaceAtomicMemoryArtifactRequest
+        | ReplaceTopicMemoryArtifactRequest
         | ReplaceMemoryArtifactRequest
         | ReplaceExperienceArtifactRequest
         | ReplaceSkillArtifactRequest
@@ -4308,7 +4583,8 @@ class ReplaceArtifactRequest(
     ]
 ):
     root: (
-        ReplaceTopicMemoryArtifactRequest
+        ReplaceAtomicMemoryArtifactRequest
+        | ReplaceTopicMemoryArtifactRequest
         | ReplaceMemoryArtifactRequest
         | ReplaceExperienceArtifactRequest
         | ReplaceSkillArtifactRequest

@@ -49,6 +49,7 @@ from powercontext.builtin.review.generation import (
     SkillGenerationOrigin,
 )
 from powercontext.builtin.runtime.application import (
+    AtomicMemoryRuntimeApplication,
     BuiltinRuntime,
     ExperienceApplication,
     ExternalSkillApplication,
@@ -59,6 +60,7 @@ from powercontext.builtin.runtime.application import (
     ReviewApplication,
     ScheduledExperienceProcessor,
     ScheduledSourceProcessor,
+    ScopedAtomicMemoryApplication,
     ScopedExperienceApplication,
     ScopedExternalSkillApplication,
     ScopedHandoffApplication,
@@ -85,6 +87,8 @@ from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingWorkerOutcome,
     SpawnArtifactProcessingWorkerLauncher,
 )
+from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchHit, AtomicMemorySearchPage
+from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.composition import (
     BuiltinConfigurationError,
     open_builtin_contexts,
@@ -221,6 +225,11 @@ __all__ = [
     "ArtifactProcessingWorkerCompletion",
     "ArtifactProcessingWorkerFailure",
     "ArtifactProcessingWorkerOutcome",
+    "AtomicMemoryExecutionContext",
+    "AtomicMemoryPage",
+    "AtomicMemoryRuntimeApplication",
+    "AtomicMemorySearchHit",
+    "AtomicMemorySearchPage",
     "BuiltinConfig",
     "BuiltinConfigurationError",
     "BuiltinRuntime",
@@ -350,6 +359,7 @@ __all__ = [
     "ScheduledExperienceProcessor",
     "ScheduledSourceProcessor",
     "ScopeStatistics",
+    "ScopedAtomicMemoryApplication",
     "ScopedDreamApplication",
     "ScopedExperienceApplication",
     "ScopedExternalSkillApplication",

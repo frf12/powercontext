@@ -17,6 +17,13 @@
 // generated from openapi/powercontext.yaml; do not edit.
 
 export const OPERATIONS = {
+  list_atomic_memories: { method: 'POST', path: '/v1/atomic-memory/list', location: "body", scopeMode: 'none', pathParameters: [], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
+  search_atomic_memory: { method: 'POST', path: '/v1/atomic-memory/search', location: "body", scopeMode: 'none', pathParameters: [], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
+  merge_atomic_memories: { method: 'POST', path: '/v1/atomic-memory/merges', location: "body", scopeMode: 'none', pathParameters: [], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
+  change_atomic_memory_lifecycle: { method: 'POST', path: '/v1/atomic-memory/lifecycle', location: "body", scopeMode: 'none', pathParameters: [], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
+  preview_atomic_memory_restoration: { method: 'POST', path: '/v1/atomic-memory/restoration-previews', location: "body", scopeMode: 'none', pathParameters: [], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
+  restore_atomic_memory: { method: 'POST', path: '/v1/atomic-memory/restorations', location: "body", scopeMode: 'none', pathParameters: [], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
+  get_atomic_memory_state: { method: 'GET', path: '/v1/scopes/{scope_id}/artifacts/atomic-memory/{artifact_id}/state', location: null, scopeMode: 'none', pathParameters: ['scope_id', 'artifact_id'], queryParams: [], headerParams: ['If-None-Match'], successStatuses: [200,304], emptyStatuses: [304] },
   create_subject_source: { method: 'POST', path: '/v1/scopes/{scope_id}/subject-sources', location: "body", scopeMode: 'none', pathParameters: ['scope_id'], queryParams: [], headerParams: [], successStatuses: [201], emptyStatuses: [] },
   get_profile_policy: { method: 'GET', path: '/v1/scopes/{scope_id}/profile-policy', location: null, scopeMode: 'none', pathParameters: ['scope_id'], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },
   put_profile_policy: { method: 'PUT', path: '/v1/scopes/{scope_id}/profile-policy', location: "body", scopeMode: 'none', pathParameters: ['scope_id'], queryParams: [], headerParams: [], successStatuses: [200], emptyStatuses: [] },

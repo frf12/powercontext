@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
@@ -30,8 +30,12 @@ if TYPE_CHECKING:
     from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
     from powercontext.builtin.tags import ArtifactTagSet, TagFilter, TagQuery, TagQueryPage, TagTarget
 
-BaseArtifactFamily = Literal["memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"]
-ArtifactReadFamily = Literal["memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"]
+BaseArtifactFamily = Literal[
+    "memory", "atomic-memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"
+]
+ArtifactReadFamily = Literal[
+    "memory", "atomic-memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"
+]
 
 
 class _RecordModel(BaseModel):
@@ -283,7 +287,13 @@ class RecordService(Protocol):
         family: str,
         write: ArtifactWrite,
         /,
+        *,
+        execution_context: Any = None,
     ) -> ArtifactCreated: ...
+
+    async def create_atomic_memories(
+        self, scope_id: str, contents: tuple[dict[str, JsonValue], ...], *, execution_context: Any = None
+    ) -> tuple[ArtifactCreated, ...]: ...
 
     async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord: ...
 
@@ -325,7 +335,13 @@ class RecordService(Protocol):
     async def get_tags(self, scope_id: str, target: TagTarget) -> ArtifactTagSet: ...
 
     async def replace_tags(
-        self, scope_id: str, target: TagTarget, tags: tuple[str, ...], *, expected_etag: str
+        self,
+        scope_id: str,
+        target: TagTarget,
+        tags: tuple[str, ...],
+        *,
+        expected_etag: str,
+        execution_context: Any = None,
     ) -> ArtifactTagSet: ...
 
     async def query_tags(self, scope_id: str, query: TagQuery, *, caller: str = "runtime") -> TagQueryPage: ...
@@ -338,6 +354,8 @@ class RecordService(Protocol):
         expected_etag: str,
         write: ArtifactWrite,
         /,
+        *,
+        execution_context: Any = None,
     ) -> ArtifactRecord: ...
 
     async def list_scopes(self, *, limit: int, cursor: str | None) -> ScopeSummaryPage: ...

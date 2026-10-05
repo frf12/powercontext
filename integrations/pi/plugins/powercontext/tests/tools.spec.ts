@@ -78,7 +78,7 @@ describe('Pi native tool surface', () => {
       'pc_remember',
       'pc_memory_list',
       'pc_memory_get',
-      'pc_memory_changes',
+      'pc_memory_state',
       'pc_stats',
       'pc_memory_revise',
       'pc_memory_retire',
@@ -151,7 +151,7 @@ describe('Pi native tool surface', () => {
     })
   })
 
-  it('routes Memory Changes and Stats as read-only current-Scope operations', async () => {
+  it('routes Memory State and Stats as read-only current-Scope operations', async () => {
     const registered: Array<Record<string, unknown>> = []
     const fetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ ok: true })))
     const runtime = createRuntime(fetch)
@@ -160,16 +160,16 @@ describe('Pi native tool surface', () => {
     const context = { cwd: '/workspace/repo', hasUI: false, ui: { confirm } }
     const signal = new AbortController().signal
 
-    await registeredTool<{ since_revision: number }>(registered, 'pc_memory_changes').execute(
-      'call-changes', { since_revision: 7 }, signal, () => undefined, context,
+    await registeredTool<{ artifact_id: string }>(registered, 'pc_memory_state').execute(
+      'call-state', { artifact_id: 'atomic-7' }, signal, () => undefined, context,
     )
     await registeredTool<{ period: string }>(registered, 'pc_stats').execute(
       'call-stats', { period: '7d' }, signal, () => undefined, context,
     )
 
     expect(confirm).not.toHaveBeenCalled()
-    expect(fetch.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([
-      ['http://127.0.0.1:8000/v1/memory/changes', { since_revision: 7, scope_id: 'project:demo' }],
+    expect(fetch.mock.calls.map(([url, init]) => [url, init?.body ? JSON.parse(String(init.body)) : {}])).toEqual([
+      ['http://127.0.0.1:8000/v1/scopes/project%3Ademo/artifacts/atomic-memory/atomic-7/state', {}],
       ['http://127.0.0.1:8000/v1/stats', { period: '7d', selection: { mode: 'exact', scope_ids: ['project:demo'] } }],
     ])
   })
@@ -177,15 +177,15 @@ describe('Pi native tool surface', () => {
   it('keeps the read-only tool schemas within the API contract', () => {
     const registered: Array<Record<string, unknown>> = []
     registerTools({ registerTool: (tool: Record<string, unknown>) => registered.push(tool) } as never, createRuntime(vi.fn()))
-    const changes = registeredTool<Record<string, unknown>>(registered, 'pc_memory_changes') as unknown as { parameters: TSchema }
+    const state = registeredTool<Record<string, unknown>>(registered, 'pc_memory_state') as unknown as { parameters: TSchema }
     const stats = registeredTool<Record<string, unknown>>(registered, 'pc_stats') as unknown as { parameters: TSchema }
 
-    expect(Value.Check(changes.parameters, {})).toBe(true)
-    expect(Value.Check(changes.parameters, { since_revision: 0 })).toBe(true)
-    expect(Value.Check(changes.parameters, { since_revision: null })).toBe(true)
-    expect(Value.Check(changes.parameters, { since_revision: -1 })).toBe(false)
-    expect(Value.Check(changes.parameters, { since_revision: 1.5 })).toBe(false)
-    expect(Value.Check(changes.parameters, { extra: true })).toBe(false)
+    expect(Value.Check(state.parameters, {})).toBe(false)
+    expect(Value.Check(state.parameters, { artifact_id: 'atomic-7' })).toBe(true)
+    expect(Value.Check(state.parameters, { artifact_id: '' })).toBe(false)
+    expect(Value.Check(state.parameters, { artifact_id: null })).toBe(false)
+    expect(Value.Check(state.parameters, { artifact_id: 'has space' })).toBe(false)
+    expect(Value.Check(state.parameters, { artifact_id: 'atomic-7', extra: true })).toBe(false)
     expect(Value.Check(stats.parameters, {})).toBe(true)
     expect(Value.Check(stats.parameters, { period: 'today' })).toBe(true)
     expect(Value.Check(stats.parameters, { period: '7d' })).toBe(true)
@@ -193,17 +193,17 @@ describe('Pi native tool surface', () => {
     expect(Value.Check(stats.parameters, { period: '30d', extra: true })).toBe(false)
   })
 
-  it('preserves nullable revision cursors through Pi argument validation', () => {
+  it('preserves exact Atomic Memory identity through Pi argument validation', () => {
     const registered: Array<Record<string, unknown>> = []
     registerTools({ registerTool: (tool: Record<string, unknown>) => registered.push(tool) } as never, createRuntime(vi.fn()))
-    const tool = registeredTool<Record<string, unknown>>(registered, 'pc_memory_changes') as unknown as Tool
-    const call = (since_revision: unknown): ToolCall => ({
-      type: 'toolCall', id: 'call-validation', name: 'pc_memory_changes', arguments: { since_revision },
+    const tool = registeredTool<Record<string, unknown>>(registered, 'pc_memory_state') as unknown as Tool
+    const call = (artifact_id: unknown): ToolCall => ({
+      type: 'toolCall', id: 'call-validation', name: 'pc_memory_state', arguments: { artifact_id },
     })
 
-    expect(validateToolArguments(tool, call(null))).toEqual({ since_revision: null })
-    expect(validateToolArguments(tool, call(0))).toEqual({ since_revision: 0 })
-    expect(() => validateToolArguments(tool, call(1.5))).toThrow('Validation failed')
+    expect(validateToolArguments(tool, call('atomic-7'))).toEqual({ artifact_id: 'atomic-7' })
+    expect(() => validateToolArguments(tool, call(null))).toThrow('Validation failed')
+    expect(() => validateToolArguments(tool, call('has space'))).toThrow('Validation failed')
   })
 
   it('requires confirmation and filters secrets for all structured work writes', async () => {

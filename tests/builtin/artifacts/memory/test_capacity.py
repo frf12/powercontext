@@ -63,14 +63,26 @@ async def memory_context(database_config, **settings):
     config = BuiltinConfig(database=database_config, runtime=RuntimeConfig(**settings))
     async with open_builtin_contexts(config) as contexts:
         scope_id = "capacity-" + uuid4().hex
-        context = await contexts.get(scope_id)
         backend = RelationalMemoryBackend(
             database=contexts.database,
             scope_id=scope_id,
             artifacts=contexts.repositories.artifacts,
             index=contexts.index,
         )
-        yield contexts, scope_id, context.artifacts.memory, backend
+        service = MemoryService(
+            backend=backend,
+            capacity_budget=MemoryCapacityBudget(
+                max_active_entries=config.runtime.memory_max_active_entries,
+                max_manifest_entries=config.runtime.memory_max_manifest_entries,
+                max_manifest_bytes=config.runtime.memory_max_manifest_bytes,
+            ),
+            compaction=MemoryCompactionPolicy(
+                enabled=config.runtime.memory_compaction_enabled,
+                min_tombstone_revisions=config.runtime.memory_compaction_min_tombstone_revisions,
+            ),
+            max_history_revisions=config.runtime.memory_max_history_revisions,
+        )
+        yield contexts, scope_id, service, backend
 
 
 def fact(number, **values):

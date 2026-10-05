@@ -23,11 +23,15 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
+from powercontext.builtin.artifacts.atomic_memory.extraction import (
+    AtomicMemoryCandidate,
+    AtomicMemoryExtractionInput,
+    AtomicMemoryExtractionOutput,
+)
 from powercontext.builtin.artifacts.handoff import HandoffDraft, HandoffGenerationRequest, HandoffStatement
-from powercontext.builtin.artifacts.memory import MemoryCandidateRequest, MemoryEntryInput
+from powercontext.builtin.inference import GenerationResult
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime.config import InferenceConfig, RuntimeConfig
-from powercontext.builtin.sources import ContentSource
 from powercontext.client import ForbiddenResponseError, PowerContextClient, UnavailableResponseError
 from powercontext.http import (
     AccessAction,
@@ -62,6 +66,7 @@ from powercontext.server.settings import (
     MetricsConfig,
     ServerSettings,
 )
+from tests.e2e.dream_support import atomic_memory_pipeline, memory_source_text
 
 ADMIN = PrincipalRef(type="service", id="admin")
 RECEIVER = PrincipalRef(type="user", id="bob")
@@ -81,11 +86,15 @@ class _DeterministicHandoffPipeline:
 
 
 class _ContentMemoryPipeline:
-    async def extract(self, request: MemoryCandidateRequest, /) -> tuple[MemoryEntryInput, ...]:
-        return tuple(
-            MemoryEntryInput(kind="fact", text=source.content, sources=(source,))
-            for source in request.sources
-            if isinstance(source, ContentSource)
+    async def generate(self, request: AtomicMemoryExtractionInput, /) -> GenerationResult[AtomicMemoryExtractionOutput]:
+        return GenerationResult(
+            output=AtomicMemoryExtractionOutput(
+                candidates=tuple(
+                    AtomicMemoryCandidate(kind="fact", text=text, evidence_ids=(evidence.evidence_id,))
+                    for evidence in request.evidence
+                    if (text := memory_source_text(evidence)) is not None
+                )
+            )
         )
 
 
@@ -428,7 +437,9 @@ def _scheduled_content_memory_worker(spec, assignment):
 
     async def run():
         async with (
-            open_builtin_contexts(spec.config, candidate_pipeline=_ContentMemoryPipeline()) as contexts,
+            open_builtin_contexts(
+                spec.config, candidate_pipeline=atomic_memory_pipeline(_ContentMemoryPipeline())
+            ) as contexts,
             open_worker_security(spec.worker_security, contexts.database) as security,
         ):
             return await process_family_invocation(contexts, assignment, config=spec.config, security=security)
@@ -491,13 +502,14 @@ def test_scheduled_memory_processing_uses_the_static_service_principal_as_owner(
                 ListAccessResourcesRequest(
                     action=AccessAction.ARTIFACT_READ,
                     resource_type=AccessResourceType.ARTIFACT,
-                    family="memory",
+                    family="atomic-memory",
                 )
             )
             assert visible.total == 1
             resource = visible.items[0].model_dump(mode="json")
-            assert resource["identity"]["family"] == "memory"
-            assert resource["selector"]["entry_id"] == entries.entries[0].citation.entry_id
+            assert resource["identity"]["family"] == "atomic-memory"
+            assert resource["identity"]["artifact_id"] == entries.entries[0].artifact.artifact_id
+            assert resource["selector"] is None
 
     asyncio.run(scenario())
 

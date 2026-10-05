@@ -30,7 +30,7 @@ from typing import Any, cast
 
 import pytest
 
-from powercontext.artifacts import ArtifactRef
+from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
 from powercontext.builtin.artifacts.experience import ExperienceSearchOutcome
 from powercontext.builtin.artifacts.memory import EmbeddingProfile, MemoryEntryInput
 from powercontext.builtin.artifacts.search import AdmissionCounts
@@ -53,7 +53,7 @@ from powercontext.builtin.runtime.application import (
     ScopedContextApplication,
     _RecallRoundOutcome,
 )
-from powercontext.builtin.runtime.prepared_context import PreparedContextBuild, PreparedMemoryCandidates
+from powercontext.builtin.runtime.prepared_context import PreparedContextBuild
 from powercontext.builtin.runtime.recall_sufficiency import (
     MEMORY_FAMILY,
     REASON_AT_MAX_ROUNDS,
@@ -503,15 +503,7 @@ def test_memory_head_change_during_expansion_fails_open_to_round_zero(tmp_path, 
                     reuse=reuse,
                     topic_reuse=topic_reuse,
                 )
-            return _RecallRoundOutcome(
-                memory=(
-                    PreparedMemoryCandidates(
-                        scope_id=scope_ids[0],
-                        memory_ref=ArtifactRef(family="memory", artifact_id="memory", revision=999),
-                        hits=(),
-                    ),
-                )
-            )
+            raise AtomicMemoryConflictError("Memory changed while expanding retrieval")  # noqa: TRY003
 
         monkeypatch.setattr(ScopedContextApplication, "_recall_round", changed_head)
         async with _runtime(

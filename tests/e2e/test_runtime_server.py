@@ -25,6 +25,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from powercontext.builtin.artifacts.atomic_memory.extraction import (
+    AtomicMemoryCandidate,
+    AtomicMemoryExtractionInput,
+    AtomicMemoryExtractionOutput,
+)
 from powercontext.builtin.artifacts.handoff import (
     HandoffDraft as RuntimeHandoffDraft,
 )
@@ -36,11 +41,9 @@ from powercontext.builtin.artifacts.handoff import (
 )
 from powercontext.builtin.artifacts.memory import (
     EmbeddingProfile,
-    MemoryCandidateRequest,
-    MemoryEntryInput,
 )
 from powercontext.builtin.artifacts.memory.errors import InvalidMemoryCandidateError
-from powercontext.builtin.inference import EmbeddingResult, InferenceConfigurationError
+from powercontext.builtin.inference import EmbeddingResult, GenerationResult, InferenceConfigurationError
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
@@ -52,13 +55,13 @@ from powercontext.builtin.runtime import (
 from powercontext.builtin.runtime import (
     SearchMemoryRequest as RuntimeSearchMemoryRequest,
 )
-from powercontext.builtin.sources import ContentSource
 from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.errors import RevisionConflictError
 from powercontext.http import (
     AcknowledgeHandoffRequest,
     ActivateHandoffRequest,
     ArtifactAddress,
+    AtomicMemoryLifecycleRequest,
     CaptureContentSourceRequest,
     CommitHandoffRequest,
     ContinueHandoffRequest,
@@ -68,17 +71,18 @@ from powercontext.http import (
     FinalizeHandoffRequest,
     FlushMemoryRequest,
     GetHandoffReportRequest,
-    GetMemoryEntryRequest,
     HandoffCurrentWorkRequest,
     HandoffSelection,
     HandoffSourceCitation,
     ListMemoryChangesRequest,
     ListMemoryEntriesRequest,
+    MemoryCitation,
     PrepareContextRequest,
     PublishArtifactRequest,
     ReadinessStatus,
     RecordTaskOutcomeRequest,
     RememberMemoryRequest,
+    ReplaceArtifactRequest,
     ReportFormat,
     RetireMemoryEntryRequest,
     ReviseMemoryEntryRequest,
@@ -88,6 +92,7 @@ from powercontext.http import (
 from powercontext.http import MemorySearchMode as HttpMemorySearchMode
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import McpConfig, ServerSettings
+from tests.e2e.dream_support import atomic_memory_pipeline, memory_source_text
 
 OCEANBASE_URL = os.environ.get("POWERCONTEXT_TEST_OCEANBASE_URL")
 _ACCESS_READINESS_CHECKS = {
@@ -96,7 +101,7 @@ _ACCESS_READINESS_CHECKS = {
     "access_provider": "disabled",
     "access_resource_kinds": "server,scope,artifact",
     "access_artifact_families": (
-        "experience:enabled,handoff:enabled,memory:enabled,profile:enabled,prompt:enabled,skill:enabled"
+        "atomic-memory:enabled,experience:enabled,handoff:enabled,memory:enabled,profile:enabled,prompt:enabled,skill:enabled"
     ),
 }
 EMBEDDING_PROFILE = EmbeddingProfile(
@@ -109,16 +114,15 @@ EMBEDDING_PROFILE = EmbeddingProfile(
 
 
 class ContentCandidatePipeline:
-    async def extract(self, request: MemoryCandidateRequest, /) -> tuple[MemoryEntryInput, ...]:
-        return tuple(
-            MemoryEntryInput(
-                kind="decision",
-                text=source.content,
-                sources=(source,),
-                reason="captured",
+    async def generate(self, request: AtomicMemoryExtractionInput, /) -> GenerationResult[AtomicMemoryExtractionOutput]:
+        return GenerationResult(
+            output=AtomicMemoryExtractionOutput(
+                candidates=tuple(
+                    AtomicMemoryCandidate(kind="decision", text=text, evidence_ids=(evidence.evidence_id,))
+                    for evidence in request.evidence
+                    if (text := memory_source_text(evidence)) is not None
+                )
             )
-            for source in request.sources
-            if isinstance(source, ContentSource)
         )
 
 
@@ -188,7 +192,7 @@ def test_server_databases_share_source_to_memory_search_behavior(
             database=database,
             mcp=McpConfig(enabled=False),
         ),
-        candidate_pipeline=ContentCandidatePipeline(),
+        candidate_pipeline=atomic_memory_pipeline(ContentCandidatePipeline()),
     )
 
     async def scenario() -> None:
@@ -227,6 +231,8 @@ def test_server_databases_share_source_to_memory_search_behavior(
                 SearchMemoryRequest(scope_id=scope_id, query="Should we keep blue icons in mobile navigation?")
             )
             entries = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope_id))
+            ref = found.hits[0].memory.artifact
+            exact = await client.get_artifact_revision(scope_id, ref.family, ref.artifact_id, ref.revision)
 
         assert readiness.checks == {
             "runtime": "ready",
@@ -240,18 +246,18 @@ def test_server_databases_share_source_to_memory_search_behavior(
         assert capabilities.context_versions == ["powercontext.prepared-context.v1"]
         assert captured.position == 1
         assert flushed.current_cursor == captured.position
-        assert flushed.memory is not None
-        assert found.mode == "fts"
-        assert [hit.text for hit in found.hits] == ["Keep the OpenAPI contract authoritative."]
+        assert flushed.memory is None
+        assert found.mode == "text"
+        assert [hit.memory.text for hit in found.hits] == ["Keep the OpenAPI contract authoritative."]
         assert prepared.schema_ == "powercontext.prepared-context.v1"
         assert prepared.status == "ready"
         assert prepared.content is not None
         prepared_item = json.loads(prepared.content.splitlines()[-2])["items"][0]
         assert prepared_item["content"] == "Keep the OpenAPI contract authoritative."
-        assert prepared_item["citation"] == found.hits[0].citation.model_dump(mode="json", by_alias=True)
+        assert prepared_item["citation"]["artifact"]["artifact"] == ref.model_dump(mode="json", by_alias=True)
         assert unrelated.hits == []
-        assert entries.memory == flushed.memory
-        assert entries.entries[0].source_refs[0].source_id == "turn-1"
+        assert entries.entries[0].artifact == ref
+        assert exact.sources[0].source_id == "turn-1"
 
     asyncio.run(scenario())
 
@@ -353,7 +359,7 @@ def test_server_databases_keep_case_and_accent_variant_identities_distinct(
             )
 
         assert not leaked.entries
-        assert leaked.memory is None
+        assert leaked.next_cursor is None
         assert not accent_leaked.entries
         assert second.position == 2
 
@@ -714,7 +720,7 @@ def test_server_databases_share_vector_and_hybrid_search_behavior(
             database=database,
             mcp=McpConfig(enabled=False),
         ),
-        candidate_pipeline=ContentCandidatePipeline(),
+        candidate_pipeline=atomic_memory_pipeline(ContentCandidatePipeline()),
         embedding_model=KeywordEmbeddingModel(),
     )
 
@@ -766,12 +772,12 @@ def test_server_databases_share_vector_and_hybrid_search_behavior(
                 )
             )
 
-        assert flushed.memory is not None
+        assert flushed.memory is None
         assert capabilities.search_modes == ["auto", "fts", "vector", "hybrid"]
-        assert [hit.text for hit in vector.hits] == ["Alpha semantic record."]
+        assert [hit.memory.text for hit in vector.hits] == ["Alpha semantic record."]
         assert vector.hits[0].matched_by == ["vector"]
-        assert [hit.text for hit in hybrid.hits] == ["Alpha semantic record."]
-        assert hybrid.hits[0].matched_by == ["fts", "vector"]
+        assert [hit.memory.text for hit in hybrid.hits] == ["Alpha semantic record."]
+        assert hybrid.hits[0].matched_by == ["text", "vector"]
 
     asyncio.run(scenario())
 
@@ -782,101 +788,82 @@ def test_sdk_memory_lifecycle_reaches_one_composed_runtime(tmp_path: Path) -> No
     async def scenario() -> None:
         async with (
             app.router.lifespan_context(app),
-            httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://testserver",
-            ) as transport,
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as transport,
         ):
             client = PowerContextClient("http://testserver", http_client=transport, trust_transport_security=True)
             scope_id = (await client.get_default_scope()).scope_id
             remembered = await client.remember_memory(
-                RememberMemoryRequest(
-                    scope_id=scope_id,
-                    kind="decision",
-                    text="Use strict transport models.",
-                )
+                RememberMemoryRequest(scope_id=scope_id, kind="decision", text="Use strict transport models.")
             )
-            assert remembered.entry is not None
-            exact = await client.get_memory_entry(
-                GetMemoryEntryRequest(
-                    scope_id=scope_id,
-                    citation=remembered.entry.citation,
-                )
+            assert len(remembered.records) == 1
+            original = remembered.records[0]
+            ref = original.artifact
+            exact = await client.get_artifact_revision(scope_id, ref.family, ref.artifact_id, ref.revision)
+            path = f"/v1/scopes/{scope_id}/artifacts/atomic-memory/{ref.artifact_id}"
+            head = await transport.get(path)
+            revised = await client.replace_artifact(
+                scope_id,
+                ref.family,
+                ref.artifact_id,
+                ReplaceArtifactRequest.model_validate({
+                    "content": {"kind": "decision", "text": "Keep strict Pydantic transport models."}
+                }),
+                expected_etag=head.headers["ETag"],
             )
-            revised = await client.revise_memory_entry(
-                ReviseMemoryEntryRequest(
-                    scope_id=scope_id,
-                    citation=remembered.entry.citation,
-                    kind="decision",
-                    text="Keep strict Pydantic transport models.",
-                )
+            state = await client.get_atomic_memory_state(scope_id, ref.artifact_id)
+            forgotten = await client.change_atomic_memory_lifecycle(
+                AtomicMemoryLifecycleRequest.model_validate({
+                    "scope_id": scope_id,
+                    "target": {
+                        "artifact": state.artifact.model_dump(mode="json"),
+                        "state_version": state.state_version,
+                    },
+                    "state": "forgotten",
+                })
             )
-            assert revised.entry is not None
-            changes = await client.list_memory_changes(
-                ListMemoryChangesRequest(
-                    scope_id=scope_id,
-                    since_revision=remembered.memory.revision,
-                )
-            )
-            retired = await client.retire_memory_entry(
-                RetireMemoryEntryRequest(
-                    scope_id=scope_id,
-                    citation=revised.entry.citation,
-                    reason="superseded",
-                )
-            )
-            assert retired.entry is not None
-            current = await client.list_memory_entries(
-                ListMemoryEntriesRequest(scope_id=scope_id),
-            )
+            current = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope_id))
             audited = await client.list_memory_entries(
-                ListMemoryEntriesRequest(
-                    scope_id=scope_id,
-                    include_inactive=True,
-                ),
+                ListMemoryEntriesRequest(scope_id=scope_id, include_inactive=True)
             )
-            retired_search = await client.search_memory(
-                SearchMemoryRequest(
-                    scope_id=scope_id,
-                    query="strict Pydantic transport models",
-                ),
+            forgotten_search = await client.search_memory(
+                SearchMemoryRequest(scope_id=scope_id, query="strict Pydantic transport models")
             )
-            retired_exact = await client.get_memory_entry(
-                GetMemoryEntryRequest(
-                    scope_id=scope_id,
-                    citation=retired.entry.citation,
-                ),
+            forgotten_exact = await client.get_artifact_revision(
+                scope_id, ref.family, ref.artifact_id, revised.revision
             )
+            legacy = MemoryCitation.model_validate({
+                "memory_ref": {"family": "memory", "artifact_id": "legacy-collection", "revision": 1},
+                "entry_id": "legacy-entry",
+                "entry_version_id": "legacy-version",
+            })
             with pytest.raises(ServerResponseError) as inactive:
                 await client.revise_memory_entry(
                     ReviseMemoryEntryRequest(
-                        scope_id=scope_id,
-                        citation=retired.entry.citation,
-                        kind="decision",
-                        text="Inactive entries cannot be revised.",
+                        scope_id=scope_id, citation=legacy, kind="decision", text="Rejected legacy revision."
                     )
                 )
+            with pytest.raises(ServerResponseError) as retired:
+                await client.retire_memory_entry(RetireMemoryEntryRequest(scope_id=scope_id, citation=legacy))
+            with pytest.raises(ServerResponseError) as changes:
+                await client.list_memory_changes(ListMemoryChangesRequest(scope_id=scope_id, since_revision=1))
             with pytest.raises(ServerResponseError) as missing:
-                await client.get_memory_entry(
-                    GetMemoryEntryRequest(
-                        scope_id=scope_id,
-                        citation=retired.entry.citation.model_copy(update={"entry_id": "missing-entry"}),
-                    )
-                )
+                await client.get_artifact_revision(scope_id, ref.family, "missing-memory", 1)
+            assert (
+                await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope_id, include_inactive=True))
+                == audited
+            )
 
-        assert exact.text == "Use strict transport models."
-        assert revised.entry.text == "Keep strict Pydantic transport models."
-        assert [revision.memory_ref.revision for revision in changes.revisions] == [revised.memory.revision]
-        assert retired.entry.state == "inactive"
-        assert current.memory == retired.memory
+        assert exact.content["text"] == "Use strict transport models."
+        assert revised.content["text"] == "Keep strict Pydantic transport models."
+        assert revised.revision == ref.revision + 1
+        assert forgotten.records[0].state == "forgotten"
         assert current.entries == []
-        assert audited.memory == retired.memory
-        assert audited.entries == [retired.entry]
-        assert retired_search.memory == retired.memory
-        assert retired_search.hits == []
-        assert retired_exact == retired.entry
-        assert (inactive.value.status_code, inactive.value.code) == (409, "memory_entry_inactive")
-        assert (missing.value.status_code, missing.value.code) == (404, "memory_not_found")
+        assert audited.entries == forgotten.records
+        assert forgotten_search.hits == []
+        assert forgotten_exact.content == revised.content
+        for error in (inactive.value, retired.value, changes.value):
+            assert (error.status_code, error.code) == (422, "legacy_memory_operation_unsupported")
+        assert missing.value.status_code == 404
 
     asyncio.run(scenario())
 
@@ -921,11 +908,11 @@ def test_runtime_conflicts_keep_http_and_sdk_error_context(tmp_path: Path) -> No
                         scope_id=scope_id,
                         kind="decision",
                         text="stale",
-                        expected_revision=remembered.memory.revision + 1,
+                        expected_revision=remembered.records[0].artifact.revision + 1,
                     )
                 )
-        assert caught.value.status_code == 409
-        assert caught.value.code == "revision_conflict"
+        assert caught.value.status_code == 422
+        assert caught.value.code == "legacy_memory_operation_unsupported"
         assert caught.value.request_id is not None
 
     asyncio.run(stale_revision())
@@ -1014,7 +1001,11 @@ def test_runtime_server_returns_canonical_memory_error_details(tmp_path: Path, t
                 "/v1/memory/entries/revise",
                 json={
                     "scope_id": scope_id,
-                    "citation": remembered.json()["entry"]["citation"],
+                    "citation": {
+                        "memory_ref": {"family": "memory", "artifact_id": "legacy-collection", "revision": 1},
+                        "entry_id": "legacy-entry",
+                        "entry_version_id": "legacy-version",
+                    },
                     "kind": "decision",
                     "text": text,
                 },
@@ -1033,7 +1024,8 @@ def test_runtime_server_returns_canonical_memory_error_details(tmp_path: Path, t
         },
     }
     assert [response.status_code for response in responses] == [422, 422]
-    assert [response.json()["error"] for response in responses] == [expected_error, expected_error]
+    assert responses[0].json()["error"] == expected_error
+    assert responses[1].json()["error"]["code"] == "legacy_memory_operation_unsupported"
 
 
 @pytest.mark.parametrize(
@@ -1055,13 +1047,22 @@ def test_runtime_server_accepts_normalized_memory_byte_limit(tmp_path: Path, tex
         payload = {"scope_id": scope.json()["scope_id"], "kind": "decision", "text": text}
         remembered = transport.post("/v1/memory/remember", json=payload)
         remembered.raise_for_status()
-        assert remembered.json()["entry"]["text"] == normalized
+        assert remembered.json()["records"][0]["text"] == normalized
         revised = transport.post(
             "/v1/memory/entries/revise",
-            json={**payload, "citation": remembered.json()["entry"]["citation"]},
+            json={
+                **payload,
+                "citation": {
+                    "memory_ref": {"family": "memory", "artifact_id": "legacy-collection", "revision": 1},
+                    "entry_id": "legacy-entry",
+                    "entry_version_id": "legacy-version",
+                },
+            },
         )
-        revised.raise_for_status()
-        assert revised.json()["entry"]["text"] == normalized
+        assert revised.status_code == 422
+        assert revised.json()["error"]["code"] == "legacy_memory_operation_unsupported"
+        listed = transport.post("/v1/memory/entries/list", json={"scope_id": payload["scope_id"]})
+        assert listed.json()["entries"] == remembered.json()["records"]
 
 
 def test_runtime_server_keeps_unstructured_memory_errors_private(

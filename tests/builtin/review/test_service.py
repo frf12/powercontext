@@ -282,7 +282,9 @@ def test_memory_write_remains_direct_and_does_not_create_a_candidate() -> None:
             )
             inbox = await runtime.review.for_scope(scope_id).list(ListArtifactCandidatesRequest())
 
-            assert remembered.memory_ref.family == "memory"
+            assert remembered.changed is True
+            assert len(remembered.records) == 1
+            assert remembered.records[0].ref.family == "atomic-memory"
             assert inbox.candidates == ()
 
     asyncio.run(scenario())

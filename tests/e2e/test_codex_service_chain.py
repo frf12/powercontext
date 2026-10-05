@@ -39,9 +39,9 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig, RuntimeConfig
 from powercontext.client import PowerContextClient
 from powercontext.http import (
+    AtomicMemoryLifecycleRequest,
     ListMemoryEntriesRequest,
     PrepareContextRequest,
-    RetireMemoryEntryRequest,
     SearchMemoryRequest,
 )
 from powercontext.server.factory import create_server_app
@@ -307,7 +307,7 @@ def test_codex_hook_http_sdk_and_mcp_share_one_composed_context(
         context = json.loads(recalled.stdout)["hookSpecificOutput"]["additionalContext"]
         envelope = json.loads(context.splitlines()[-2])
         assert envelope["items"][0]["content"] == "Use PowerContext as the composition root."
-        assert envelope["items"][0]["citation"]["memory_ref"]["family"] == "memory"
+        assert envelope["items"][0]["citation"]["artifact"]["artifact"]["family"] == "atomic-memory"
         assert AUTH_TOKEN not in recalled.stderr
 
         async def verify_transport_surfaces() -> None:
@@ -328,14 +328,18 @@ def test_codex_hook_http_sdk_and_mcp_share_one_composed_context(
                     ListMemoryEntriesRequest(scope_id=scope_id),
                 )
                 assert found.hits
-                assert {hit.text for hit in found.hits} == {"Use PowerContext as the composition root."}
+                assert {hit.memory.text for hit in found.hits} == {"Use PowerContext as the composition root."}
                 assert prepared.content is not None
                 prepared_envelope = json.loads(prepared.content.splitlines()[-2])
                 assert "Use PowerContext as the composition root." in {
                     item["content"] for item in prepared_envelope["items"]
                 }
                 assert entries.entries
-                assert entries.entries[0].source_refs[0].name == "content"
+                selected = entries.entries[0].artifact
+                exact = await sdk.get_artifact_revision(
+                    scope_id, selected.family, selected.artifact_id, selected.revision
+                )
+                assert exact.sources[0].source_type == "content"
 
                 transport = StreamableHttpTransport(
                     f"{base_url}/mcp",
@@ -352,20 +356,24 @@ def test_codex_hook_http_sdk_and_mcp_share_one_composed_context(
                 structured = result.structured_content or {}
                 hits = structured.get("hits")
                 assert isinstance(hits, list)
-                assert hits[0]["text"] == "Use PowerContext as the composition root."
+                assert hits[0]["memory"]["text"] == "Use PowerContext as the composition root."
 
                 retired_entry_ids: set[str] = set()
                 current = entries
                 while current.entries:
-                    retired = await sdk.retire_memory_entry(
-                        RetireMemoryEntryRequest(
-                            scope_id=scope_id,
-                            citation=current.entries[0].citation,
-                            reason="superseded",
-                        ),
+                    record = current.entries[0]
+                    retired = await sdk.change_atomic_memory_lifecycle(
+                        AtomicMemoryLifecycleRequest.model_validate({
+                            "scope_id": scope_id,
+                            "target": {
+                                "artifact": record.artifact.model_dump(mode="json"),
+                                "state_version": record.state_version,
+                            },
+                            "state": "forgotten",
+                        })
                     )
-                    assert retired.entry is not None
-                    retired_entry_ids.add(retired.entry.citation.entry_id)
+                    assert len(retired.records) == 1
+                    retired_entry_ids.add(retired.records[0].artifact.artifact_id)
                     current = await sdk.list_memory_entries(
                         ListMemoryEntriesRequest(scope_id=scope_id),
                     )
@@ -373,8 +381,8 @@ def test_codex_hook_http_sdk_and_mcp_share_one_composed_context(
                     ListMemoryEntriesRequest(scope_id=scope_id, include_inactive=True),
                 )
                 assert current.entries == []
-                assert {entry.citation.entry_id for entry in audited.entries} == retired_entry_ids
-                assert all(entry.state == "inactive" for entry in audited.entries)
+                assert {entry.artifact.artifact_id for entry in audited.entries} == retired_entry_ids
+                assert all(entry.state == "forgotten" for entry in audited.entries)
 
         asyncio.run(verify_transport_surfaces())
 
