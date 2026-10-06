@@ -43,7 +43,6 @@ type Exec = { signal: AbortSignal; agent?: { session: { header: { cwd?: string }
 function citationParam(description: string): Record<string, unknown> {
   return {
     type: 'object',
-    required: false,
     additionalProperties: true,
     description,
   }

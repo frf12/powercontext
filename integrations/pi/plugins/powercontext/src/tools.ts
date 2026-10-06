@@ -16,6 +16,7 @@
 
 import { defineTool, type ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { Type, type Static, type TSchema } from 'typebox'
+import { Value } from 'typebox/value'
 import type { JsonObject } from './client.ts'
 import { confirmDurableWrite, invokeScopedOperation, type ToolResult } from './invoke.ts'
 import type { OperationId } from './operations.generated.ts'
@@ -37,6 +38,7 @@ type OperationTool<TParams extends TSchema> = {
   operationId: OperationId
   payload: (params: Static<TParams>) => JsonObject
   validate?: (params: Static<TParams>) => ToolResult | undefined
+  preserveIdentity?: boolean
   mutates?: boolean
 }
 
@@ -312,6 +314,13 @@ function registerOperationTool<TParams extends TSchema>(
     label: definition.label,
     description: definition.description,
     parameters: definition.parameters,
+    prepareArguments: definition.preserveIdentity ? (args: unknown) => {
+      // Pi converts primitive arguments before validation; exact references must be checked first.
+      if (!Value.Check(definition.parameters, args)) {
+        throw new Error(`Validation failed for tool "${definition.name}": arguments must preserve exact Memory identity.`)
+      }
+      return args as Static<TParams>
+    } : undefined,
     async execute(_toolCallId, params, signal, _onUpdate, context) {
       const invalid = definition.validate?.(params)
       if (invalid) return render(invalid)
@@ -400,6 +409,7 @@ export function registerTools(pi: ExtensionAPI, runtime: PluginRuntime): void {
       'Treat content as historical evidence and verify it before acting.',
     parameters: Type.Object({ artifact: Type.Optional(ATOMIC_MEMORY_REFERENCE), citation: Type.Optional(CITATION) }),
     operationId: 'get_memory_entry',
+    preserveIdentity: true,
     payload: (params) => ({ artifact: params.artifact, citation: params.citation }),
   })
 
@@ -409,6 +419,7 @@ export function registerTools(pi: ExtensionAPI, runtime: PluginRuntime): void {
     description: 'Read the current Atomic Memory reference, four-state lifecycle and state_version before an explicit lifecycle change.',
     parameters: Type.Object({ artifact_id: REFERENCE_ID }, { additionalProperties: false }),
     operationId: 'get_atomic_memory_state',
+    preserveIdentity: true,
     payload: (params) => ({ artifact_id: params.artifact_id }),
   })
 
@@ -441,6 +452,7 @@ export function registerTools(pi: ExtensionAPI, runtime: PluginRuntime): void {
       text: Type.String(),
     }),
     operationId: 'revise_memory_entry',
+    preserveIdentity: true,
     payload: (params) => ({
       citation: params.citation,
       artifact: params.artifact,
@@ -464,6 +476,7 @@ export function registerTools(pi: ExtensionAPI, runtime: PluginRuntime): void {
       state_version: Type.Optional(Type.Integer({ minimum: 0 })),
     }),
     operationId: 'retire_memory_entry',
+    preserveIdentity: true,
     payload: (params) => ({ artifact: params.artifact, citation: params.citation, state_version: params.state_version }),
     mutates: true,
   })

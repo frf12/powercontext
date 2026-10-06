@@ -3542,7 +3542,6 @@ const MUTATING_TOOL_NAMES = new Set([
 function citationParam(description) {
 	return {
 		type: "object",
-		required: false,
 		additionalProperties: true,
 		description
 	};
