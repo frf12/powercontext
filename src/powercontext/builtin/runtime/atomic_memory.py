@@ -227,8 +227,7 @@ class ScopedAtomicMemory:
         # existing in-memory write transaction without committing it.
         async with (
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
-            self.application.database.transaction() as connection,
-            connection.begin_nested() if connection.dialect.name == "sqlite" else nullcontext(),
+            self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
             return await self.application.service.get(
                 connection, self.scope_id, artifact_id, selected_context, revision=revision
@@ -272,10 +271,8 @@ class ScopedAtomicMemory:
         head = ARTIFACT_HEADS_TABLE
         async with (
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
-            self.application.database.transaction() as connection,
+            self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
-            if connection.dialect.name == "sqlite":
-                await connection.exec_driver_sql("BEGIN")
             while len(items) <= limit:
                 statement = (
                     select(table.c.artifact_id)
@@ -361,9 +358,7 @@ class ScopedAtomicMemory:
             embedding_profile=profile,
             admission=admission,
         )
-        async with application.database.transaction() as connection:
-            if connection.dialect.name == "sqlite":
-                await connection.exec_driver_sql("BEGIN")
+        async with application.database.transaction(consistent_snapshot=True) as connection:
             channels = await application.index.search(connection, self.scope_id, request)
             hits = combine_atomic_memory_channels(channels)[: request.limit]
             await self._validate_search_hits(connection, hits, verify_vectors=vector is not None)
@@ -556,7 +551,10 @@ class ScopedAtomicMemory:
         if reranker is None or not candidates:
             return AtomicMemorySearchPage(mode, candidates[:limit], query_embedding, embedding_calls)
         # Reauthorize the exact candidate bodies immediately before an external rank model.
-        async with application.database.transaction() as connection:
+        async with (
+            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
+            application.database.transaction(consistent_snapshot=True) as connection,
+        ):
             for candidate in candidates:
                 current = await application.service.get(
                     connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, context
@@ -632,9 +630,10 @@ class ScopedAtomicMemory:
     async def preview_restoration(self, artifact_id: str, *, operation="restore", revision=None, context=None):
         application = self.application
         context = self._context(context)
-        async with application.database.transaction() as connection:
-            if connection.dialect.name == "sqlite":
-                await connection.exec_driver_sql("BEGIN")
+        async with (
+            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
+            application.database.transaction(consistent_snapshot=True) as connection,
+        ):
             plan = await application.service.inspect_restore(
                 connection, self.scope_id, artifact_id, context, operation=operation, revision=revision
             )

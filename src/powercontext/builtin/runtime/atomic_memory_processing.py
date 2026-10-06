@@ -496,7 +496,7 @@ class AtomicMemorySourceWindowProcessor:
             embedding_profile=profile,
             max_distance=self.config.related_max_distance,
         )
-        async with application.database.transaction() as connection:
+        async with application.database.transaction(consistent_snapshot=True) as connection:
             try:
                 return await application.index.enumerate_related(connection, scope_id, request)
             except AtomicMemoryIndexError as error:
@@ -571,10 +571,8 @@ class AtomicMemorySourceWindowProcessor:
         # written after that read closes, rather than upgrading SQLite's snapshot.
         async with (
             context.access.defer_decision_audit() if context.access is not None else nullcontext(),
-            self.application.database.transaction() as connection,
+            self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
-            if connection.dialect.name == "sqlite":
-                await connection.exec_driver_sql("BEGIN")
             yield connection
 
     def _stage(self, name, attributes):
