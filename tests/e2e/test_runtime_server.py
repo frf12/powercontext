@@ -254,7 +254,7 @@ def test_server_databases_share_source_to_memory_search_behavior(
         assert prepared.content is not None
         prepared_item = json.loads(prepared.content.splitlines()[-2])["items"][0]
         assert prepared_item["content"] == "Keep the OpenAPI contract authoritative."
-        assert prepared_item["citation"]["artifact"]["artifact"] == ref.model_dump(mode="json", by_alias=True)
+        assert prepared_item["citation"]["artifact_ref"] == ref.model_dump(mode="json", by_alias=True)
         assert unrelated.hits == []
         assert entries.entries[0].artifact == ref
         assert exact.sources[0].source_id == "turn-1"
@@ -926,6 +926,8 @@ def test_memory_search_returns_revision_conflict_as_http_409(
         _self: ScopedMemoryApplication,
         _request: RuntimeSearchMemoryRequest,
         /,
+        *,
+        atomic_context=None,
     ) -> MemorySearchPage:
         raise RevisionConflictError("stale", "current")
 
@@ -1017,10 +1019,15 @@ def test_runtime_server_returns_canonical_memory_error_details(tmp_path: Path, t
 
     expected_error = {
         "code": "invalid_request",
-        "message": "The request is invalid.",
+        "message": "The request violates the API contract.",
         "details": {
-            "code": "text-too-long",
-            "message": "memory entry text must not exceed 8192 UTF-8 bytes",
+            "errors": [
+                {
+                    "type": "value_error",
+                    "loc": ["text"],
+                    "msg": "Value error, memory entry text must not exceed 8192 UTF-8 bytes",
+                }
+            ],
         },
     }
     assert [response.status_code for response in responses] == [422, 422]
@@ -1069,7 +1076,7 @@ def test_runtime_server_keeps_unstructured_memory_errors_private(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    async def invalid_remember(_self: ScopedMemoryApplication, _request: object, /) -> None:
+    async def invalid_remember(_self: ScopedMemoryApplication, _request: object, /, *, atomic_context=None) -> None:
         raise InvalidMemoryCandidateError("canonical", "private implementation detail")
 
     monkeypatch.setattr(ScopedMemoryApplication, "remember", invalid_remember)

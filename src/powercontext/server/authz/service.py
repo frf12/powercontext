@@ -611,7 +611,14 @@ class AccessControlService:
         provider = self.provider
         if isinstance(provider, BuiltinAuthorizationProvider):
             provider = provider.with_repository(repository)
-        return AccessControlService(
+        elif type(provider).__module__ == "powercontext.server.authz.casbin":
+            # Casbin is an optional Server dependency; load it only for its
+            # fixed provider, which shares the built-in relationship policy.
+            from powercontext.server.authz.casbin import CasbinAuthorizationProvider
+
+            if type(provider) is CasbinAuthorizationProvider:
+                provider = provider.with_repository(repository)
+        bound = AccessControlService(
             provider,
             relationships=repository,
             audit=repository,
@@ -620,6 +627,8 @@ class AccessControlService:
             clock=self._clock,
             static_scope_principal=self._static_scope_principal,
         )
+        bound._deferred_decisions = self._deferred_decisions
+        return bound
 
     async def bootstrap_subject_scope(self, connection, principal, scope_id, *, context):
         """Grant only a newly created ordinary Scope, in the Source transaction."""

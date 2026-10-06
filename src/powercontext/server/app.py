@@ -1631,13 +1631,13 @@ async def get_access_principal(request: Request) -> AccessMeResponse:
 
 async def check_access(payload: AccessCheckRequest, request: Request) -> AccessCheckResponse:
     access = _require_access_control(request)
-    requirements = tuple(
+    requirements = tuple([
         (
             AccessAction(requirement.action.value),
             await _resolve_legacy_access_resource(request, _access_resource(requirement.resource)),
         )
         for requirement in payload.requirements
-    )
+    ])
     decisions = await access.check_batch(
         _require_principal(),
         requirements,
@@ -4544,9 +4544,11 @@ async def _check_missing_memory_reads(
     for action, resource in checks:
         if (
             action is not AccessAction.ARTIFACT_READ
-            or resource.family != "memory"
             or resource.scope_id is None
-            or not isinstance(resource.selector, MemoryEntrySelector)
+            or not (
+                (resource.family == "memory" and isinstance(resource.selector, MemoryEntrySelector))
+                or (resource.family == "atomic-memory" and resource.selector is None)
+            )
         ):
             continue
         decision = await access.check(
@@ -4558,10 +4560,12 @@ async def _check_missing_memory_reads(
         if not any(
             identity.family == resource.family
             and identity.artifact_id == resource.artifact_id
-            and identity.entry_id == resource.selector.entry_id
+            and identity.entry_id == (None if resource.selector is None else resource.selector.entry_id)
             for identity in identities
         ):
-            raise MemoryEntryNotFoundError(resource.selector.entry_id)
+            if resource.family == "atomic-memory":
+                raise BaseValueNotFoundError("artifact", resource.artifact_id)
+            raise MemoryEntryNotFoundError(cast(MemoryEntrySelector, resource.selector).entry_id)
 
 
 def _authorization_dependency(

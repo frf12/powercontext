@@ -57,6 +57,7 @@ from powercontext.builtin.runtime import (
     RejectArtifactCandidateRequest,
     RememberMemoryRequest,
     ReviseArtifactCandidateRequest,
+    open_builtin_contexts,
     open_builtin_runtime,
 )
 from powercontext.builtin.runtime.relational import RelationalContexts
@@ -332,15 +333,14 @@ def test_experience_projection_failure_rolls_back_approval_artifact_and_status()
 
 def test_approval_rechecks_sources_saved_by_an_older_candidate_path() -> None:
     async def scenario() -> None:
-        async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES) as profile:
-            contexts = RelationalContexts(database=profile.database)
+        async with open_builtin_contexts(BuiltinConfig(database=SQLiteConfig())) as contexts:
             await contexts.get("project")
             created = await contexts.records.create_artifact(
                 "project",
-                "memory",
-                ArtifactWrite(content={"entries": [{"kind": "fact", "text": "Direct input."}]}),
+                "atomic-memory",
+                ArtifactWrite(content={"kind": "fact", "text": "Direct input."}),
             )
-            async with profile.database.transaction() as connection:
+            async with contexts.database.transaction() as connection:
                 candidate = await contexts.repositories.candidates.create(
                     connection,
                     "project",
@@ -357,7 +357,7 @@ def test_approval_rechecks_sources_saved_by_an_older_candidate_path() -> None:
                 await contexts.review("project").approve(candidate.candidate_id, candidate.version)
 
             current = await contexts.review("project").get_candidate(candidate.candidate_id)
-            async with profile.database.transaction() as connection:
+            async with contexts.database.transaction() as connection:
                 experiences = await connection.scalar(
                     select(func.count())
                     .select_from(ARTIFACTS_TABLE)

@@ -745,7 +745,7 @@ def test_assembly_counts_a_dropped_item_and_a_truncated_item() -> None:
     assembly = ContextAssembly.model_validate({"sections": [{"family": "memory", "limit": 8}]})
     dropped = PreparedContextBuilder().build_scopes_result(
         current_scope_id="current",
-        request=PrepareContextRequest(query="budget", max_bytes=620, assembly=assembly),
+        request=PrepareContextRequest(query="budget", max_bytes=590, assembly=assembly),
         memory_candidates=(
             PreparedMemoryCandidates(
                 scope_id="current",

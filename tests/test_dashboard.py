@@ -555,7 +555,12 @@ def test_reviewed_methods_link_to_exact_memory_evidence(dashboard: TestClient) -
     experience = dashboard.get(experience_link)
     assert experience.status_code == 200
     links = [unescape(value) for value in re.findall(r'href="([^"]+)"', experience.text)]
-    memory_link = next(value for value in links if urlsplit(value).path == "/dashboard/notes")
+    memory_link = next(
+        value
+        for value in links
+        if urlsplit(value).path == "/dashboard/notes"
+        and parse_qs(urlsplit(value).query).get("artifact") == [memory_ref["artifact_id"]]
+    )
     query = parse_qs(urlsplit(memory_link).query)
     assert query["scope"] == [scope]
     assert query["artifact"] == [memory_ref["artifact_id"]]

@@ -21,9 +21,11 @@ import pytest
 
 from powercontext.builtin.artifacts.atomic_memory.extraction import AtomicMemoryCandidate, AtomicMemoryExtractionOutput
 from powercontext.builtin.inference import GenerationResult, InferenceTimeoutError, InferenceUnavailableError
-from powercontext.builtin.persistence.errors import GenerationConflictError
+from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_TABLES
+from powercontext.builtin.persistence.schema import create_tables
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import BUILTIN_TABLES
+from powercontext.builtin.runtime.composition import _initialize_atomic_memory_authority
 from powercontext.builtin.runtime.relational import RelationalContexts
 from powercontext.builtin.scope import ScopeDraft
 from tests.e2e.dream_support import atomic_memory_pipeline, memory_source_text
@@ -52,6 +54,15 @@ class Pipeline:
         )
 
 
+async def _ready_contexts(profile, **kwargs):
+    contexts = RelationalContexts(database=profile.database, **kwargs)
+    async with profile.database.transaction() as connection:
+        await _initialize_atomic_memory_authority(connection)
+        await create_tables(connection, ATOMIC_MEMORY_TABLES)
+        await contexts.atomic_memory.index.initialize(connection)
+    return contexts
+
+
 async def create_scope(contexts, count):
     scope = (
         await contexts.scopes.create(ScopeDraft(title="Recovery", summary="Recovery", idempotency_key=str(uuid4())))
@@ -66,9 +77,7 @@ def test_timeout_reduction_survives_reopen_and_resets_after_backlog(tmp_path):
         config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'recovery.db'}")
         pipeline = Pipeline()
         async with SQLiteProfile.open(config, tables=BUILTIN_TABLES) as profile:
-            contexts = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(pipeline)
-            )
+            contexts = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(pipeline))
             scope = await create_scope(contexts, 4)
             context = await contexts.get(scope)
             with pytest.raises(InferenceTimeoutError):
@@ -77,9 +86,7 @@ def test_timeout_reduction_survives_reopen_and_resets_after_backlog(tmp_path):
 
         # Reopen the database and rebuild the processor, as a new Worker does.
         async with SQLiteProfile.open(config, tables=BUILTIN_TABLES) as profile:
-            contexts = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(pipeline)
-            )
+            contexts = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(pipeline))
             context = await contexts.get(scope)
             with pytest.raises(InferenceTimeoutError):
                 await context.triggers.flush(limit=100)
@@ -106,9 +113,7 @@ def test_single_source_timeout_preserves_cursor_and_can_recover():
     async def scenario():
         pipeline = Pipeline(error=InferenceTimeoutError("generate", 60))
         async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES) as profile:
-            contexts = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(pipeline)
-            )
+            contexts = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(pipeline))
             scope = await create_scope(contexts, 1)
             context = await contexts.get(scope)
             for _ in range(2):
@@ -127,9 +132,7 @@ def test_non_extraction_failures_do_not_reduce_source_window(error):
     async def scenario():
         pipeline = Pipeline(maximum=4, error=error)
         async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES) as profile:
-            contexts = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(pipeline)
-            )
+            contexts = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(pipeline))
             scope = await create_scope(contexts, 4)
             context = await contexts.get(scope)
             with pytest.raises(type(error)):
@@ -146,19 +149,20 @@ def test_stale_timeout_cannot_rewind_concurrently_committed_cursor():
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
 
+        retry_windows = []
+
         class DelayedTimeout:
             async def generate(self, request):
+                retry_windows.append(tuple(source.source_ref.source_id for source in request.evidence))
+                if len(retry_windows) > 1:
+                    raise InferenceUnavailableError("generate")
                 entered.set()
                 await release.wait()
                 raise InferenceTimeoutError("generate", 60)
 
         async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES) as profile:
-            first = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(DelayedTimeout())
-            )
-            second = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(Pipeline(maximum=4))
-            )
+            first = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(DelayedTimeout()))
+            second = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(Pipeline(maximum=4)))
             scope = await create_scope(first, 4)
             first_context, second_context = await first.get(scope), await second.get(scope)
             task = asyncio.create_task(first_context.triggers.flush(limit=4))
@@ -167,10 +171,15 @@ def test_stale_timeout_cannot_rewind_concurrently_committed_cursor():
                 assert (await second_context.triggers.flush(limit=2)).current_cursor == 2
             finally:
                 release.set()
-            with pytest.raises(GenerationConflictError):
+            with pytest.raises(InferenceUnavailableError):
                 await task
+            assert retry_windows[1] == retry_windows[0][2:]
             assert (await second_context.triggers.cursor()).sequence == 2
-            assert (await second_context.triggers.flush(limit=4)).current_cursor == 4
+            recovered = await second_context.triggers.flush(limit=4)
+            assert recovered.previous_cursor == 2 and recovered.current_cursor == 4
+            assert recovered.source_count == 2
+            entries = (await second.atomic_memory.for_scope(scope).list()).items
+            assert sorted(item.artifact.content.text for item in entries) == [f"Fact {index}" for index in range(4)]
 
     asyncio.run(scenario())
 
@@ -182,16 +191,19 @@ def test_failed_commit_retains_reduction_until_consumption_succeeds():
     async def scenario():
         pipeline = Pipeline()
         async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES) as profile:
-            contexts = RelationalContexts(
-                database=profile.database, candidate_pipeline=atomic_memory_pipeline(pipeline)
-            )
+            contexts = await _ready_contexts(profile, candidate_pipeline=atomic_memory_pipeline(pipeline))
             scope = await create_scope(contexts, 2)
             context = await contexts.get(scope)
             with pytest.raises(InferenceTimeoutError):
                 await context.triggers.flush(limit=100)
             assert (await context.triggers.flush(limit=1)).current_cursor == 1
-            with pytest.raises(OSError, match="ownership commit failed"):
-                await contexts.process_memory(scope, 100, on_commit=fail_commit)
+            original = contexts.atomic_memory.security.establish_owner
+            contexts.atomic_memory.security.establish_owner = fail_commit
+            try:
+                with pytest.raises(OSError, match="ownership commit failed"):
+                    await contexts.process_memory(scope, 100)
+            finally:
+                contexts.atomic_memory.security.establish_owner = original
             assert (await context.triggers.cursor()).sequence == 1
             await contexts.records.create_source(scope, "content", "New input while retrying")
             # The failed final commit must roll back clearing the reduction too.

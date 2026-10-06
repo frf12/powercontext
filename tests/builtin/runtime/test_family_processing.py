@@ -31,9 +31,11 @@ from powercontext.builtin.artifacts.experience import ExperienceCandidateInput, 
 from powercontext.builtin.inference import InferenceTimeoutError
 from powercontext.builtin.inference.models import GenerationResult, InferenceUsage
 from powercontext.builtin.inference.usage import UsageReportingStructuredGenerator
+from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_TABLES
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.processing_migration import bootstrap_processing_schema
+from powercontext.builtin.persistence.schema import create_tables
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.supervision import ArtifactProcessingFence, ArtifactProcessingLeaseRepository
 from powercontext.builtin.persistence.tables import (
@@ -43,7 +45,8 @@ from powercontext.builtin.persistence.tables import (
     MODEL_USAGE_DAILY_TABLE,
 )
 from powercontext.builtin.runtime.artifact_processing import SpawnArtifactProcessingWorkerLauncher
-from powercontext.builtin.runtime.composition import open_builtin_contexts
+from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
+from powercontext.builtin.runtime.composition import _initialize_atomic_memory_authority, open_builtin_contexts
 from powercontext.builtin.runtime.config import BuiltinConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.family_processing import (
     FAMILY_BINDINGS,
@@ -139,6 +142,10 @@ async def prepare(profile, family):
         candidate_pipeline=atomic_memory_pipeline(MemoryPipeline()),
         experience_pipeline=ExperiencePipeline(),
     )
+    async with profile.database.transaction() as connection:
+        await _initialize_atomic_memory_authority(connection)
+        await create_tables(connection, ATOMIC_MEMORY_TABLES)
+        await contexts.atomic_memory.index.initialize(connection)
     contexts.profiles.generator = ProfileGenerator()
     scope = (
         await contexts.scopes.create(ScopeDraft(title="Worker", summary="Worker", idempotency_key="worker"))
@@ -232,14 +239,15 @@ def test_owner_failure_rolls_back_domain_cursor_and_ack_then_retry_owns_result(t
             contexts, assignment = await prepare(profile, family)
             async with open_worker_security(security_spec(), profile.database) as security:
                 assert security is not None
-                hook_name = f"{family}_commit"
-                original = getattr(security, hook_name)
+                hook_target = contexts.atomic_memory.security if family == "memory" else security
+                hook_name = "establish_owner" if family == "memory" else f"{family}_commit"
+                original = getattr(hook_target, hook_name)
 
                 async def failed_commit(*args, **kwargs):
                     await original(*args, **kwargs)
                     raise OSError("injected ownership failure")  # noqa: TRY003
 
-                setattr(security, hook_name, failed_commit)
+                setattr(hook_target, hook_name, failed_commit)
                 with pytest.raises(OSError, match="ownership failure"):
                     await process_family_invocation(contexts, assignment, config=config, security=security)
                 async with profile.database.transaction() as connection:
@@ -253,7 +261,7 @@ def test_owner_failure_rolls_back_domain_cursor_and_ack_then_retry_owns_result(t
                     assert intent is not None and intent.handled_generation == 0
                     for table in (ARTIFACT_HEADS_TABLE, ARTIFACT_CANDIDATE_HEADS_TABLE, ACCESS_OWNERS_TABLE):
                         assert await connection.scalar(select(func.count()).select_from(table)) == 0
-                setattr(security, hook_name, original)
+                setattr(hook_target, hook_name, original)
                 result = await process_family_invocation(contexts, assignment, config=config, security=security)
                 assert result.outcome == ArtifactProcessingWorkerOutcome.SUCCEEDED
                 async with profile.database.transaction() as connection:
@@ -318,6 +326,42 @@ def test_worker_records_existing_model_usage_purposes_and_replay_does_not_infer(
                 assert row["purpose"] == ("memory_extraction" if family == "memory" else "experience_generation")
                 assert row["operation"] == "generation"
                 assert row["requests"] == 1
+
+    asyncio.run(scenario())
+
+
+def test_sdk_memory_worker_with_parent_schema_commits_formal_local_ownership(tmp_path):
+    async def scenario():
+        config = BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'sdk-worker.db'}"))
+        async with open_builtin_contexts(config, candidate_pipeline=atomic_memory_pipeline(MemoryPipeline())) as parent:
+            _, assignment = await prepare(parent, "memory")
+        async with open_builtin_contexts(
+            config,
+            candidate_pipeline=atomic_memory_pipeline(MemoryPipeline()),
+            _topic_memory_worker=True,
+        ) as contexts:
+            outcome = await process_family_invocation(contexts, assignment, config=config)
+            assert outcome.outcome == ArtifactProcessingWorkerOutcome.SUCCEEDED
+            replay = await process_family_invocation(contexts, assignment, config=config)
+            assert replay.outcome == ArtifactProcessingWorkerOutcome.SUCCEEDED
+            entries = (
+                await contexts.atomic_memory.for_scope(assignment.scope_id).list(
+                    context=AtomicMemoryExecutionContext(
+                        principal=PrincipalRef(type="service", id="local-runtime"), trusted_local=True
+                    ),
+                )
+            ).items
+            assert len(entries) == 1
+            assert entries[0].artifact.content.text == "Run the configuration tests."
+            async with contexts.database.transaction() as connection:
+                cursor = await SourceCursorRepository().load(connection, assignment.scope_id, assignment.binding_name)
+                intent = await ArtifactProcessingIntentRepository().load(
+                    connection, assignment.scope_id, assignment.binding_name
+                )
+                assert cursor is not None and cursor.cursor.sequence == 1
+                assert intent is not None and intent.handled_generation == assignment.claimed_request_generation
+                owner = (await connection.execute(select(ACCESS_OWNERS_TABLE))).mappings().one()
+                assert owner["owner_type"] == "service" and owner["owner_id"] == "local-runtime"
 
     asyncio.run(scenario())
 

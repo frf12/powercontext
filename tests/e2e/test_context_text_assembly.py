@@ -387,7 +387,7 @@ def test_configured_assembly_total_limit_applies_before_recall(tmp_path, monkeyp
             legacy = await client.prepare_context(
                 PrepareContextRequest(scope_id=scope.scope_id, query="OpenAPI assembly")
             )
-            assert legacy.content is not None and legacy.content.count('"entry_id"') == 8
+            assert legacy.content is not None and legacy.content.count('"artifact_ref"') == 8
             sections = [{"family": "profile", "limit": 1}, {"family": "memory", "limit": 1 if max_entries == 1 else 8}]
             request = PrepareContextRequest.model_validate({
                 "scope_id": scope.scope_id,
@@ -398,7 +398,7 @@ def test_configured_assembly_total_limit_applies_before_recall(tmp_path, monkeyp
                 prepared = await client.prepare_context(request)
                 assert prepared.content is not None
                 assert prepared.content.count("Artifact: family=") == 9
-                assert prepared.content.count('family="memory"') == 8
+                assert prepared.content.count('family="atomic-memory"') == 8
                 assert prepared.content_bytes == len(prepared.content.encode("utf-8")) <= request.max_bytes
             else:
 

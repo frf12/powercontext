@@ -33,6 +33,7 @@ from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.http import GetMemoryCapacityRequest, ListMemoryEntriesRequest, RememberMemoryRequest
 from powercontext.server.authentication import StaticBearerAuthenticationProvider
 from powercontext.server.authz import PrincipalRef
+from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import AccessControlConfig, BearerAuthConfig, McpConfig, ServerSettings
 
@@ -142,30 +143,44 @@ def test_capacity_and_refusal_through_server_and_client(tmp_path):
     asyncio.run(scenario())
 
 
-def test_capacity_requires_scope_access(tmp_path):
+def test_legacy_capacity_authentication_and_explicit_refusal(tmp_path):
+    """Retired capacity authenticates; supported context reads keep Scope permissions."""
+
     async def scenario():
-        app = create_server_app(
-            settings=ServerSettings(
-                database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'access.db'}"),
-                access=AccessControlConfig(mode="enforced"),
-                mcp=McpConfig(enabled=False),
-            ),
-            authentication_provider=StaticBearerAuthenticationProvider(
-                "test-token", PrincipalRef(type="user", id="outsider")
-            ),
-        )
-        async with (
-            app.router.lifespan_context(app),
-            httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://testserver",
-            ) as client,
-        ):
-            anonymous = await client.post("/v1/memory/capacity", json={"scope_id": "private"})
-            assert anonymous.status_code == 401
-            denied = await client.post(
-                "/v1/memory/capacity", json={"scope_id": "private"}, headers={"Authorization": "Bearer test-token"}
+        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'access.db'}")
+        async with open_builtin_access_control(database) as access:
+            app = create_server_app(
+                settings=ServerSettings(
+                    database=database,
+                    access=AccessControlConfig(mode="enforced"),
+                    mcp=McpConfig(enabled=False),
+                ),
+                access_control=access,
+                authentication_provider=StaticBearerAuthenticationProvider(
+                    "test-token", PrincipalRef(type="user", id="outsider")
+                ),
             )
-            assert denied.status_code == 403
+            async with (
+                app.router.lifespan_context(app),
+                httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client,
+            ):
+                private = await app.state.application.scopes.create(
+                    ScopeDraft(title="Private", summary="No outsider access", idempotency_key="private-read")
+                )
+                anonymous = await client.post("/v1/memory/capacity", json={"scope_id": private.scope_id})
+                assert anonymous.status_code == 401
+                denied = await client.post(
+                    "/v1/context/prepare",
+                    json={"scope_id": private.scope_id, "query": "private"},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+                assert denied.status_code == 403
+                unsupported = await client.post(
+                    "/v1/memory/capacity",
+                    json={"scope_id": private.scope_id},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+                assert unsupported.status_code == 422
+                assert unsupported.json()["error"]["code"] == "legacy_memory_operation_unsupported"
 
     asyncio.run(scenario())

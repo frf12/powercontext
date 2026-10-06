@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+from hashlib import sha256
 from time import perf_counter
 from typing import cast
 from uuid import uuid4
@@ -33,11 +35,17 @@ from powercontext.builtin.artifacts.atomic_memory.models import (
 )
 from powercontext.builtin.artifacts.atomic_memory.restoration import AtomicMemoryPreviewSigner
 from powercontext.builtin.artifacts.atomic_memory.service import AtomicMemoryService
-from powercontext.builtin.artifacts.memory.canonical import canonical_embedding, normalize_query
+from powercontext.builtin.artifacts.memory.canonical import canonical_embedding, canonical_json, normalize_query
 from powercontext.builtin.artifacts.memory.models import MemoryQueryEmbedding
 from powercontext.builtin.artifacts.memory.reranking import MemoryReranker
-from powercontext.builtin.artifacts.search import AdmissionCounts, AdmissionFloor
-from powercontext.builtin.inference import InferenceUsage, InvalidInferenceOutputError
+from powercontext.builtin.artifacts.search import AdmissionCounts, AdmissionFloor, analyze_text
+from powercontext.builtin.inference import (
+    InferenceTimeoutError,
+    InferenceUnavailableError,
+    InferenceUsage,
+    InvalidInferenceOutputError,
+    embed_query,
+)
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.atomic_memory import AtomicMemoryStateRepository
 from powercontext.builtin.persistence.atomic_memory_index import (
@@ -47,8 +55,11 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemoryProjectionPublisher,
     AtomicMemorySearchMode,
     AtomicMemorySearchRequest,
+    atomic_memory_embedding_input,
+    atomic_memory_embedding_input_hash,
     combine_atomic_memory_channels,
 )
+from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_STATES_TABLE
 from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
 from powercontext.builtin.persistence.database import AsyncDatabase
@@ -100,6 +111,7 @@ class AtomicMemorySearchPage:
     generation_calls: int = 0
     admission: AdmissionCounts | None = None
     rerank: AtomicMemoryRerankTrace | None = None
+    recoverable: bool = False
 
 
 class AtomicMemoryApplication:
@@ -208,9 +220,18 @@ class ScopedAtomicMemory:
         return self.application.default_context if context is None else context
 
     async def get(self, artifact_id: str, *, revision: int | None = None, context=None) -> AtomicMemoryRecord:
-        async with self.application.database.transaction() as connection:
+        selected_context = self._context(context)
+        # Reads keep authority in the same snapshot; audit writes are flushed
+        # after it closes so SQLite never upgrades an old read snapshot.
+        # SAVEPOINT also pins trusted local reads and composes with an
+        # existing in-memory write transaction without committing it.
+        async with (
+            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            self.application.database.transaction() as connection,
+            connection.begin_nested() if connection.dialect.name == "sqlite" else nullcontext(),
+        ):
             return await self.application.service.get(
-                connection, self.scope_id, artifact_id, self._context(context), revision=revision
+                connection, self.scope_id, artifact_id, selected_context, revision=revision
             )
 
     async def list(  # noqa: C901
@@ -249,7 +270,10 @@ class ScopedAtomicMemory:
         has_more = False
         table = ATOMIC_MEMORY_STATES_TABLE
         head = ARTIFACT_HEADS_TABLE
-        async with self.application.database.transaction() as connection:
+        async with (
+            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            self.application.database.transaction() as connection,
+        ):
             if connection.dialect.name == "sqlite":
                 await connection.exec_driver_sql("BEGIN")
             while len(items) <= limit:
@@ -311,6 +335,9 @@ class ScopedAtomicMemory:
         context=None,
         admission: AdmissionFloor | None = None,
         query_embedding: MemoryQueryEmbedding | None = None,
+        recovery_admission: AdmissionFloor | None = None,
+        embedding_timeout_seconds: float | None = None,
+        allow_embedding: bool = True,
     ) -> AtomicMemorySearchPage:
         application = self.application
         _validate_limit(limit)
@@ -321,26 +348,10 @@ class ScopedAtomicMemory:
             AtomicMemoryContent(kind=kind, text="validation")
         filters = await application.security.filters(self.scope_id, self._context(context), tags=tag_filter)
         filters = replace(filters, kind=kind)
-        profile = application.index.capabilities.embedding_profile
-        if mode == "auto":
-            mode = "hybrid" if profile is not None else "text"
-        vector = None
-        embedding_calls = 0
-        if mode in {"vector", "hybrid"}:
-            model = application.embedding_model
-            if profile is None or model is None or model.profile != profile:
-                raise AtomicMemoryIndexError("embedding-profile", "Requested vector retrieval is unavailable")
-            if query_embedding is not None and query_embedding.embedding_profile == profile:
-                vector = query_embedding.query_vector
-            else:
-                result = await model.embed((query,))
-                embedding_calls = 1
-                if len(result.vectors) != 1:
-                    raise AtomicMemoryIndexError("embedding-result", "Expected one query vector")
-                vector = canonical_embedding(
-                    result.vectors[0], dimension=profile.dimension, normalization=profile.normalization
-                )
-                query_embedding = MemoryQueryEmbedding(vector, profile)
+        mode, vector, query_embedding, embedding_calls = await self._resolve_query_embedding(
+            query, mode, query_embedding, embedding_timeout_seconds, allow_embedding
+        )
+        profile = application.index.capabilities.embedding_profile if vector is not None else None
         request = AtomicMemorySearchRequest(
             query,
             filters,
@@ -351,10 +362,16 @@ class ScopedAtomicMemory:
             admission=admission,
         )
         async with application.database.transaction() as connection:
+            if connection.dialect.name == "sqlite":
+                await connection.exec_driver_sql("BEGIN")
             channels = await application.index.search(connection, self.scope_id, request)
+            hits = combine_atomic_memory_channels(channels)[: request.limit]
+            await self._validate_search_hits(connection, hits, verify_vectors=vector is not None)
+            recoverable = recovery_admission is not None and await application.index.probe_recoverable(
+                connection, self.scope_id, request, recovery_admission
+            )
         fts = {_artifact_key(item.artifact_ref) for item in channels.fts}
         vectors = {_artifact_key(item.artifact_ref) for item in channels.vector}
-        hits = combine_atomic_memory_channels(channels)[: request.limit]
         candidates = tuple(
             AtomicMemorySearchHit(
                 hit,
@@ -366,7 +383,7 @@ class ScopedAtomicMemory:
             )
             for hit in hits
         )
-        return await self._rerank(
+        page = await self._rerank(
             query,
             mode,
             candidates,
@@ -375,6 +392,163 @@ class ScopedAtomicMemory:
             embedding_calls,
             self._context(context),
         )
+        return replace(page, recoverable=recoverable)
+
+    async def _validate_search_hits(self, connection, hits, *, verify_vectors):
+        """Verify only returned candidates against one bounded authority snapshot.
+
+        The current projection still supplies the body and filters before LIMIT.
+        An inconsistent candidate fails the search; it is never silently dropped
+        or replaced with authority content. Every authority read is batched.
+        """
+        if not hits:
+            return
+        from powercontext.server.authz import AccessUnavailableError
+        from powercontext.server.authz.repository import ACCESS_OWNERS_TABLE
+
+        ids = tuple(hit.artifact_ref.artifact_id for hit in hits)
+        application = self.application
+        table = application.index.table
+        columns = (
+            "artifact_id",
+            "revision",
+            "state_version",
+            "kind",
+            "text",
+            "content_hash",
+            "searchable_text",
+            "embedding_input_hash",
+            "profile_fingerprint",
+            "projection_format",
+            "owner_type",
+            "owner_id",
+        )
+        projected = {
+            row["artifact_id"]: row
+            for row in (
+                await connection.execute(
+                    select(*(table.c[name] for name in columns)).where(
+                        table.c.scope_id == self.scope_id, table.c.artifact_id.in_(ids)
+                    )
+                )
+            ).mappings()
+        }
+        heads = {
+            row["artifact_id"]: row
+            for row in (
+                await connection.execute(
+                    select(ARTIFACT_HEADS_TABLE).where(
+                        ARTIFACT_HEADS_TABLE.c.scope_id == self.scope_id,
+                        ARTIFACT_HEADS_TABLE.c.family == "atomic-memory",
+                        ARTIFACT_HEADS_TABLE.c.artifact_id.in_(ids),
+                    )
+                )
+            ).mappings()
+        }
+        states = {
+            row["artifact_id"]: row
+            for row in (
+                await connection.execute(
+                    select(ATOMIC_MEMORY_STATES_TABLE).where(
+                        ATOMIC_MEMORY_STATES_TABLE.c.scope_id == self.scope_id,
+                        ATOMIC_MEMORY_STATES_TABLE.c.artifact_id.in_(ids),
+                    )
+                )
+            ).mappings()
+        }
+        owners = {
+            row["artifact_id"]: row
+            for row in (
+                await connection.execute(
+                    select(ACCESS_OWNERS_TABLE).where(
+                        ACCESS_OWNERS_TABLE.c.owner_kind == "artifact",
+                        ACCESS_OWNERS_TABLE.c.scope_id == self.scope_id,
+                        ACCESS_OWNERS_TABLE.c.family == "atomic-memory",
+                        ACCESS_OWNERS_TABLE.c.selector_type.is_(None),
+                        ACCESS_OWNERS_TABLE.c.artifact_id.in_(ids),
+                    )
+                )
+            ).mappings()
+        }
+        for hit in hits:
+            identity = hit.artifact_ref.artifact_id
+            if identity not in owners:
+                raise AccessUnavailableError("artifact_owner_pending")
+            projection, head, state = projected.get(identity), heads.get(identity), states.get(identity)
+            if (
+                projection is None
+                or head is None
+                or state is None
+                or hit.artifact_ref.family != "atomic-memory"
+                or head["revision"] != hit.artifact_ref.revision
+                or projection["revision"] != hit.artifact_ref.revision
+                or state["state"] != "active"
+                or state["merged_into_id"] is not None
+                or head["lifecycle_state"] != "active"
+                or head["replacement_artifact_id"] is not None
+                or state["state_version"] != hit.state_version
+                or projection["state_version"] != hit.state_version
+                or head["governance_generation"] != hit.state_version
+            ):
+                raise AtomicMemoryIndexError("stale-projection", "Atomic Memory projection identity is inconsistent")
+        artifacts = await application.artifacts.get_many(
+            connection, self.scope_id, tuple(hit.artifact_ref for hit in hits)
+        )
+        for hit, artifact in zip(hits, artifacts, strict=True):
+            projection = projected[hit.artifact_ref.artifact_id]
+            owner = owners[hit.artifact_ref.artifact_id]
+            content = artifact.content
+            payload_hash = sha256(canonical_json(content.model_dump(mode="json", by_alias=True))).hexdigest()
+            input_hash = (
+                None
+                if application.publisher.profile_fingerprint is None
+                else atomic_memory_embedding_input_hash(content.kind, content.text)
+            )
+            if (
+                hit.kind != content.kind
+                or hit.text != content.text
+                or projection["kind"] != content.kind
+                or projection["text"] != content.text
+                or projection["content_hash"] != payload_hash
+                or projection["searchable_text"]
+                != analyze_text(atomic_memory_embedding_input(content.kind, content.text))
+                or (verify_vectors and projection["embedding_input_hash"] != input_hash)
+                or (verify_vectors and projection["profile_fingerprint"] != application.publisher.profile_fingerprint)
+                or projection["projection_format"] != ATOMIC_MEMORY_PROJECTION_FORMAT
+                or projection["owner_type"] != owner["owner_type"]
+                or projection["owner_id"] != owner["owner_id"]
+            ):
+                raise AtomicMemoryIndexError("stale-projection", "Atomic Memory projection content is inconsistent")
+
+    async def _resolve_query_embedding(self, query, mode, reuse, embedding_timeout_seconds, allow_embedding):
+        application = self.application
+        capabilities = application.index.capabilities
+        profile = capabilities.embedding_profile
+        requested_mode = mode
+        if mode == "auto":
+            mode = "hybrid" if profile is not None else "text"
+            if not allow_embedding and capabilities.fts:
+                return "text", None, None, 0
+        if mode not in {"vector", "hybrid"}:
+            return mode, None, None, 0
+        model = application.embedding_model
+        if profile is None or model is None or model.profile != profile:
+            raise AtomicMemoryIndexError("embedding-profile", "Requested vector retrieval is unavailable")
+        if reuse is not None and reuse.embedding_profile == profile:
+            return mode, reuse.query_vector, reuse, 0
+        try:
+            async with asyncio.timeout(embedding_timeout_seconds):
+                result = await embed_query(model, (query,))
+        except (InferenceUnavailableError, InferenceTimeoutError, TimeoutError):
+            if requested_mode != "auto" or not capabilities.fts:
+                raise
+            return "text", None, None, 1
+        if len(result.vectors) != 1:
+            raise AtomicMemoryIndexError("embedding-result", "Expected one query vector")
+        vector = canonical_embedding(
+            result.vectors[0], dimension=profile.dimension, normalization=profile.normalization
+        )
+        return mode, vector, MemoryQueryEmbedding(vector, profile), 1
 
     async def _rerank(self, query, mode, candidates, limit, query_embedding, embedding_calls, context):
         application = self.application

@@ -20,12 +20,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from powercontext.builtin.artifacts.memory import EmbeddingProfile, MemoryEntryInput, MemoryService
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.inference import EmbeddingResult
-from powercontext.builtin.persistence.memory import RelationalMemoryBackend
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.records import ArtifactWrite
 from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
-from powercontext.builtin.tags import MemoryEntryTagTarget, TagFilter
+from powercontext.builtin.runtime.atomic_memory_rebuild import rebuild_atomic_memory_projection
+from powercontext.builtin.tags import ArtifactTagTarget, TagFilter
 from powercontext.client import PowerContextClient
 from powercontext.http import QueryArtifactTagsRequest, ReplaceArtifactTagsRequest
 from powercontext.server.authentication import StaticBearerAuthenticationProvider
@@ -46,8 +47,8 @@ class _EmbeddingModel:
     [
         ("GET", "/artifacts/experience/private/tags", None),
         ("PUT", "/artifacts/experience/private/tags", {"tags": ["private"]}),
-        ("GET", "/artifacts/memory/private/entries/private/tags", None),
-        ("PUT", "/artifacts/memory/private/entries/private/tags", {"tags": ["private"]}),
+        ("GET", "/artifacts/atomic-memory/private/tags", None),
+        ("PUT", "/artifacts/atomic-memory/private/tags", {"tags": ["private"]}),
         ("POST", "/artifact-tags/query", {"tags": ["private"]}),
     ],
 )
@@ -85,41 +86,41 @@ def test_tag_search_filters_before_candidate_limits_and_survives_rebuild(tmp_pat
     async def scenario() -> None:
         config = BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'candidates.db'}"))
         async with open_builtin_contexts(config, embedding_model=_EmbeddingModel()) as contexts:
-            service = MemoryService(
-                backend=RelationalMemoryBackend(
-                    database=contexts.database,
-                    scope_id="project",
-                    artifacts=contexts.repositories.artifacts,
-                    index=contexts.index,
-                ),
-                embedding_model=_EmbeddingModel(),
-            )
-            memory = await service.remember(
-                memory=None,
-                entries=tuple(MemoryEntryInput(kind="fact", text=f"Compatibility test {i:02d}.") for i in range(48)),
-                mode="append",
-            )
-            assert memory is not None
-            # Equal vector distances and text ranks leave this entry beyond the
-            # unfiltered candidate window. Filtering after top-k would lose it.
-            entry = max(memory.content.manifest.entries, key=lambda item: item.entry_id)
-            target = MemoryEntryTagTarget(artifact_id=memory.artifact_id, entry_id=entry.entry_id)
+            service = contexts.atomic_memory.for_scope("project")
+            memories = [
+                await contexts.records.create_artifact(
+                    "project",
+                    "atomic-memory",
+                    ArtifactWrite(content={"kind": "fact", "text": f"Compatibility test {i:02d}."}),
+                )
+                for i in range(48)
+            ]
+            # Equal distances and text ranks put the final identity past top-k.
+            # The label must restrict candidates before that window is applied.
+            artifact = max(memories, key=lambda item: item.artifact_id)
+            target = ArtifactTagTarget(family="atomic-memory", artifact_id=artifact.artifact_id)
             empty = await contexts.records.get_tags("project", target)
             tagged = await contexts.records.replace_tags("project", target, ("chosen",), expected_etag=empty.etag)
-            for mode in ("fts", "vector", "hybrid"):
-                unfiltered = await service.search("compatibility test", memories=(memory,), mode=mode, limit=32)
+            for mode in ("text", "vector", "hybrid"):
+                unfiltered = await service.search("compatibility test", mode=mode, limit=32)
                 assert len(unfiltered.hits) == 32
-                assert entry.entry_id not in {hit.entry_id for hit in unfiltered.hits}
+                assert artifact.artifact_id not in {hit.hit.artifact_ref.artifact_id for hit in unfiltered.hits}
                 result = await service.search(
-                    "compatibility test", memories=(memory,), mode=mode, limit=1, tag_filter=TagFilter(tags=("chosen",))
+                    "compatibility test", mode=mode, limit=1, tag_filter=TagFilter(tags=("chosen",))
                 )
-                assert [hit.entry_id for hit in result.hits] == [entry.entry_id]
-            await service.rebuild_projections()
+                assert [hit.hit.artifact_ref.artifact_id for hit in result.hits] == [artifact.artifact_id]
+            rebuilt_report = await rebuild_atomic_memory_projection(
+                contexts.database,
+                contexts.atomic_memory.index,
+                embedding_model=_EmbeddingModel(),
+                maintenance_confirmed=True,
+            )
+            assert rebuilt_report.ready, rebuilt_report.errors
             assert await contexts.records.get_tags("project", target) == tagged
             rebuilt = await service.search(
-                "compatibility test", memories=(memory,), mode="fts", limit=1, tag_filter=TagFilter(tags=("chosen",))
+                "compatibility test", mode="text", limit=1, tag_filter=TagFilter(tags=("chosen",))
             )
-            assert [hit.entry_id for hit in rebuilt.hits] == [entry.entry_id]
+            assert [hit.hit.artifact_ref.artifact_id for hit in rebuilt.hits] == [artifact.artifact_id]
 
     asyncio.run(scenario())
 

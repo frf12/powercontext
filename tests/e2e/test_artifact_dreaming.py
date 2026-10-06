@@ -28,6 +28,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy.engine import make_url
 
+from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
     AtomicMemoryExtractionInput,
@@ -42,6 +43,7 @@ from powercontext.builtin.evidence.models import EvidenceResolutionError
 from powercontext.builtin.inference.models import GenerationResult, InferenceUsage
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.records import ArtifactWrite
 from powercontext.builtin.runtime import (
     ApproveArtifactCandidateRequest,
     BuiltinConfig,
@@ -655,18 +657,6 @@ def test_enforced_access_rechecks_background_actor_and_attests_candidate(databas
                 dream_candidate_attester=adapter.attest_candidate,
             ) as runtime:
                 scope, _, citation = await seed(runtime)
-                entries = await runtime.memory.for_scope(scope).list()
-                for item in entries.items:
-                    await access.establish_artifact_owner(
-                        ResourceRef.artifact(
-                            scope,
-                            family="atomic-memory",
-                            artifact_id=item.ref.artifact_id,
-                        ),
-                        admin,
-                        idempotency_key="seed-owner:" + item.ref.artifact_id,
-                        context=context,
-                    )
                 await access.create_binding(
                     admin,
                     CreateBinding(
@@ -1049,6 +1039,60 @@ def test_skill_replacement_rechecks_memory_through_skill_lineage(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("phase", ["propose", "revise", "approve"])
+@pytest.mark.parametrize("revise_memory", [False, True])
+def test_active_merged_memory_keeps_exact_frozen_history_for_new_review(
+    database: DatabaseConfig, phase: str, revise_memory: bool
+) -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(
+            config(database), candidate_pipeline=atomic_memory_pipeline(MemoryPipeline()), dream_generator=Generator()
+        ) as runtime:
+            scope, root, _ = await seed(runtime)
+            assert runtime.atomic_memory is not None
+            memories = runtime.atomic_memory.for_scope(scope)
+            inputs = (await memories.list()).items
+            merged = await memories.merge(
+                tuple(item.as_read() for item in inputs),
+                AtomicMemoryContent(kind="working_note", text="Replaying the write key preserved exactly one row."),
+            )
+            target = merged.primary.ref
+            if revise_memory:
+                updated = await runtime._provider.records.replace_artifact(
+                    scope,
+                    "atomic-memory",
+                    target.artifact_id,
+                    '"revision:1"',
+                    ArtifactWrite(content={"kind": "working_note", "text": "The key replay remained idempotent."}),
+                )
+                target = (await memories.get(updated.artifact_id)).ref
+            for item in inputs:
+                historical = await memories.get(item.ref.artifact_id, revision=item.ref.revision)
+                assert historical.ref == item.ref and historical.state.state == "merged"
+            service = runtime.experience.for_scope(scope)
+            candidate = await service.propose(ProposeExperienceRequest(proposal=experience(), artifacts=(target,)))
+            if phase == "revise":
+                candidate = await runtime.review.for_scope(scope).revise(
+                    ReviseArtifactCandidateRequest(
+                        candidate_id=candidate.candidate_id,
+                        expected_version=candidate.version,
+                        proposal=candidate.proposal,
+                        artifacts=(target,),
+                    )
+                )
+            elif phase == "approve":
+                candidate = await runtime.review.for_scope(scope).approve(
+                    ApproveArtifactCandidateRequest(
+                        candidate_id=candidate.candidate_id, expected_version=candidate.version
+                    )
+                )
+                assert candidate.result_artifact is not None
+            assert candidate.sources == (root,)
+            assert candidate.artifacts == (target,)
+
+    asyncio.run(scenario())
+
+
 def test_skill_approval_rechecks_transitive_memory_state(database: DatabaseConfig) -> None:
     async def scenario() -> None:
         async with open_builtin_runtime(
@@ -1309,7 +1353,9 @@ def test_multiple_entries_and_experience_reusing_a_source_keep_one_root(database
             )
             assert result.sources == (root,)
             assert result.memory_citations == ()
-            assert set(result.artifacts) == {approved.result_artifact, *citations}
+            assert {ref.model_dump_json() for ref in result.artifacts} == {
+                ref.model_dump_json() for ref in (approved.result_artifact, *citations)
+            }
 
     asyncio.run(scenario())
 

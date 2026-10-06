@@ -31,13 +31,13 @@ import uvicorn
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
-from pydantic_ai.models.test import TestModel
 
 from powercontext.builtin.artifacts.handoff import HandoffDraft, HandoffGenerationRequest, HandoffStatement
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import AccessControlConfig, BearerAuthConfig, McpConfig, ServerSettings
+from tests.e2e.atomic_memory_models import independent_atomic_memory_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CLAUDE_PLUGIN = PROJECT_ROOT / "integrations" / "claude-code" / "plugins" / "powercontext"
@@ -65,20 +65,9 @@ def test_claude_sessions_and_codex_share_one_project_memory(
     monkeypatch: pytest.MonkeyPatch,
     authentication_enabled: bool,
 ) -> None:
-    model_output = """
-    {
-      "candidates": [{
-        "intent": "add",
-        "kind": "decision",
-        "text": "Use PowerContext as the shared project context service.",
-        "evidence_ids": ["source:0"],
-        "reason": "captured by the Claude Code hook"
-      }]
-    }
-    """
     monkeypatch.setattr(
         "pydantic_ai.models.infer_model",
-        lambda _: TestModel(custom_output_text=model_output),
+        lambda _: independent_atomic_memory_model("Use PowerContext as the shared project context service."),
     )
     app = create_server_app(
         settings=ServerSettings(

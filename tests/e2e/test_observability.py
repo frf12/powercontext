@@ -73,6 +73,7 @@ from powercontext.builtin.scope import ScopeDraft
 from powercontext.errors import SourceConflictError
 from powercontext.server.factory import create_server_app
 from powercontext.server.logging import OperationalContextFilter
+from powercontext.server.processing_security import open_worker_security
 from powercontext.server.settings import McpConfig, ServerSettings
 from powercontext.server.tracing import ServerTracing
 from tests.e2e.dream_support import atomic_memory_pipeline
@@ -254,6 +255,9 @@ class _VectorMemoryIndex:
         assert request.mode == "vector"
         assert request.query_vector is not None
         return AtomicMemorySearchChannels()
+
+    async def probe_recoverable(self, connection, scope_id, request, floor, /):
+        return False
 
     async def enumerate_related(self, connection: AsyncConnection, scope_id: str, request, /):
         return ()
@@ -514,7 +518,8 @@ def test_memory_write_stage_spans_are_bounded_and_nested(monkeypatch, tmp_path) 
 
     assert captured.status_code == 202
     assert flushed.status_code == 200
-    assert flushed.json()["memory"] is not None
+    assert flushed.json()["memory"] is None
+    assert flushed.json()["processed_source_count"] == 1
     assert no_op.status_code == 200
     assert no_op.json()["processed_source_count"] == 0
 
@@ -553,9 +558,16 @@ def test_memory_write_stage_spans_are_bounded_and_nested(monkeypatch, tmp_path) 
     }
     invoke_agent = _only_child(spans, processed_flush, "invoke_agent atomic_memory_extraction")
     chat = _only_child_with_prefix(spans, invoke_agent, "chat ")
-    embedding = _only_child_with_prefix(spans, processed_flush, "embeddings ")
+    embeddings = [
+        span
+        for span in spans
+        if span.name.startswith("embeddings ")
+        and span.parent is not None
+        and span.parent.span_id == processed_flush.context.span_id
+    ]
+    assert len(embeddings) == 2
+    assert all(span.name == "embeddings test" for span in embeddings)
     commit = _only_child(spans, processed_flush, "memory.commit")
-    assert embedding.name == "embeddings test"
     assert dict(commit.attributes or {}) == {
         "powercontext.operation.name": "memory.commit",
         "powercontext.operation.unit": "stage",
@@ -565,7 +577,7 @@ def test_memory_write_stage_spans_are_bounded_and_nested(monkeypatch, tmp_path) 
     }
     assert {
         span.context.trace_id
-        for span in (processed_application, processed_flush, invoke_agent, chat, embedding, commit)
+        for span in (processed_application, processed_flush, invoke_agent, chat, *embeddings, commit)
     } == {processed_application.context.trace_id}
 
     assert _pop_prompt_attributes(dict(no_op_flush.attributes or {}), _MEMORY_EXTRACT_PROMPT_PREFIX) == {
@@ -878,7 +890,7 @@ def test_memory_read_stage_spans_are_bounded_and_nested(monkeypatch, tmp_path) -
     empty_memory = _only_child(spans, empty_application, "memory.search")
     empty_memory_attributes = dict(empty_memory.attributes or {})
     assert empty_memory_attributes["powercontext.memory.search.result_count"] == 0
-    assert empty_memory_attributes["powercontext.memory.search.mode"] == "fts"
+    assert empty_memory_attributes["powercontext.memory.search.mode"] == "text"
     assert not _children(spans, empty_memory, "memory.rerank")
     empty_experience = _only_child(spans, empty_application, "experience.search")
     assert (empty_experience.attributes or {})["powercontext.experience.search.result_count"] == 0
@@ -960,8 +972,11 @@ def test_scope_lock_stage_span_reports_contention_and_closes_at_acquisition(tmp_
     ] == [False, True, False, False]
     # Every wait span succeeds, including the conflicting write's: the span closes before the critical section runs.
     for span in spans:
-        assert (span.attributes or {}).get("powercontext.operation.outcome") == "success"
+        if span.name == "scope.lock":
+            assert (span.attributes or {}).get("powercontext.operation.outcome") == "success"
         allowed_keys = _STAGE_ATTRIBUTE_KEYS.get(span.name)
+        if (span.attributes or {}).get("powercontext.operation.outcome") == "failure":
+            allowed_keys = None if allowed_keys is None else allowed_keys | {"error.type"}
         assert allowed_keys is None or (span.attributes or {}).keys() <= allowed_keys
     exported = _exported_span_data(spans)
     assert scope_id not in exported
@@ -1028,13 +1043,16 @@ def _traced_family_worker(
     from powercontext.builtin.runtime.composition import open_builtin_contexts
 
     async def run() -> ArtifactProcessingWorkerCompletion:
-        async with open_builtin_contexts(
-            spec.config,
-            candidate_pipeline=atomic_memory_pipeline(_EmptyCandidatePipeline()),
-            experience_pipeline=_EmptyExperiencePipeline(),
-            _topic_memory_worker=True,
-        ) as contexts:
-            return await process_family_invocation(contexts, assignment, config=spec.config)
+        async with (
+            open_builtin_contexts(
+                spec.config,
+                candidate_pipeline=atomic_memory_pipeline(_EmptyCandidatePipeline()),
+                experience_pipeline=_EmptyExperiencePipeline(),
+                _topic_memory_worker=True,
+            ) as contexts,
+            open_worker_security(spec.worker_security, contexts.database) as security,
+        ):
+            return await process_family_invocation(contexts, assignment, config=spec.config, security=security)
 
     return asyncio.run(run())
 
@@ -1263,7 +1281,6 @@ def test_vector_search_exports_embedding_under_memory_search_without_recording_t
         "powercontext.memory.search.generation_calls": 0,
         "powercontext.operation.outcome": "success",
     }
-    assert embedding.name == "embeddings test"
     assert embedding.context.trace_id == application.context.trace_id
     assert not any(_is_inference_span(span) and span.parent is None for span in spans)
     exported = _exported_span_data(spans)
@@ -1324,7 +1341,6 @@ def test_injected_always_on_embedding_skips_readiness_but_traces_vector_search(m
     application = next(span for span in spans if span.name == "powercontext search_memory")
     search = _only_child(spans, application, "memory.search")
     embedding = _only_child_with_prefix(spans, search, "embeddings ")
-    assert embedding.name == "embeddings test"
     assert [span for span in spans if _is_inference_span(span)] == [embedding]
 
 

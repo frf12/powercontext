@@ -338,6 +338,7 @@ logger = logging.getLogger(__name__)
 
 # Leave room for database reads and assembly within the default one-second Hook request.
 _CONTEXT_TOPIC_EMBEDDING_TIMEOUT_SECONDS = 0.25
+_CONTEXT_MEMORY_EMBEDDING_TIMEOUT_SECONDS = 0.25
 
 _MEMORY_CAPTURE_STAGE = "memory.capture"
 _MEMORY_CAPTURE_SOURCE_COUNT = "powercontext.memory.capture.source_count"
@@ -407,6 +408,7 @@ class _ScopeRecallOutcome:
     memory_admission: AdmissionCounts | None = None
     experience_admission: AdmissionCounts | None = None
     memory_query_embedding: MemoryQueryEmbedding | None = None
+    memory_recoverable: bool = False
     embedding_calls: int = 0
     generation_calls: int = 0
 
@@ -421,6 +423,7 @@ class _RecallRoundOutcome:
     admissions: tuple[AdmissionCounts, ...] = ()
     embedding_calls: int = 0
     generation_calls: int = 0
+    memory_recoverable: bool = False
 
 
 SkillRecall = Callable[[str, str, int], Awaitable[tuple[SkillSearchHit, ...]]]
@@ -945,7 +948,7 @@ class ScopedContextApplication:
         )
         # Caller-owned cache of the query vectors round 0 already paid for, keyed by scope.
         # Expansion rounds read it so a repeat search does not re-embed; round 0 fills it.
-        reuse: dict[str, MemoryQueryEmbedding] = {}
+        reuse: dict[str, MemoryQueryEmbedding | None] = {}
         topic_reuse: dict[str, MemoryQueryEmbedding | None] = {}
 
         round_zero = await self._recall_round(
@@ -1106,7 +1109,7 @@ class ScopedContextApplication:
         experience_candidates: list[PreparedExperienceCandidates],
         topic_memory_hits: tuple[TopicMemorySearchHit, ...],
         profile_candidates: Sequence[PreparedProfileCandidate],
-        reuse: dict[str, MemoryQueryEmbedding],
+        reuse: dict[str, MemoryQueryEmbedding | None],
         topic_reuse: dict[str, MemoryQueryEmbedding | None],
         round_zero: _RecallRoundOutcome,
     ) -> tuple[
@@ -1127,14 +1130,13 @@ class ScopedContextApplication:
 
         gate = RecallSufficiencyGate()
         expander = RecallExpander()
-        families_expected = _families_with_retrieved_candidates(families, round_zero.admissions) + int(
-            MEMORY_FAMILY in families and any(group.hits for group in memory_candidates)
+        families_expected = _families_with_retrieved_candidates(
+            families,
+            round_zero.admissions,
+            memory_present=round_zero.memory_recoverable or any(group.hits for group in memory_candidates),
         )
-        # Atomic admission is applied in the index before LIMIT; pre-admission counts are unavailable.
-        # A selected text channel can still try the bounded lower-floor rounds without inventing counts.
-        atomic_recoverable = int(MEMORY_FAMILY in families and self._runtime.atomic_memory is not None)
-        families_recoverable = (
-            _families_with_recoverable_candidates(families, round_zero.admissions) + atomic_recoverable
+        families_recoverable = _families_with_recoverable_candidates(
+            families, round_zero.admissions, memory_recoverable=round_zero.memory_recoverable
         )
         memory_hits_by_scope = {group.scope_id: list(group.hits) for group in memory_candidates}
         memory_versions = {
@@ -1215,8 +1217,8 @@ class ScopedContextApplication:
                 added_embeddings += issued.embedding_calls
                 added_generation_calls += issued.generation_calls
                 admission_by_family = list(issued.admissions)
-                families_recoverable = (
-                    _families_with_recoverable_candidates(families, issued.admissions) + atomic_recoverable
+                families_recoverable = _families_with_recoverable_candidates(
+                    families, issued.admissions, memory_recoverable=issued.memory_recoverable
                 )
                 candidates = build_recall_candidates(
                     memory_hits=_flatten_scope_memory(memory_hits_by_scope, scope_ids),
@@ -1332,7 +1334,7 @@ class ScopedContextApplication:
         builder: PreparedContextBuilder,
         *,
         admission: AdmissionFloor | None,
-        reuse: dict[str, MemoryQueryEmbedding],
+        reuse: dict[str, MemoryQueryEmbedding | None],
         topic_reuse: dict[str, MemoryQueryEmbedding | None],
     ) -> _RecallRoundOutcome:
         memory_candidates: list[PreparedMemoryCandidates] = []
@@ -1340,6 +1342,7 @@ class ScopedContextApplication:
         admissions: list[AdmissionCounts] = []
         embedding_calls = 0
         generation_calls = 0
+        memory_recoverable = False
         for scope_id in scope_ids:
             outcome = await self._recall_scope(
                 scope_id,
@@ -1348,11 +1351,12 @@ class ScopedContextApplication:
                 experience_limit=builder.experience_candidate_limit if EXPERIENCE_FAMILY in families else 0,
                 admission=admission,
                 reuse=reuse.get(scope_id),
+                allow_embedding=scope_id not in reuse or reuse[scope_id] is not None,
             )
+            memory_recoverable |= outcome.memory_recoverable
             memory_candidates.append(outcome.memory)
             experience_candidates.append(outcome.experience)
-            if outcome.memory_query_embedding is not None:
-                reuse[scope_id] = outcome.memory_query_embedding
+            reuse[scope_id] = outcome.memory_query_embedding
             admissions.extend(
                 count for count in (outcome.memory_admission, outcome.experience_admission) if count is not None
             )
@@ -1383,6 +1387,7 @@ class ScopedContextApplication:
             admissions=tuple(admissions) + (() if topic_outcome.admission is None else (topic_outcome.admission,)),
             embedding_calls=embedding_calls + topic_outcome.embedding_calls,
             generation_calls=generation_calls,
+            memory_recoverable=memory_recoverable,
         )
 
     async def _recall_scope(
@@ -1394,6 +1399,7 @@ class ScopedContextApplication:
         experience_limit: int,
         admission: AdmissionFloor | None,
         reuse: MemoryQueryEmbedding | None,
+        allow_embedding: bool = True,
     ) -> _ScopeRecallOutcome:
         async with self._runtime._scoped_operation(scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_RECALL):
             with self._runtime._stage(
@@ -1402,21 +1408,28 @@ class ScopedContextApplication:
             ) as span:
                 memory_hits = ()
                 memory_admission = None
+                memory_recoverable = False
                 memory_embedding_calls = 0
                 memory_generation_calls = 0
                 search_mode: str | None = None
                 atomic = self._runtime.atomic_memory
                 if memory_limit > 0 and atomic is not None:
+                    policy = self._runtime.recall_sufficiency_policy
                     result = await atomic.for_scope(scope_id).search(
                         request.query,
                         limit=memory_limit,
                         mode="auto",
                         admission=admission,
                         query_embedding=reuse,
+                        embedding_timeout_seconds=_CONTEXT_MEMORY_EMBEDDING_TIMEOUT_SECONDS,
+                        allow_embedding=allow_embedding,
+                        recovery_admission=None if policy is None else policy.round2_admission,
                         context=_PREPARE_ATOMIC_CONTEXT.get(),
                         _trace=False,
                     )
                     memory_hits = result.hits
+                    memory_admission = result.admission
+                    memory_recoverable = result.recoverable
                     search_mode = result.mode
                     reuse = result.query_embedding
                     memory_embedding_calls = result.embedding_calls
@@ -1466,6 +1479,7 @@ class ScopedContextApplication:
                 else replace(experience_outcome.admission, scope_id=scope_id)
             ),
             memory_query_embedding=reuse,
+            memory_recoverable=memory_recoverable,
             embedding_calls=memory_embedding_calls,
             generation_calls=memory_generation_calls,
         )
@@ -1601,26 +1615,36 @@ def _prefix_preserving_counts(
 def _families_with_retrieved_candidates(
     families: set[str],
     admissions: Sequence[AdmissionCounts],
+    *,
+    memory_present: bool = False,
 ) -> int:
-    """Count selected families that returned backend candidates in this recall pass."""
+    """Count selected families with observed or recoverable candidates."""
 
-    return len({
+    observed = {
         admission.family for admission in admissions if admission.family in families and admission.retrieved > 0
-    })
+    }
+    if memory_present and MEMORY_FAMILY in families:
+        observed.add(MEMORY_FAMILY)
+    return len(observed)
 
 
 def _families_with_recoverable_candidates(
     families: set[str],
     admissions: Sequence[AdmissionCounts],
+    *,
+    memory_recoverable: bool = False,
 ) -> int:
     """Count selected families where a lower admission floor may recover candidates."""
 
-    return len({
+    observed = {
         admission.family
         for admission in admissions
         if admission.family in families
         and (admission.rejected if admission.rejected is not None else admission.retrieved - admission.admitted) > 0
-    })
+    }
+    if memory_recoverable and MEMORY_FAMILY in families:
+        observed.add(MEMORY_FAMILY)
+    return len(observed)
 
 
 def _round_robin_counts(sizes: tuple[int, ...], limit: int) -> tuple[int, ...]:

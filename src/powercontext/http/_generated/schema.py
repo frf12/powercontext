@@ -36,6 +36,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
             }
         },
@@ -65,6 +66,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
             }
         },
@@ -96,6 +98,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
             }
         },
@@ -127,6 +130,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
             }
         },
@@ -160,6 +164,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
             }
         },
@@ -191,6 +196,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
             }
         },
@@ -198,6 +204,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "get": {
                 "tags": ["atomic-memory"],
                 "operationId": "get_atomic_memory_state",
+                "x-powercontext-scope-mode": "current",
                 "summary": "Read the current four-state Atomic Memory lifecycle",
                 "x-powercontext-access": {"resolver": "atomic_memory_state_access"},
                 "parameters": [
@@ -1893,7 +1900,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
                 "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
-                "x-powercontext-scope-mode": "current",
+                "x-powercontext-scope-mode": "none",
             }
         },
         "/v1/memory/entries/list": {
@@ -2004,7 +2011,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
                 "x-powercontext-access": {"resolver": "exact_memory_write_access"},
-                "x-powercontext-scope-mode": "current",
+                "x-powercontext-scope-mode": "none",
             }
         },
         "/v1/memory/entries/retire": {
@@ -2039,7 +2046,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
                 "x-powercontext-access": {"resolver": "exact_memory_write_access"},
-                "x-powercontext-scope-mode": "current",
+                "x-powercontext-scope-mode": "none",
             }
         },
         "/v1/memory/changes": {
@@ -2076,7 +2083,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "action": "scope.read",
                     "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
-                "x-powercontext-scope-mode": "current",
+                "x-powercontext-scope-mode": "none",
             }
         },
         "/v1/scopes/{scope_id}/dream": {
@@ -3758,6 +3765,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "tags": ["artifacts"],
                 "summary": "Get the current Artifact head",
                 "operationId": "get_artifact",
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "path_artifact_read_access"},
                 "parameters": [
                     {
@@ -3874,6 +3882,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "semantic "
                 "generation.",
                 "operationId": "replace_artifact",
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "path_artifact_write_access"},
                 "parameters": [
                     {
@@ -4291,6 +4300,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "tags": ["artifacts"],
                 "summary": "Get one exact immutable Artifact revision",
                 "operationId": "get_artifact_revision",
+                "x-powercontext-scope-mode": "current",
                 "x-powercontext-access": {"resolver": "path_artifact_read_access"},
                 "parameters": [
                     {

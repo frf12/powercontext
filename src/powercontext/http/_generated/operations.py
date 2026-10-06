@@ -232,7 +232,7 @@ LIST_ATOMIC_MEMORIES = Operation[ListAtomicMemoryRequest, ListAtomicMemoryRespon
     success_status=200,
     summary="List Atomic Memory heads by lifecycle and metadata",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {"description": "Operation completed."},
         401: {"$ref": "#/components/responses/Unauthorized"},
@@ -257,7 +257,7 @@ SEARCH_ATOMIC_MEMORY = Operation[SearchAtomicMemoryRequest, SearchAtomicMemoryRe
     success_status=200,
     summary="Search active Atomic Memories",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {"description": "Operation completed."},
         401: {"$ref": "#/components/responses/Unauthorized"},
@@ -282,7 +282,7 @@ MERGE_ATOMIC_MEMORIES = Operation[MergeAtomicMemoryRequest, AtomicMemoryMutation
     success_status=200,
     summary="Merge exact active Atomic Memories into a new Artifact",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {"description": "Operation completed."},
         401: {"$ref": "#/components/responses/Unauthorized"},
@@ -307,7 +307,7 @@ CHANGE_ATOMIC_MEMORY_LIFECYCLE = Operation[AtomicMemoryLifecycleRequest, AtomicM
     success_status=200,
     summary="Forget one Atomic Memory without changing its content revision",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {"description": "Operation completed."},
         401: {"$ref": "#/components/responses/Unauthorized"},
@@ -332,7 +332,7 @@ PREVIEW_ATOMIC_MEMORY_RESTORATION = Operation[AtomicMemoryRestorationPreviewRequ
     success_status=200,
     summary="Preview a complete Atomic Memory restoration",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {"description": "Operation completed."},
         401: {"$ref": "#/components/responses/Unauthorized"},
@@ -357,7 +357,7 @@ RESTORE_ATOMIC_MEMORY = Operation[AtomicMemoryRestorationRequest, AtomicMemoryRe
     success_status=200,
     summary="Restore Atomic Memory content and undo dependent merges atomically",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {"description": "Operation completed."},
         401: {"$ref": "#/components/responses/Unauthorized"},
@@ -382,7 +382,7 @@ GET_ATOMIC_MEMORY_STATE = Operation[None, AtomicMemoryStateResponse](
     success_status=200,
     summary="Read the current four-state Atomic Memory lifecycle",
     tags=("atomic-memory",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {
             "description": "Current content reference and lifecycle state.",
@@ -1495,7 +1495,7 @@ GET_MEMORY_CAPACITY = Operation[GetMemoryCapacityRequest, MemoryCapacity](
     success_status=200,
     summary="Unsupported legacy collection capacity",
     tags=("memory",),
-    scope_mode="current",
+    scope_mode="none",
     responses={
         200: {
             "description": "Capacity of one exact current Memory Revision.",
@@ -1576,7 +1576,7 @@ REVISE_MEMORY_ENTRY = Operation[ReviseMemoryEntryRequest, MemoryMutationResponse
     success_status=200,
     summary="Unsupported legacy citation revision",
     tags=("memory",),
-    scope_mode="current",
+    scope_mode="none",
     responses={
         200: {
             "description": "The Memory entry revision completed.",
@@ -1604,7 +1604,7 @@ RETIRE_MEMORY_ENTRY = Operation[RetireMemoryEntryRequest, MemoryMutationResponse
     success_status=200,
     summary="Unsupported legacy citation retirement",
     tags=("memory",),
-    scope_mode="current",
+    scope_mode="none",
     responses={
         200: {
             "description": "The Memory entry retirement completed.",
@@ -1632,7 +1632,7 @@ LIST_MEMORY_CHANGES = Operation[ListMemoryChangesRequest, ListMemoryChangesRespo
     success_status=200,
     summary="Unsupported continuous legacy collection changes",
     tags=("memory",),
-    scope_mode="current",
+    scope_mode="none",
     responses={
         200: {
             "description": "Compact changes through the selected Memory Revision.",
@@ -2775,7 +2775,7 @@ GET_ARTIFACT = Operation[None, ArtifactRevision](
     success_status=200,
     summary="Get the current Artifact head",
     tags=("artifacts",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {
             "description": "The current visible Artifact head.",
@@ -2812,7 +2812,7 @@ REPLACE_ARTIFACT = Operation[ReplaceArtifactRequest, ArtifactRevision](
     success_status=200,
     summary="Replace the current Artifact head",
     tags=("artifacts",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {
             "description": "The complete replacement was committed as the next revision.",
@@ -3005,7 +3005,7 @@ GET_ARTIFACT_REVISION = Operation[None, ArtifactRevision](
     success_status=200,
     summary="Get one exact immutable Artifact revision",
     tags=("artifacts",),
-    scope_mode="none",
+    scope_mode="current",
     responses={
         200: {
             "description": "The exact immutable Artifact revision.",

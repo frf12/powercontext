@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
@@ -526,7 +527,14 @@ def create_mcp_server(
         transport=_InternalBridgeTransport(app=server_app),
         base_url="http://fastapi",
     )
-    openapi_spec = server_app.openapi()
+    openapi_spec = deepcopy(server_app.openapi())
+    # MCP exposes Replace only for Atomic Memory. Specialize its input before
+    # FastMCP builds the flattened parameter map: the HTTP union has no shared
+    # top-level properties, so projecting it loses the request body entirely.
+    replace_operation = openapi_spec["paths"][REPLACE_ARTIFACT.path][REPLACE_ARTIFACT.method.lower()]
+    replace_operation["requestBody"]["content"]["application/json"]["schema"] = {
+        "$ref": "#/components/schemas/ReplaceAtomicMemoryArtifactRequest"
+    }
     provider = OpenAPIProvider(
         openapi_spec=openapi_spec,
         client=client,

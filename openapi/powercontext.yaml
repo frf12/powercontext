@@ -27,6 +27,7 @@ paths:
       - atomic-memory
       summary: List Atomic Memory heads by lifecycle and metadata
       operationId: list_atomic_memories
+      x-powercontext-scope-mode: current
       x-powercontext-access:
         resolver: atomic_memory_domain_access
       responses:
@@ -62,6 +63,7 @@ paths:
       - atomic-memory
       summary: Search active Atomic Memories
       operationId: search_atomic_memory
+      x-powercontext-scope-mode: current
       x-powercontext-access:
         resolver: atomic_memory_domain_access
       responses:
@@ -97,6 +99,7 @@ paths:
       - atomic-memory
       summary: Merge exact active Atomic Memories into a new Artifact
       operationId: merge_atomic_memories
+      x-powercontext-scope-mode: current
       x-powercontext-access:
         resolver: atomic_memory_domain_access
       responses:
@@ -132,6 +135,7 @@ paths:
       - atomic-memory
       summary: Forget one Atomic Memory without changing its content revision
       operationId: change_atomic_memory_lifecycle
+      x-powercontext-scope-mode: current
       x-powercontext-access:
         resolver: atomic_memory_domain_access
       responses:
@@ -167,6 +171,7 @@ paths:
       - atomic-memory
       summary: Preview a complete Atomic Memory restoration
       operationId: preview_atomic_memory_restoration
+      x-powercontext-scope-mode: current
       x-powercontext-access:
         resolver: atomic_memory_domain_access
       responses:
@@ -202,6 +207,7 @@ paths:
       - atomic-memory
       summary: Restore Atomic Memory content and undo dependent merges atomically
       operationId: restore_atomic_memory
+      x-powercontext-scope-mode: current
       x-powercontext-access:
         resolver: atomic_memory_domain_access
       responses:
@@ -235,6 +241,7 @@ paths:
     get:
       tags: [atomic-memory]
       operationId: get_atomic_memory_state
+      x-powercontext-scope-mode: current
       summary: Read the current four-state Atomic Memory lifecycle
       x-powercontext-access: {resolver: atomic_memory_state_access}
       parameters:
@@ -1853,7 +1860,7 @@ paths:
         Legacy collection capacity has no Atomic equivalent and returns operation_not_supported.
       operationId: get_memory_capacity
       x-powercontext-access: {resolver: atomic_memory_domain_access}
-      x-powercontext-scope-mode: current
+      x-powercontext-scope-mode: none
       requestBody:
         required: true
         content:
@@ -1964,7 +1971,7 @@ paths:
         Legacy citation writes have no equivalent collection revision precondition. Returns operation_not_supported before any write. Use Atomic content Replace with If-Match.
       operationId: revise_memory_entry
       x-powercontext-access: {resolver: exact_memory_write_access}
-      x-powercontext-scope-mode: current
+      x-powercontext-scope-mode: none
       requestBody:
         required: true
         content:
@@ -2003,7 +2010,7 @@ paths:
         Legacy citation writes return operation_not_supported before any write. Use Atomic lifecycle with revision and state_version.
       operationId: retire_memory_entry
       x-powercontext-access: {resolver: exact_memory_write_access}
-      x-powercontext-scope-mode: current
+      x-powercontext-scope-mode: none
       requestBody:
         required: true
         content:
@@ -2042,7 +2049,7 @@ paths:
         Continuous legacy collection changes have no Atomic equivalent and return operation_not_supported. Exact historical references remain readable.
       operationId: list_memory_changes
       x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
-      x-powercontext-scope-mode: current
+      x-powercontext-scope-mode: none
       requestBody:
         required: true
         content:
@@ -3779,6 +3786,7 @@ paths:
       tags: [artifacts]
       summary: Get the current Artifact head
       operationId: get_artifact
+      x-powercontext-scope-mode: current
       x-powercontext-access: {resolver: path_artifact_read_access}
       parameters:
         - name: scope_id
@@ -3848,6 +3856,7 @@ paths:
         Topic Memory replacement also requires scope.admin and preserves independently versioned tags.
         Complete title, summary, and detail text replaces the head without semantic generation.
       operationId: replace_artifact
+      x-powercontext-scope-mode: current
       x-powercontext-access: {resolver: path_artifact_write_access}
       parameters:
         - name: scope_id
@@ -4162,6 +4171,7 @@ paths:
       tags: [artifacts]
       summary: Get one exact immutable Artifact revision
       operationId: get_artifact_revision
+      x-powercontext-scope-mode: current
       x-powercontext-access: {resolver: path_artifact_read_access}
       parameters:
         - name: scope_id

@@ -27,6 +27,7 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
 from powercontext.builtin.artifacts.memory import MemoryEntryInput, MemoryRerankDecision
 from powercontext.builtin.inference import GenerationResult, InferenceUsage
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.records import ArtifactWrite
 from powercontext.builtin.runtime import (
     BuiltinConfig,
     CaptureSource,
@@ -160,7 +161,7 @@ def test_builtin_runtime_uses_sqlite_fts_without_vector_extension(tmp_path, monk
             assert prepared.content is not None
             item = json.loads(prepared.content.splitlines()[-2])["items"][0]
             assert item["content"] == "PowerContext composes an atomic SQL provider."
-            assert item["citation"]["artifact"]["artifact"] == found.hits[0].hit.artifact_ref.model_dump(mode="json")
+            assert item["citation"]["artifact_ref"] == found.hits[0].hit.artifact_ref.model_dump(mode="json")
             assert no_memory.status == "empty"
             assert no_memory.content is None
             assert no_match.status == "empty"
@@ -200,7 +201,7 @@ def test_prepare_context_reads_only_direct_context_references() -> None:
                     idempotency_key="child",
                 )
             )
-            await runtime.memory.for_scope(shared.scope_id).remember(
+            shared_memory = await runtime.memory.for_scope(shared.scope_id).remember(
                 RememberMemoryRequest(entries=(MemoryEntryInput(kind="fact", text="Shared direct context evidence."),))
             )
             await runtime.memory.for_scope(middle.scope_id).remember(
@@ -223,7 +224,8 @@ def test_prepare_context_reads_only_direct_context_references() -> None:
             assert direct.status == "ready"
             assert direct.content is not None
             item = json.loads(direct.content.splitlines()[-2])["items"][0]
-            assert item["citation"]["memory"]["scope_id"] == shared.scope_id
+            assert item["citation"]["artifact"]["scope_id"] == shared.scope_id
+            assert item["citation"]["artifact"]["artifact"] == shared_memory.records[0].ref.model_dump(mode="json")
             assert transitive.status == "empty"
             assert reverse.status == "empty"
             assert parent_only.status == "empty"
@@ -269,7 +271,7 @@ def test_prepare_context_keeps_referenced_scope_eligible_when_local_recall_is_fu
                     )
                 )
             )
-            await runtime.memory.for_scope(shared.scope_id).remember(
+            shared_memory = await runtime.memory.for_scope(shared.scope_id).remember(
                 RememberMemoryRequest(
                     entries=(MemoryEntryInput(kind="fact", text="Candidate saturation shared evidence."),)
                 )
@@ -282,7 +284,11 @@ def test_prepare_context_keeps_referenced_scope_eligible_when_local_recall_is_fu
             assert prepared.status == "ready"
             assert prepared.content is not None
             items = json.loads(prepared.content.splitlines()[-2])["items"]
-            assert any(item["citation"].get("memory", {}).get("scope_id") == shared.scope_id for item in items)
+            assert any(
+                item["citation"].get("artifact", {}).get("scope_id") == shared.scope_id
+                and item["citation"]["artifact"]["artifact"] == shared_memory.records[0].ref.model_dump(mode="json")
+                for item in items
+            )
 
     asyncio.run(scenario())
 
@@ -347,5 +353,22 @@ def test_same_scope_read_only_searches_do_not_serialize_reranking() -> None:
             pages = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
 
             assert all(page.rerank is not None for page in pages)
+
+    asyncio.run(scenario())
+
+
+def test_atomic_get_inside_in_memory_write_keeps_the_outer_rollback() -> None:
+    async def scenario() -> None:
+        async with open_builtin_contexts(BuiltinConfig(database=SQLiteConfig())) as contexts:
+            with pytest.raises(RuntimeError, match="abort outer write"):
+                async with contexts.database.transaction():
+                    created = await contexts.records.create_artifact(
+                        "project", "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "Uncommitted fact"})
+                    )
+                    loaded = await contexts.atomic_memory.for_scope("project").get(created.artifact_id)
+                    assert loaded.artifact.content.text == "Uncommitted fact"
+                    raise RuntimeError("abort outer write")  # noqa: TRY003 - deliberate transaction abort
+            assert await contexts.records.logical_artifacts("project") == ()
+            assert (await contexts.atomic_memory.for_scope("project").list()).items == ()
 
     asyncio.run(scenario())

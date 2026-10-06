@@ -208,15 +208,23 @@ async def _process_family_invocation(  # noqa: C901 - one guarded dispatch per r
                     await invocation.complete(connection, remaining_work=False)
                 return ArtifactProcessingWorkerCompletion()
         if assignment.artifact_family == "memory":
+            if security is None:
+                # Runtime-only SDK workers reuse the parent schema, whose worker
+                # composition deliberately supplies no implicit Atomic authority.
+                from powercontext.server.authz import PrincipalRef
+
+                atomic_context = AtomicMemoryExecutionContext(
+                    principal=PrincipalRef(type="service", id="local-runtime"), trusted_local=True
+                )
+            else:
+                atomic_context = AtomicMemoryExecutionContext(
+                    principal=security.principal, access=security.access, audit=security.context
+                )
             result = await contexts.process_memory(
                 scope,
                 config.runtime.source_window_limit,
                 processing=invocation,
-                atomic_context=None
-                if security is None
-                else AtomicMemoryExecutionContext(
-                    principal=security.principal, access=security.access, audit=security.context
-                ),
+                atomic_context=atomic_context,
             )
             if result.held_count:
                 return ArtifactProcessingWorkerCompletion(held_count=result.held_count, hold_codes=result.hold_codes)

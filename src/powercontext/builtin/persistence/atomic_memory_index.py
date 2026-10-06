@@ -22,16 +22,21 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
-from sqlalchemy import Table, delete, insert, update
+from sqlalchemy import Table, bindparam, delete, insert, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.artifacts.memory.canonical import canonical_embedding, canonical_json, normalize_query
-from powercontext.builtin.artifacts.search import DEFAULT_ADMISSION_FLOOR, AdmissionFloor, analyze_text
+from powercontext.builtin.artifacts.search import (
+    DEFAULT_ADMISSION_FLOOR,
+    AdmissionFloor,
+    analyze_text,
+    fts_query_requirements,
+)
 from powercontext.builtin.inference import EmbeddingModel
 from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
 from powercontext.builtin.tags import TagFilter
@@ -179,6 +184,10 @@ class AtomicMemoryIndex(Protocol):
     async def search(
         self, connection: AsyncConnection, scope_id: str, request: AtomicMemorySearchRequest, /
     ) -> AtomicMemorySearchChannels: ...
+
+    async def probe_recoverable(
+        self, connection: AsyncConnection, scope_id: str, request: AtomicMemorySearchRequest, floor: AdmissionFloor, /
+    ) -> bool: ...
 
     async def enumerate_related(
         self, connection: AsyncConnection, scope_id: str, request: AtomicMemoryRelatedRequest, /
@@ -432,9 +441,10 @@ def atomic_memory_vector_sql(
     )
 
 
-def freeze_atomic_memory_query_time(
-    request: AtomicMemorySearchRequest | AtomicMemoryRelatedRequest, /
-) -> AtomicMemorySearchRequest | AtomicMemoryRelatedRequest:
+_AtomicMemoryQuery = TypeVar("_AtomicMemoryQuery", bound=AtomicMemorySearchRequest | AtomicMemoryRelatedRequest)
+
+
+def freeze_atomic_memory_query_time(request: _AtomicMemoryQuery, /) -> _AtomicMemoryQuery:
     if request.filters.now is not None:
         return request
     return replace(request, filters=replace(request.filters, now=datetime.now(UTC)))
@@ -589,6 +599,73 @@ class RelationalAtomicMemoryIndex:
                 read_grants=json.dumps([grant.as_json() for grant in read_grants], ensure_ascii=False),
             )
         )
+
+    async def probe_recoverable(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        request: AtomicMemorySearchRequest,
+        floor: AdmissionFloor,
+        /,
+    ) -> bool:
+        """Probe at most one eligible row admitted only by the permitted lower floor.
+
+        Qualification precedes LIMIT. This is an existence signal, not an invented
+        pre-admission collection count. Cross-channel admission excludes a row
+        already admitted by either channel, even if the delivered pool was capped.
+        The same current row carries its body, vectors and authorization fields.
+        """
+
+        request = freeze_atomic_memory_query_time(request)
+        dialect = "sqlite" if connection.dialect.name == "sqlite" else "mysql"
+        eligibility, parameters = atomic_memory_filter_sql(request.filters, dialect)
+        parameters["scope_id"] = scope_id
+        current: list[str] = []
+        recoverable: list[str] = []
+        if request.mode in {"fts", "hybrid"}:
+            terms, required = fts_query_requirements(request.query, floor=request.admission)
+            _, lower_required = fts_query_requirements(request.query, floor=floor)
+            coverage: list[str] = []
+            for index, term in enumerate(terms):
+                key = f"probe_term_{index}"
+                parameters[key] = f" {term} "
+                matched = (
+                    f"instr(' ' || searchable_text || ' ', :{key}) > 0"
+                    if dialect == "sqlite"
+                    else f"LOCATE(BINARY :{key}, BINARY CONCAT(' ', searchable_text, ' ')) > 0"
+                )
+                coverage.append(f"CASE WHEN {matched} THEN 1 ELSE 0 END")
+            if coverage:
+                lexical = " + ".join(coverage)
+                parameters.update(probe_required=required, probe_lower_required=lower_required)
+                current.append(f"(({lexical}) >= :probe_required)")
+                recoverable.append(f"(({lexical}) >= :probe_lower_required)")
+        if request.mode in {"vector", "hybrid"}:
+            vector = self._require_vectors(request)
+            profile = self.profile
+            if profile is None:
+                raise AtomicMemoryIndexError("embedding-profile", "Vector profile is unavailable")
+            parameters.update(
+                probe_vector=self._encode_embedding(vector),
+                probe_similarity=(
+                    DEFAULT_ADMISSION_FLOOR if request.admission is None else request.admission
+                ).min_semantic_similarity,
+                probe_lower_similarity=floor.min_semantic_similarity,
+            )
+            distance = "vec_distance_l2" if dialect == "sqlite" else "l2_distance"
+            similarity = f"(1.0 - POWER({distance}(embedding, :probe_vector), 2) / 2.0)"
+            current.append(f"({similarity} >= :probe_similarity)")
+            recoverable.append(f"({similarity} >= :probe_lower_similarity)")
+        if not recoverable:
+            return False
+        statement = text(
+            "SELECT 1 FROM pc_atomic_memory_current WHERE scope_id = :scope_id "  # noqa: S608
+            f"AND ({eligibility}) AND ({' OR '.join(recoverable)}) "
+            f"AND NOT ({' OR '.join(current)}) LIMIT 1"
+        )
+        if request.mode in {"vector", "hybrid"} and dialect == "mysql":
+            statement = statement.bindparams(bindparam("probe_vector", type_=self.table.c.embedding.type))
+        return await connection.scalar(statement, parameters) is not None
 
     def _require_vectors(
         self,

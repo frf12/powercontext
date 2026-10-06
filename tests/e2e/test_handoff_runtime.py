@@ -121,7 +121,7 @@ def test_handoff_batch_rejects_existing_prompt_as_evidence(tmp_path: Path) -> No
             prompt = await runtime.records.for_scope(scope.scope_id).create_artifact(
                 "prompt",
                 ArtifactWrite(
-                    prompt_key="memory.extract",
+                    prompt_key="atomic_memory.extract",
                     content={
                         "schema_version": "powercontext.prompt.v1",
                         "mode": "custom",
@@ -237,8 +237,8 @@ def test_handoff_activation_rejects_a_lineage_only_boundary_source() -> None:
                 ScopeDraft(title="Project", summary="Reserved boundary", idempotency_key="reserved-boundary")
             )
             created = await runtime.records.for_scope(scope.scope_id).create_artifact(
-                "memory",
-                ArtifactWrite(content={"entries": [{"kind": "fact", "text": "Direct input."}]}),
+                "atomic-memory",
+                ArtifactWrite(content={"kind": "fact", "text": "Direct input."}),
             )
 
             with pytest.raises(SourceNotEligibleError):
@@ -260,7 +260,7 @@ def test_handoff_hint_omits_a_lineage_only_source_without_changing_continue_erro
                 ScopeDraft(title="Hint evidence", summary="Eligibility boundary", idempotency_key="hint-eligibility")
             )
             created = await runtime.records.for_scope(scope.scope_id).create_artifact(
-                "memory", ArtifactWrite(content={"entries": [{"kind": "fact", "text": "Direct input."}]})
+                "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "Direct input."})
             )
             prepared = PreparedHandoff(
                 scope_id=scope.scope_id,

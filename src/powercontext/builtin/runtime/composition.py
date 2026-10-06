@@ -94,6 +94,7 @@ from powercontext.builtin.inference.usage import (
 )
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_TABLES
 from powercontext.builtin.persistence.dream_schema import ensure_dream_schema
+from powercontext.builtin.persistence.experience_index import ensure_artifact_head_searchable_text
 from powercontext.builtin.persistence.memory_index import CompositeMemoryIndex, MemoryIndex
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import assert_atomic_memory_migration_ready
 from powercontext.builtin.persistence.oceanbase.atomic_memory_index import OceanBaseAtomicMemoryIndex
@@ -143,6 +144,7 @@ from powercontext.builtin.runtime.artifact_processing import (
     SpawnArtifactProcessingWorkerLauncher,
 )
 from powercontext.builtin.runtime.atomic_memory_processing import AtomicMemoryProcessingConfig
+from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.decision_model import (
     DECISION_INSTRUCTIONS,
@@ -915,6 +917,12 @@ async def open_builtin_contexts(
 
     database = config.database
     configured_token_estimator = character_token_estimator() if token_estimator is None else token_estimator
+    # Processing workers reuse the parent's schema. Composition does not implicitly
+    # grant them an Atomic Memory execution identity; family dispatch supplies the
+    # identity required by each operation.
+    atomic_memory_execution_context = (
+        AtomicMemoryExecutionContext(principal=None, trusted_local=False) if _topic_memory_worker else None
+    )
     if isinstance(database, SQLiteConfig):
         experience_index = SQLiteExperienceFTSIndex()
         indexes: list[MemoryIndex] = [SQLiteMemoryFTSIndex()]
@@ -938,13 +946,14 @@ async def open_builtin_contexts(
                 await ensure_topic_memory_tag_schema(connection)
                 await ensure_dream_schema(connection)
                 await ensure_scope_search_schema(connection)
-                await _initialize_atomic_memory_authority(connection)
-                await atomic_index.initialize(connection)
                 # A Topic child reuses its parent's schema. It never reads or
                 # writes Memory/Experience projections; rebuilding their FTS
                 # indexes here would take the shared SQLite write lock once
                 # per Window. Normal runtime startup retains index recovery.
                 if not _topic_memory_worker:
+                    await _initialize_atomic_memory_authority(connection)
+                    await atomic_index.initialize(connection)
+                    await ensure_artifact_head_searchable_text(connection)
                     await assert_atomic_memory_migration_ready(connection, index=atomic_index)
                     await index.initialize(connection)
                     await experience_index.initialize(connection)
@@ -956,6 +965,7 @@ async def open_builtin_contexts(
                 index=index,
                 topic_memory_index=topic_index,
                 atomic_memory_index=atomic_index,
+                atomic_memory_execution_context=atomic_memory_execution_context,
                 atomic_memory_preview_signing_secret=None
                 if config.runtime.atomic_memory_preview_signing_secret is None
                 else config.runtime.atomic_memory_preview_signing_secret.get_secret_value().encode("utf-8"),
@@ -1031,9 +1041,10 @@ async def open_builtin_contexts(
             await ensure_topic_memory_tag_schema(connection)
             await ensure_dream_schema(connection)
             await ensure_scope_search_schema(connection)
-            await _initialize_atomic_memory_authority(connection)
-            await atomic_index.initialize(connection)
             if not _topic_memory_worker:
+                await _initialize_atomic_memory_authority(connection)
+                await atomic_index.initialize(connection)
+                await ensure_artifact_head_searchable_text(connection)
                 await assert_atomic_memory_migration_ready(connection, index=atomic_index)
                 await index.initialize(connection)
                 await experience_index.initialize(connection)
@@ -1045,6 +1056,7 @@ async def open_builtin_contexts(
             index=index,
             topic_memory_index=topic_index,
             atomic_memory_index=atomic_index,
+            atomic_memory_execution_context=atomic_memory_execution_context,
             atomic_memory_preview_signing_secret=None
             if config.runtime.atomic_memory_preview_signing_secret is None
             else config.runtime.atomic_memory_preview_signing_secret.get_secret_value().encode("utf-8"),

@@ -86,9 +86,9 @@ class AtomicMemorySecurity:
                     raise AccessDeniedError()
             return
         access = context.access.with_connection(connection)
-        if ref is not None and ref.family in {"memory", "topic-memory"} and action == "read":
-            # Scope-owned Topic Memory and frozen collection lineage have no artifact Owner authority.
-            # Expanding these bodies requires Scope read; exact repository validation follows.
+        if ref is not None and ref.family in {"memory", "topic-memory", "prompt"} and action == "read":
+            # Operational Prompt, Topic Memory and frozen collection lineage use Scope read.
+            # Internal exact lineage validation follows; Prompt writes keep their own scope.admin boundary.
             await access.require(
                 context.principal, AccessAction.SCOPE_READ, ResourceRef.scope(scope_id), context=context.audit
             )
@@ -148,7 +148,15 @@ class AtomicMemorySecurity:
             from powercontext.server.authz import AccessAction, AccessUnavailableError, ResourceRef
             from powercontext.server.authz.service import BuiltinAuthorizationProvider
 
-            if type(context.access.provider) is not BuiltinAuthorizationProvider:
+            provider = context.access.provider
+            supported = type(provider) is BuiltinAuthorizationProvider
+            if not supported and type(provider).__module__ == "powercontext.server.authz.casbin":
+                from powercontext.server.authz.casbin import CasbinAuthorizationProvider
+
+                # The repository's fixed Casbin policy shares the exact
+                # relationship rules represented by this projection.
+                supported = type(provider) is CasbinAuthorizationProvider
+            if not supported:
                 raise AccessUnavailableError("atomic_memory_projection_authorization_unavailable")
             decision = await context.access.check(
                 context.principal, AccessAction.SCOPE_READ, ResourceRef.scope(scope_id), context=context.audit

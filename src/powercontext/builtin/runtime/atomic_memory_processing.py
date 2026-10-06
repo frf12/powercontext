@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import math
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, NoReturn
 
@@ -231,7 +231,7 @@ class AtomicMemorySourceWindowProcessor:
     async def _inspect_decisions(self, scope_id, workset, context):
         application = self.application
         plans = []
-        async with application.database.transaction() as connection:
+        async with self._read_transaction(context) as connection:
             for item in workset.changes():
                 lineage = ArtifactLineage(sources=item.sources, artifacts=item.artifacts)
                 if len(item.origins) >= 2:
@@ -347,10 +347,21 @@ class AtomicMemorySourceWindowProcessor:
         ])
         extraction_input = AtomicMemoryExtractionInput(evidence=evidence)
         self._require_budget(pipeline, extraction_input, "atomic_memory.extract")
+        extraction_prompt = current_prompt("atomic_memory.extract")
+        prompt_refs = (
+            () if extraction_prompt is None or extraction_prompt.artifact is None else (extraction_prompt.artifact,)
+        )
         await self._authorize_model_input(
-            scope_id, context, (), tuple(item.ref for item in eligible), generation_sources=eligible
+            scope_id,
+            context,
+            (),
+            tuple(item.ref for item in eligible),
+            prompt_refs,
+            generation_sources=eligible,
         )
         candidates = await pipeline.extract(extraction_input)
+        for ref in prompt_refs:
+            artifacts[(ref.family, ref.artifact_id, ref.revision)] = ref
         by_id = {item.evidence_id: item for item in evidence}
         # This order groups candidates by their supporting Sources; the model still
         # receives real Source context, never candidate order as a fact timestamp.
@@ -388,6 +399,15 @@ class AtomicMemorySourceWindowProcessor:
                         self._require_budget(pipeline, workset.request(key, related), "atomic_memory.reconcile")
                 value = workset.request(key, related)
                 self._require_budget(pipeline, value, "atomic_memory.reconcile")
+                reconciliation_prompt = current_prompt("atomic_memory.reconcile")
+                if reconciliation_prompt is not None and reconciliation_prompt.artifact is not None:
+                    ref = reconciliation_prompt.artifact
+                    prompt_refs = tuple(
+                        {
+                            (value.family, value.artifact_id, value.revision): value for value in (*prompt_refs, ref)
+                        }.values()
+                    )
+                    artifacts[(ref.family, ref.artifact_id, ref.revision)] = ref
                 dependencies = tuple(
                     read for item in (workset.items[workset.resolve(key)], *related) for read in item.origins
                 )
@@ -403,12 +423,15 @@ class AtomicMemorySourceWindowProcessor:
                 key = workset.apply(key, related, AtomicMemoryReconciliationOutput.model_validate(result.output))
                 del pending[:selected_count]
                 compared = True
+        for item in workset.changes():
+            refs = {(ref.family, ref.artifact_id, ref.revision): ref for ref in (*item.artifacts, *prompt_refs)}
+            workset.items[item.key] = replace(item, artifacts=tuple(refs.values()))
         return workset, tuple(historical.values()), tuple(artifacts.values())
 
     async def _load_related_items(self, scope_id, hits, context, workset, historical, artifacts):
         recalled = []
         for hit in hits:
-            async with self.application.database.transaction() as connection:
+            async with self._read_transaction(context) as connection:
                 record = await self.application.service.get(connection, scope_id, hit.artifact_ref.artifact_id, context)
                 await self.application.security.authorize(connection, scope_id, context, "write", record.ref)
                 if (
@@ -515,7 +538,7 @@ class AtomicMemorySourceWindowProcessor:
     async def _authorize_model_input(
         self, scope_id, context, reads, source_refs, artifact_refs=(), *, generation_sources=()
     ):
-        async with self.application.database.transaction() as connection:
+        async with self._read_transaction(context) as connection:
             await self.application.security.authorize(connection, scope_id, context, "read")
             await self.application.security.authorize(connection, scope_id, context, "create")
             await self.application.security.authorize_sources(connection, scope_id, context, source_refs)
@@ -541,6 +564,18 @@ class AtomicMemorySourceWindowProcessor:
         await self.application.security.authorize(
             connection, scope_id, context, "read", None if ref.family == "memory" else ref
         )
+
+    @asynccontextmanager
+    async def _read_transaction(self, context):
+        # Authorization sees the same snapshot as preparation. Its audit is
+        # written after that read closes, rather than upgrading SQLite's snapshot.
+        async with (
+            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
+            self.application.database.transaction() as connection,
+        ):
+            if connection.dialect.name == "sqlite":
+                await connection.exec_driver_sql("BEGIN")
+            yield connection
 
     def _stage(self, name, attributes):
         return nullcontext(None) if self.tracing is None else self.tracing.stage(name, attributes=attributes)
