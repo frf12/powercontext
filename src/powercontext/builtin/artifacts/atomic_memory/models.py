@@ -24,6 +24,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from powercontext.artifacts import Artifact, ArtifactDraft, ArtifactRef
+from powercontext.builtin.artifacts.memory.canonical import normalize_text
 
 
 class AtomicMemoryCreation(BaseModel):
@@ -49,21 +50,22 @@ class AtomicMemoryContent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
     schema_: Literal["powercontext.atomic-memory.v1"] = Field(default="powercontext.atomic-memory.v1", alias="schema")
     kind: str = Field(min_length=1, max_length=128)
-    text: str = Field(min_length=1, max_length=8_192)
+    text: str = Field(min_length=1)
     creation: AtomicMemoryCreation | None = None
 
-    @field_validator("kind", "text")
+    @field_validator("kind")
     @classmethod
     def nonblank(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("memory kind and text must not be blank")  # noqa: TRY003
+            raise ValueError("memory kind must not be blank")  # noqa: TRY003
         return value
 
     @field_validator("text")
     @classmethod
-    def text_bytes(cls, value: str) -> str:
-        if len(value.encode("utf-8")) > 8_192:
-            raise ValueError("memory text must not exceed 8192 UTF-8 bytes")  # noqa: TRY003
+    def valid_text(cls, value: str) -> str:
+        normalize_text(value)
+        # This model also decodes immutable revisions. Preserve their exact text;
+        # the owning service normalizes new writes before preparing a draft.
         return value
 
     def without_creation(self) -> AtomicMemoryContent:

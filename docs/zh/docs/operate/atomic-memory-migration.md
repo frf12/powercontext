@@ -18,6 +18,12 @@ powercontext server atomic-memory-migrate --action plan --env-file .env
 输出为 JSON，包含 `counts`、`errors`、`ready` 与 Source/处理进度快照摘要。
 `pending_entries` 表示尚未转换的逻辑身份；没有错误但仍有待转换条目时，`ready` 为 false。
 
+SQLite 的 plan 和 verify 要求数据库已存在且持久化。普通文件 URL 与 SQLite file URI 都使用
+`mode=ro` 连接；命令只设置连接参数，不创建目录、初始化 schema 或改变数据库的日志模式。
+路径不存在或不可读时明确失败。`:memory:`、`mode=memory` 的 file URI 和空 file URI 等进程内
+或临时数据库会被拒绝。检查连接忽略 URI 中的 `immutable` 和 `nolock`，保持正常锁协调并读取
+WAL 中已提交的数据。SQLite 的 WAL 协调可能使用或创建 `-wal`、`-shm` 辅助文件。
+
 备份数据库，停止全部旧 API、宿主、Worker 及其自动重启，暂停 Source 输入、手工写入和显式触发。
 维护确认参数表示操作者已经完成这些条件；命令不会停止外部进程。随后执行：
 
@@ -51,6 +57,10 @@ revision 不会产生该条记忆的新 revision。
 共享按精确 entry 资源转换，保留原 binding_id、主体、角色、有效期、撤销信息、授权来源和幂等字段。
 不带 entry selector 的旧 Memory 授权不是当前支持的共享格式，会明确阻断。
 
+创建授权的幂等回执包含资源身份，迁移时会核对原请求摘要，并将其转换为新身份对应的摘要。
+原请求使用相同幂等键重试时仍返回同一条授权；更换主体、角色、有效期、理由或资源会继续报冲突。
+撤销和替换授权的回执不含资源身份，保持原值。回执缺失、关联不符或摘要无法核实时会阻断迁移。
+
 当前为 custom 的旧 `memory.extract` Prompt 会阻断。操作者需要明确将旧 Prompt 当前模式设置为 Auto，
 并按新输入和输出契约配置 `atomic_memory.extract`、`atomic_memory.reconcile`；新 Prompt 可使用 Auto。
 旧 Prompt 历史继续保留。旧的自定义 CandidatePipeline 需要改为 AtomicMemoryGenerationPipeline。
@@ -80,6 +90,10 @@ Source Cursor、CAS generation、高水位、pending/flush 请求、已接受任
 向量准备在事务外完成。中途退出后，可以使用相同配置重复 apply；已提交对象先核验精确导入历史。
 与确定性身份对应的内容不同、存在孤立状态或历史时明确报错，不覆盖目标数据。
 已经导入的对象后续产生新 revision 或生命周期变化时，迁移不回退其 head、状态或标签。
+
+如果已转换的授权仍保留旧资源摘要，plan 和 verify 会返回 `ready: false`，并在
+`pending_grant_receipts` 中报告待修复数量。保持停服，重复 apply 即可修复这些回执；
+`migrated_grant_receipts` 报告本次修复数量，授权身份、撤销状态和审计记录保持不变。
 
 此任务不删除旧历史，也不提供数据库降级。回退数据库应恢复停服升级前的完整备份，遵循发布时
 对 RFC 1771 的升级和降级说明。Atomic Memory 内容恢复接口不能替代数据库回退。

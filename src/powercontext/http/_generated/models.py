@@ -2898,7 +2898,13 @@ class AtomicMemoryWriteContent(BaseModel):
         AtomicMemoryContentSchema.POWERCONTEXT_ATOMIC_MEMORY_V1
     )
     kind: Annotated[StrictStr, Field(max_length=128, min_length=1)]
-    text: Annotated[StrictStr, Field(max_length=8192, min_length=1)]
+    text: Annotated[
+        StrictStr,
+        Field(
+            description="Memory text is NFC-normalized and trimmed before enforcing an 8192 UTF-8 byte limit.",
+            min_length=1,
+        ),
+    ]
 
 
 class CreateAtomicMemoryArtifactRequest(BaseModel):

@@ -58,7 +58,7 @@ from powercontext.http import (
 )
 from powercontext.paths import default_scheduler_path
 from powercontext.server.access import HttpAccessLogMiddleware
-from powercontext.server.app import create_app
+from powercontext.server.app import _bind_evidence_access, create_app
 from powercontext.server.authentication import (
     AuthenticationProvider,
     StaticBearerAuthenticationProvider,
@@ -244,7 +244,7 @@ def create_server_app(  # noqa: C901
                     ),
                 )
             )
-            _bind_dream_access(dream_access, runtime)
+            _bind_evidence_access(runtime, active_access_control, resolved.access.mode)
             if active_access_control is not None:
                 migrated, unresolved = await runtime._records().migrate_handoff_receipts(
                     active_access_control.committed_receipt_identity,
@@ -365,11 +365,6 @@ def _resolve_security_providers(
         static_principal,
     )
     return static_principal, authentication, access_control, True
-
-
-def _bind_dream_access(access: DreamAccess | None, runtime: BuiltinRuntime) -> None:
-    if access is not None:
-        access.bind(runtime)
 
 
 async def _remove_legacy_topic_owners(access: AccessControlService) -> None:

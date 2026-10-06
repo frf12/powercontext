@@ -20,6 +20,13 @@ The JSON output includes `counts`, `errors`, `ready` and a Source/processing sna
 `ready: false`. The scan includes every Scope and legacy container, all collection and entry revisions,
 inactive entries and compacted entries.
 
+For SQLite, plan and verify require an existing persistent database. Filesystem URLs and SQLite file URIs
+are opened with `mode=ro`; the commands only configure connection settings and do not create directories,
+initialize schema or change the database's journal mode. Missing or unreadable paths fail explicitly.
+Process-memory and temporary databases, including `:memory:`, file URIs with `mode=memory` and empty
+file URIs, are rejected. Inspection ignores `immutable` and `nolock` URI options to retain normal locking
+and committed WAL visibility. SQLite's WAL coordination can use or create `-wal` and `-shm` sidecars.
+
 Back up the database. Stop all old APIs, hosts and Workers, disable their automatic restart, and pause
 Source input, manual writes and explicit triggers. The confirmation flag attests to these external
 conditions; the command cannot stop external processes. Then run:
@@ -55,6 +62,12 @@ tags; collection tags retain their collection meaning. Exact entry bindings keep
 subject, role, expiry, revocation, grant provenance and idempotency fields while their resource is retargeted.
 Legacy Memory grants without an entry selector are unsupported and block conversion.
 
+Grant creation idempotency receipts include the resource identity. Migration validates the original request
+digest before converting it to the new identity. Replaying the same request and key still returns the same
+binding; changing its subject, role, expiry, reason or resource still conflicts. Revoke and replace receipt
+digests do not contain a resource identity and remain unchanged. Missing receipts, mismatched associations
+or unverifiable digests block migration.
+
 A current custom `memory.extract` Prompt blocks the task. Explicitly set that legacy Prompt to Auto and
 configure `atomic_memory.extract` and `atomic_memory.reconcile` for their new input/output contracts; the
 new Prompts may use Auto. Old Prompt history remains available. Injected legacy CandidatePipeline components
@@ -86,6 +99,11 @@ Embedding preparation occurs outside the transaction. Repeat apply with the same
 interruption. Existing targets must match the exact imported history; differing data or orphan content/state
 is rejected without overwriting authority. Subsequent revisions or lifecycle changes never cause the task
 to reset a target's head, state or tags.
+
+If a converted binding still has a creation receipt with the legacy resource digest, plan and verify return
+`ready: false` and report `pending_grant_receipts`. Keep the service stopped and repeat apply to repair those
+receipts. `migrated_grant_receipts` reports the number repaired in that run; binding identities, revocation
+state and audit records remain unchanged.
 
 This task retains old history and does not downgrade the database. Database rollback requires the complete
 backup from before maintenance and the release's RFC 1771 upgrade/downgrade procedure. Atomic Memory content

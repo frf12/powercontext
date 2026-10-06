@@ -18,7 +18,7 @@ title: Atomic Memory 开发计划
 - 工作区：`/Users/rongfneg.frf/.codex/worktrees/atomic-memory/powercontext`；分支 `codex/atomic-memory`。
 - 各开发者只修改分配的文件。共享文件先确认所有权，不覆盖其他人的改动，不自行提交或推送。
 - 按 AGENTS.md 和 REVIEW.md 检查真实调用链、权限、数据保存及读取、并发和失败恢复。
-- 本轮执行代码检查、类型检查及必要的生成步骤；未获得运行或新增测试的明确要求，不运行或增加测试。执行结果不得标成测试通过。
+- 执行代码检查、类型检查及必要的生成步骤。按问题核实范围运行文本规范化、授权迁移与投影、SQLite 只读检查及 API 契约回归；全量测试和真实 OceanBase 验收单独安排。
 - OpenAPI 是契约来源，生成文件只能通过生成器更新。
 - 领域模型和索引接口先对齐，再接入运行时；主 Agent 按模块和完整调用链 review，发现的问题交回开发 Agent 修复。
 
@@ -96,5 +96,6 @@ title: Atomic Memory 开发计划
 - OpenClaw、OpenCode、Pi 类型检查通过；Dsh 源码类型检查通过，完整包仍有 30 项既有测试类型错误。
 - Dsh、OpenCode、OpenClaw 构建通过；Pi 已完成静态编译。Bub 的独立类型检查受 7 项宿主导入诊断影响。
 - 本机 `prek` 启动退出码为 137；使用 `pre-commit 4.2.0` 执行同一份 hook 配置，全部静态 hook 通过。
-- 已维护受影响的现有测试和 fixture，未新增或运行测试。SQLite/OceanBase 的功能、并发、迁移和端到端验收尚未执行。
+- 已维护受影响的现有测试和 fixture。定向回归与 API 契约检查合计 99 项通过、0 项失败，另有 22 条 SQLite datetime adapter 弃用警告。
+- SQLite 已验证规范化写入和历史保留、授权幂等迁移、两种服务启动入口下的授权投影同步，以及只读 CLI。完整生命周期、并发、模型抽取和真实 OceanBase 验收尚未执行。
 - 普通向量搜索与抽取阈值枚举均使用精确 L2。原生向量索引已建立，查询尚未使用 ANN；计算成本为资格集合大小乘以维度，未做性能测量。

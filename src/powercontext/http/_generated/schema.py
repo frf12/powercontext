@@ -4823,7 +4823,23 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "default": "powercontext.atomic-memory.v1",
                     },
                     "kind": {"type": "string", "maxLength": 128, "minLength": 1},
-                    "text": {"type": "string", "maxLength": 8192, "minLength": 1},
+                    "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Memory "
+                        "text "
+                        "is "
+                        "NFC-normalized "
+                        "and "
+                        "trimmed "
+                        "before "
+                        "enforcing "
+                        "an "
+                        "8192 "
+                        "UTF-8 "
+                        "byte "
+                        "limit.",
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",

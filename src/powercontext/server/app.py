@@ -3261,7 +3261,7 @@ def _atomic_memory_state_access(payload: Mapping[str, Any], _deployment_id: str)
 
 
 def _bind_evidence_access(
-    application: ServerApplication | None,
+    application: ServerApplication | BuiltinRuntime | None,
     access: AccessControlService | None,
     mode: str,
 ) -> None:

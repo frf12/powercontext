@@ -271,6 +271,14 @@ _BINDING_COLUMNS = (
     "revoked_by_id",
     "revoked_by_description",
 )
+_IDEMPOTENCY_COLUMNS = (
+    "actor_id",
+    "idempotency_key_hash",
+    "operation",
+    "payload_hash",
+    "result_binding_id",
+    "secondary_binding_id",
+)
 _PROCESSING_TABLES = (
     "pc_sources",
     "pc_source_journal_heads",
@@ -396,6 +404,100 @@ def _resource_key(scope_id: str, family: str, artifact_id: str, entry_id: str | 
     }).decode("utf-8")
 
 
+def _grant_creation_hash(binding: Mapping[str, Any], resource_key: str) -> str:
+    # Frozen binding.create digest. Revocation changes no creation fields;
+    # replacement creates a separate binding and a binding.replace receipt.
+    expires_at = binding["expires_at"]
+    if expires_at is not None:
+        expiry = datetime.fromisoformat(str(expires_at))
+        _require(expiry.tzinfo is not None, "grant creation receipt has an invalid expiry")
+        expires_at = expiry.astimezone(UTC).isoformat(timespec="microseconds")
+    return _digest(
+        "\0".join((
+            binding["subject_type"],
+            binding["subject_id"],
+            resource_key,
+            binding["role"],
+            binding["reason"] or "",
+            expires_at or "",
+        ))
+    )
+
+
+async def _grant_creation_receipt(
+    connection: AsyncConnection, binding: Mapping[str, Any], legacy_key: str, new_key: str
+) -> tuple[dict[str, Any], str] | None:
+    receipts = await _rows(
+        connection,
+        "pc_access_idempotency",
+        _IDEMPOTENCY_COLUMNS,
+        "WHERE actor_id = :actor AND idempotency_key_hash = :key",
+        actor=binding["granted_by_id"],
+        key=_digest(binding["idempotency_key"]),
+    )
+    prefix = f"{binding['binding_id']}: grant creation receipt"
+    _require(len(receipts) == 1, f"{prefix} is missing or ambiguous")
+    receipt = receipts[0]
+    if receipt["operation"] == "binding.replace":
+        _require(
+            receipt["secondary_binding_id"] == binding["binding_id"] and bool(receipt["result_binding_id"]),
+            f"{prefix} replacement association differs",
+        )
+        return None
+    _require(
+        receipt["operation"] == "binding.create"
+        and receipt["result_binding_id"] == binding["binding_id"]
+        and receipt["secondary_binding_id"] is None,
+        f"{prefix} association differs",
+    )
+    new_hash = _grant_creation_hash(binding, new_key)
+    _require(
+        receipt["payload_hash"] in {new_hash, _grant_creation_hash(binding, legacy_key)},
+        f"{prefix} payload hash differs",
+    )
+    return receipt, new_hash
+
+
+async def _mapped_grants(connection: AsyncConnection, entry: _Entry) -> list[dict[str, Any]]:
+    return await _rows(
+        connection,
+        "pc_access_relationships",
+        _BINDING_COLUMNS,
+        "WHERE resource_type = 'artifact' AND scope_id = :scope AND family = 'atomic-memory' AND artifact_id = :id",
+        scope=entry.scope_id,
+        id=entry.artifact_id,
+    )
+
+
+async def _migrate_grant_receipts(connection: AsyncConnection, entry: _Entry) -> int:
+    legacy_key = _resource_key(entry.scope_id, "memory", entry.memory_id, entry.entry_id)
+    new_key = _resource_key(entry.scope_id, _FAMILY, entry.artifact_id)
+    migrated = 0
+    for binding in await _mapped_grants(connection, entry):
+        try:
+            creation = await _grant_creation_receipt(connection, binding, legacy_key, new_key)
+        except ValueError as error:
+            raise AtomicMemoryMigrationError((str(error),)) from error
+        if creation is None or creation[0]["payload_hash"] == creation[1]:
+            continue
+        receipt, new_hash = creation
+        result = await connection.execute(
+            text(
+                "UPDATE pc_access_idempotency SET payload_hash = :new_hash "
+                "WHERE actor_id = :actor_id AND idempotency_key_hash = :idempotency_key_hash "
+                "AND operation = 'binding.create' AND payload_hash = :payload_hash "
+                "AND result_binding_id = :result_binding_id AND secondary_binding_id IS NULL"
+            ),
+            {**receipt, "new_hash": new_hash},
+        )
+        if result.rowcount != 1:
+            raise AtomicMemoryMigrationError((
+                f"{binding['binding_id']}: grant creation receipt changed during maintenance",
+            ))
+        migrated += 1
+    return migrated
+
+
 def _content(row: Mapping[str, Any]) -> _AtomicContent:
     return _AtomicContent(kind=str(row["kind"]), text=str(row["text"]))
 
@@ -492,6 +594,7 @@ async def _inventory(connection: AsyncConnection) -> _Inventory:  # noqa: C901
         "pc_sources",
         "pc_access_owners",
         "pc_access_relationships",
+        "pc_access_idempotency",
     }
     if snapshots and not required <= tables:
         return _Inventory(
@@ -788,6 +891,12 @@ async def _validate_legacy_bindings(connection: AsyncConnection, key: tuple[str,
             == _digest(_resource_key(key[0], "memory", key[1], binding["selector_entry_id"])),
             "legacy grant resource identity hash differs",
         )
+        await _grant_creation_receipt(
+            connection,
+            binding,
+            _resource_key(key[0], "memory", key[1], binding["selector_entry_id"]),
+            _resource_key(key[0], _FAMILY, legacy_entry_artifact_id(key[0], key[1], binding["selector_entry_id"])),
+        )
 
 
 async def plan_atomic_memory_migration(
@@ -810,7 +919,11 @@ async def plan_atomic_memory_migration(
     return AtomicMemoryMigrationReport(
         action="plan",
         ready=verification is not None and verification.ready,
-        counts={**inventory.counts, "pending_entries": pending},
+        counts={
+            **inventory.counts,
+            **({} if verification is None else verification.counts),
+            "pending_entries": pending,
+        },
         errors=inventory.errors if verification is None else verification.errors,
         processing_snapshot_hash=inventory.processing_snapshot_hash,
     )
@@ -1164,6 +1277,7 @@ async def apply_atomic_memory_migration(
         index, load_tags=_load_tags, load_security=_load_security, embedding_model=embedding_model
     )
     imported = 0
+    migrated_grant_receipts = 0
     for entry in inventory.entries:
         async with database.transaction() as connection:
             head, _state = await _head_and_state(connection, entry)
@@ -1188,7 +1302,9 @@ async def apply_atomic_memory_migration(
                 or sha256(bytes(source["content"])).hexdigest() != entry.collection_content_hash
             ):
                 raise AtomicMemoryMigrationError(("legacy collection head changed during maintenance",))
-            if not await _import_entry(connection, entry):
+            imported_entry = await _import_entry(connection, entry)
+            migrated_grant_receipts += await _migrate_grant_receipts(connection, entry)
+            if not imported_entry:
                 continue
             if prepared is not None:
                 record = SimpleNamespace(
@@ -1224,6 +1340,7 @@ async def apply_atomic_memory_migration(
             "counts": {
                 **report.counts,
                 "imported_entries": imported,
+                "migrated_grant_receipts": migrated_grant_receipts,
                 "elapsed_ms": int((perf_counter() - started) * 1000),
             },
         }
@@ -1268,6 +1385,7 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
             processing_snapshot_hash=inventory.processing_snapshot_hash,
         )
     verified = 0
+    pending_grant_receipts = 0
     for entry in inventory.entries:
         prefix = f"{entry.scope_id}/{entry.memory_id}/{entry.entry_id}"
         previous_errors = len(errors)
@@ -1304,6 +1422,18 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                 entry=entry.entry_id,
             )
             _require(not legacy_bindings, "legacy grants were not retargeted")
+            for binding in await _mapped_grants(connection, entry):
+                creation = await _grant_creation_receipt(
+                    connection,
+                    binding,
+                    _resource_key(entry.scope_id, "memory", entry.memory_id, entry.entry_id),
+                    _resource_key(entry.scope_id, _FAMILY, entry.artifact_id),
+                )
+                if creation is not None and creation[0]["payload_hash"] != creation[1]:
+                    pending_grant_receipts += 1
+                    errors.append(
+                        f"{prefix}: {binding['binding_id']}: grant creation receipt uses legacy resource; rerun apply"
+                    )
             if not check_projection:
                 verified += len(errors) == previous_errors
                 continue
@@ -1393,7 +1523,11 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
     return AtomicMemoryMigrationReport(
         action="verify",
         ready=not errors,
-        counts={**inventory.counts, "verified_entries": verified},
+        counts={
+            **inventory.counts,
+            "verified_entries": verified,
+            "pending_grant_receipts": pending_grant_receipts,
+        },
         errors=tuple(errors),
         processing_snapshot_hash=inventory.processing_snapshot_hash,
     )

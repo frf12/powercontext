@@ -4787,7 +4787,7 @@ components:
         text:
           type: string
           minLength: 1
-          maxLength: 8192
+          description: Memory text is NFC-normalized and trimmed before enforcing an 8192 UTF-8 byte limit.
     CreateAtomicMemoryArtifactRequest:
       type: object
       additionalProperties: false

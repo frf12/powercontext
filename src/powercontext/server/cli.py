@@ -20,10 +20,12 @@ import asyncio
 import signal
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
+from sqlite3 import SQLITE_CANTOPEN
 from typing import Annotated, Any, Literal
 
 import typer
 from pydantic import ValidationError
+from sqlalchemy.exc import OperationalError
 
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
     apply_atomic_memory_migration,
@@ -184,7 +186,20 @@ def atomic_memory_migrate(
     if action == "apply" and not maintenance_confirmed:
         raise typer.BadParameter("apply requires --maintenance-confirmed after stopping every old writer")  # noqa: TRY003
     with server_settings_context(env_file=env_file) as settings:
-        ready = asyncio.run(_atomic_memory_maintenance(settings, action, maintenance_confirmed=maintenance_confirmed))
+        try:
+            ready = asyncio.run(
+                _atomic_memory_maintenance(settings, action, maintenance_confirmed=maintenance_confirmed)
+            )
+        except OperationalError as error:
+            sqlite_code = getattr(error.orig, "sqlite_errorcode", None)
+            if (
+                action == "apply"
+                or not isinstance(settings.database, SQLiteConfig)
+                or not isinstance(sqlite_code, int)
+                or sqlite_code & 0xFF != SQLITE_CANTOPEN
+            ):
+                raise
+            raise typer.BadParameter("plan and verify require a readable existing SQLite database") from error  # noqa: TRY003
     if not ready:
         raise typer.Exit(code=1)
 
@@ -233,10 +248,15 @@ async def _atomic_memory_maintenance(
             normalization=inference.embedding_normalization,
         )
     database = settings.database
+    read_only = action in {"plan", "verify"}
     if isinstance(database, SQLiteConfig):
         if database.is_in_memory:
             raise typer.BadParameter("offline migration requires a persistent database")  # noqa: TRY003
-        opened = SQLiteProfile.open(database, tables=(), load_vector_extension=embedding_profile is not None)
+        opened = (
+            SQLiteProfile.open_readonly(database, load_vector_extension=embedding_profile is not None)
+            if read_only
+            else SQLiteProfile.open(database, tables=(), load_vector_extension=embedding_profile is not None)
+        )
         index = SQLiteAtomicMemoryIndex(embedding_profile)
     elif isinstance(database, OceanBaseConfig):
         opened = OceanBaseProfile.open(database, tables=())
