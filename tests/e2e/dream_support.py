@@ -123,8 +123,8 @@ class Controller:
 
 
 @asynccontextmanager
-async def open_dream_runtime(config, **kwargs):
-    controller = Controller()
+async def open_dream_runtime(config, *, controller: Controller | None = None, **kwargs):
+    controller = Controller() if controller is None else controller
     bindings = tuple(
         ArtifactProcessingBinding(
             binding_name=binding,

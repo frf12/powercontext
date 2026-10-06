@@ -1360,17 +1360,74 @@ def test_multiple_entries_and_experience_reusing_a_source_keep_one_root(database
     asyncio.run(scenario())
 
 
-def test_superseded_supervisor_cannot_overwrite_recovered_result(database: DatabaseConfig) -> None:
+def test_superseded_supervisor_cannot_overwrite_recovered_result(  # noqa: C901 - controlled late return and fenced handoff
+    database: DatabaseConfig,
+) -> None:
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import update
 
     from powercontext.builtin.persistence.tables import ARTIFACT_PROCESSING_LEASES_TABLE
+    from powercontext.builtin.runtime.processing_contracts import ArtifactProcessingWorkerOutcome
+    from tests.e2e.dream_support import Controller, Handle
+
+    class LateGenerator(Generator):
+        def __init__(self) -> None:
+            super().__init__(blocked=True)
+            self.cancel_received = asyncio.Event()
+            self.returned = asyncio.Event()
+
+        async def generate(self, value: DreamGenerationInput) -> GenerationResult[DreamPlan]:
+            model_call = asyncio.create_task(super().generate(value))
+            while True:
+                try:
+                    result = await asyncio.shield(model_call)
+                except asyncio.CancelledError:
+                    if model_call.done():
+                        raise
+                    self.cancel_received.set()
+                else:
+                    self.returned.set()
+                    return result
+
+    class LateHandle(Handle):
+        def __init__(self, controller, assignment):
+            super().__init__(controller, assignment)
+            self.cancel_requested = False
+
+        async def terminate(self):
+            if not self.cancel_requested:
+                self.cancel_requested = True
+                self.task.cancel()
+            try:
+                # The remote model request can outlive cancellation. Shield its
+                # task so the Supervisor's cleanup deadline remains effective.
+                await asyncio.shield(self.task)
+            except asyncio.CancelledError:
+                if self.task.cancelled():
+                    return
+                if not self.task.done():
+                    self.controller.termination_interrupted.set()
+                raise
+
+    class LateController(Controller):
+        def __init__(self) -> None:
+            super().__init__()
+            self.termination_interrupted = asyncio.Event()
+
+        async def start(self, assignment):
+            handle = LateHandle(self, assignment)
+            self.handles.append(handle)
+            return handle
 
     async def scenario() -> None:
-        delayed = Generator(blocked=True)
+        delayed = LateGenerator()
+        original_controller = LateController()
         async with open_builtin_runtime(
-            config(database), candidate_pipeline=atomic_memory_pipeline(MemoryPipeline()), dream_generator=delayed
+            config(database),
+            candidate_pipeline=atomic_memory_pipeline(MemoryPipeline()),
+            dream_generator=delayed,
+            controller=original_controller,
         ) as original:
             scope, _, citation = await seed(original)
             accepted = await original.dream.for_scope(scope).create(
@@ -1392,6 +1449,8 @@ def test_superseded_supervisor_cannot_overwrite_recovered_result(database: Datab
                             lease_expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1),
                         )
                     )
+                assert original.artifact_processing_supervisor is not None
+                original.artifact_processing_supervisor.wake()
                 replacement = Generator()
                 async with open_builtin_runtime(config(database), dream_generator=replacement) as recovered:
                     await process_pending(recovered)
@@ -1403,9 +1462,21 @@ def test_superseded_supervisor_cannot_overwrite_recovered_result(database: Datab
                             await asyncio.sleep(0.02)
                     assert run.status == "succeeded"
                     assert run.attempt_count == run.usage.model_calls == 2
+                    await asyncio.wait_for(delayed.cancel_received.wait(), timeout=10)
+                    await asyncio.wait_for(original_controller.termination_interrupted.wait(), timeout=10)
+                    assert not worker.done()
+                    assert not delayed.returned.is_set()
                     delayed.release.set()
                     with suppress(asyncio.CancelledError):
-                        await worker
+                        await asyncio.wait_for(worker, timeout=10)
+                    assert delayed.returned.is_set()
+                    assert all(
+                        handle.task.done() and not handle.task.cancelled() for handle in original_controller.handles
+                    )
+                    assert all(
+                        handle.task.result().outcome is ArtifactProcessingWorkerOutcome.LEADERSHIP_LOST
+                        for handle in original_controller.handles
+                    )
                     assert await recovered.dream.for_scope(scope).get(GetDreamRunRequest(run_id=run.run_id)) == run
                     candidates = await recovered.review.for_scope(scope).list(ListArtifactCandidatesRequest())
                     assert len(candidates.candidates) == 1
@@ -1413,7 +1484,7 @@ def test_superseded_supervisor_cannot_overwrite_recovered_result(database: Datab
             finally:
                 delayed.release.set()
                 with suppress(asyncio.CancelledError):
-                    await worker
+                    await asyncio.wait_for(worker, timeout=10)
 
     asyncio.run(scenario())
 
