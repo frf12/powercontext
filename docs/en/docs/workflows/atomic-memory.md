@@ -27,8 +27,10 @@ Submit to `POST /v1/scopes/S/artifacts`:
 ```
 
 The server assigns the identity, creates revision 1 and returns the content `ETag`. `kind` is an application-defined
-name of at most 128 characters. `text` must be nonblank and fit within 8192 UTF-8 bytes. Ordinary writes do not accept
-merge metadata named `creation`.
+name of at most 128 characters. New writes normalize `text` to Unicode NFC and trim surrounding whitespace; the
+result must be nonempty and fit within 8192 UTF-8 bytes. Existing content and historical revisions remain unchanged
+when read. Restoring a revision preserves its original text without applying the normalization rules for new writes.
+Ordinary writes do not accept merge metadata named `creation`.
 
 `GET /v1/scopes/S/artifacts/atomic-memory/M` reads the current content and `ETag`.
 `GET /v1/scopes/S/artifacts/atomic-memory/M/revisions/1` always reads that exact historical revision.

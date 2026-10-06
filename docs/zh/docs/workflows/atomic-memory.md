@@ -26,7 +26,9 @@ Atomic Memory 将每条事实、偏好或决策保存为独立的 `atomic-memory
 ```
 
 服务端分配身份，创建 revision 1，并返回正文 `ETag`。`kind` 是应用自定义名称，最多 128 字符；
-`text` 必须非空，最多 8192 个 UTF-8 字节。普通写入不接受合并标记 `creation`。
+新写入先对 `text` 做 Unicode NFC 规范化并去掉首尾空白，结果必须非空且不超过 8192 个 UTF-8 字节。
+已有正文及历史版本按原样读取；恢复旧版本保留当时的正文，不重新套用新写入的规范化规则。
+普通写入不接受合并标记 `creation`。
 
 `GET /v1/scopes/S/artifacts/atomic-memory/M` 读取当前正文与 `ETag`；
 `GET /v1/scopes/S/artifacts/atomic-memory/M/revisions/1` 始终读取精确历史。

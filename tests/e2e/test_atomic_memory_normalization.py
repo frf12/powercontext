@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 from hashlib import sha256
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from powercontext.builtin.persistence.tables import ARTIFACTS_TABLE
 from powercontext.builtin.records import ArtifactWrite
 from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
 from powercontext.builtin.runtime.atomic_memory_rebuild import rebuild_atomic_memory_projection
+from powercontext.builtin.scope import ScopeDraft
 from powercontext.client import PowerContextClient
 from powercontext.http import (
     AtomicMemoryInput,
@@ -128,20 +131,34 @@ def test_atomic_memory_new_writes_normalize_stored_content_and_search_projection
     asyncio.run(scenario())
 
 
-def test_atomic_memory_history_read_rebuild_and_restore_preserve_original_content(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "historical_text",
+    ["  Cafe\N{COMBINING ACUTE ACCENT} preference  ", "preference " + "\N{DEVANAGARI LETTER QA}" * 1_366],
+    ids=["nfc-shrinks", "nfc-expands-past-limit"],
+)
+def test_atomic_memory_history_read_rebuild_and_restore_preserve_original_content(
+    tmp_path: Path, historical_text: str
+) -> None:
     async def scenario() -> None:
         async with open_builtin_contexts(
             BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'history.db'}"))
         ) as contexts:
-            await contexts.get("project")
+            scope_id = (
+                await contexts.scopes.create(
+                    ScopeDraft(title="History", summary="Historical text compatibility", idempotency_key="history")
+                )
+            ).scope_id
+            await contexts.get(scope_id)
             created = await contexts.records.create_artifact(
-                "project", "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "Original preference"})
+                scope_id, "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "Original preference"})
             )
-            historical_text = "  Cafe\N{COMBINING ACUTE ACCENT} preference  "
-            historical_content = AtomicMemoryContent(kind="fact", text=historical_text)
-            payload = historical_content.model_dump_json(by_alias=True).encode()
+            payload = json.dumps(
+                {"schema": "powercontext.atomic-memory.v1", "kind": "fact", "text": historical_text, "creation": None},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
             identity = (
-                ARTIFACTS_TABLE.c.scope_id == "project",
+                ARTIFACTS_TABLE.c.scope_id == scope_id,
                 ARTIFACTS_TABLE.c.family == "atomic-memory",
                 ARTIFACTS_TABLE.c.artifact_id == created.artifact_id,
                 ARTIFACTS_TABLE.c.revision == 1,
@@ -150,8 +167,8 @@ def test_atomic_memory_history_read_rebuild_and_restore_preserve_original_conten
             async with contexts.database.transaction() as connection:
                 await connection.execute(update(ARTIFACTS_TABLE).where(*identity).values(content=payload))
 
-            memory = contexts.atomic_memory.for_scope("project")
-            record = await contexts.records.get_artifact_revision("project", "atomic-memory", created.artifact_id, 1)
+            memory = contexts.atomic_memory.for_scope(scope_id)
+            record = await contexts.records.get_artifact_revision(scope_id, "atomic-memory", created.artifact_id, 1)
             assert record.content["text"] == historical_text
             assert record.content_digest == f"sha256:{sha256(rfc8785.dumps(record.content)).hexdigest()}"
             assert (await memory.get(created.artifact_id)).artifact.content.text == historical_text
@@ -166,7 +183,7 @@ def test_atomic_memory_history_read_rebuild_and_restore_preserve_original_conten
                 current = (
                     await connection.execute(
                         select(index_table.c.text, index_table.c.content_hash).where(
-                            index_table.c.scope_id == "project", index_table.c.artifact_id == created.artifact_id
+                            index_table.c.scope_id == scope_id, index_table.c.artifact_id == created.artifact_id
                         )
                     )
                 ).one()
@@ -175,7 +192,7 @@ def test_atomic_memory_history_read_rebuild_and_restore_preserve_original_conten
                 assert await connection.scalar(select(ARTIFACTS_TABLE.c.content).where(*identity)) == payload
 
             await contexts.records.replace_artifact(
-                "project",
+                scope_id,
                 "atomic-memory",
                 created.artifact_id,
                 '"revision:1"',
@@ -185,9 +202,96 @@ def test_atomic_memory_history_read_rebuild_and_restore_preserve_original_conten
             assert restored.primary.artifact.revision == 3
             assert restored.primary.artifact.content.text == historical_text
             assert (await memory.search("preference", mode="text")).hits[0].text == historical_text
-            historical = await contexts.records.get_artifact_revision(
-                "project", "atomic-memory", created.artifact_id, 1
-            )
+            historical = await contexts.records.get_artifact_revision(scope_id, "atomic-memory", created.artifact_id, 1)
             assert historical == record
+
+        app = create_server_app(
+            settings=ServerSettings(
+                database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'history.db'}"),
+                mcp=McpConfig(enabled=False),
+            )
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://testserver"
+            ) as transport,
+        ):
+            artifact_path = f"/v1/scopes/{scope_id}/artifacts/atomic-memory/{created.artifact_id}"
+            for suffix in ("", "/revisions/1", "/state"):
+                response = await transport.get(artifact_path + suffix)
+                assert response.status_code == 200, response.text
+                if suffix != "/state":
+                    assert response.json()["content"]["text"] == historical_text
+                else:
+                    assert response.json()["artifact"]["artifact_id"] == created.artifact_id
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["create", "replace", "merge"])
+def test_atomic_memory_rejects_new_text_that_expands_past_limit_without_writes(tmp_path: Path, operation: str) -> None:
+    database = tmp_path / "invalid-write.db"
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{database}"), mcp=McpConfig(enabled=False)
+        )
+    )
+
+    def snapshot() -> dict[str, list[tuple[object, ...]]]:
+        with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+            return {
+                table: connection.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall()  # noqa: S608
+                for table in (
+                    "pc_artifacts",
+                    "pc_artifact_heads",
+                    "pc_atomic_memory_states",
+                    "pc_atomic_memory_current",
+                )
+            }
+
+    async def scenario() -> None:
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://testserver"
+            ) as transport,
+        ):
+            client = PowerContextClient("http://testserver", http_client=transport, trust_transport_security=True)
+            scope_id = (await client.get_default_scope()).scope_id
+            inputs = []
+            for body in ("First preference", "Second preference"):
+                remembered = await client.remember_memory(
+                    RememberMemoryRequest(scope_id=scope_id, kind="fact", text=body)
+                )
+                inputs.append(remembered.records[0])
+            artifact_path = f"/v1/scopes/{scope_id}/artifacts/atomic-memory/{inputs[0].artifact.artifact_id}"
+            head = await transport.get(artifact_path)
+            before = snapshot()
+            content = {"kind": "fact", "text": "\N{DEVANAGARI LETTER QA}" * 1_366}
+            if operation == "create":
+                response = await transport.post(
+                    f"/v1/scopes/{scope_id}/artifacts", json={"family": "atomic-memory", "content": content}
+                )
+            elif operation == "replace":
+                response = await transport.put(
+                    artifact_path, headers={"If-Match": head.headers["ETag"]}, json={"content": content}
+                )
+            else:
+                response = await transport.post(
+                    "/v1/atomic-memory/merges",
+                    json={
+                        "scope_id": scope_id,
+                        "inputs": [
+                            {"artifact": item.artifact.model_dump(mode="json"), "state_version": item.state_version}
+                            for item in inputs
+                        ],
+                        "content": content,
+                    },
+                )
+            assert response.status_code == 422, response.text
+            assert response.json()["error"]["code"] == "invalid_request"
+            assert response.json()["error"]["details"]["code"] == "text-too-long"
+            assert snapshot() == before
 
     asyncio.run(scenario())

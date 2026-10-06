@@ -24,7 +24,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from powercontext.artifacts import Artifact, ArtifactDraft, ArtifactRef
-from powercontext.builtin.artifacts.memory.canonical import normalize_text
+from powercontext.builtin.artifacts.memory.canonical import canonical_error_code, normalize_text
 
 
 class AtomicMemoryCreation(BaseModel):
@@ -63,7 +63,13 @@ class AtomicMemoryContent(BaseModel):
     @field_validator("text")
     @classmethod
     def valid_text(cls, value: str) -> str:
-        normalize_text(value)
+        try:
+            normalize_text(value)
+        except ValueError as error:
+            # Older revisions used the original UTF-8 byte bound. NFC can expand
+            # that valid historical text past the current normalized byte bound.
+            if canonical_error_code(error) != "text-too-long" or len(value.encode("utf-8")) > 8_192:
+                raise
         # This model also decodes immutable revisions. Preserve their exact text;
         # the owning service normalizes new writes before preparing a draft.
         return value

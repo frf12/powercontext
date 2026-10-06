@@ -20,6 +20,13 @@ from pydantic import ValidationError
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 
 
+def test_atomic_memory_content_decodes_legacy_text_that_expands_under_nfc() -> None:
+    text = "\N{DEVANAGARI LETTER QA}" * 1_366
+    content = AtomicMemoryContent.model_validate({"kind": "fact", "text": text})
+
+    assert content.text == text
+
+
 @pytest.mark.parametrize(
     "text", [" " + "a" * 8_192 + " ", "e\N{COMBINING ACUTE ACCENT}" * 4_096], ids=["trimmed-limit", "nfc-limit"]
 )

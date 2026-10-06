@@ -50,7 +50,8 @@ from powercontext.builtin.artifacts.atomic_memory.restoration import (
     calculate_restoration,
     merge_inputs,
 )
-from powercontext.builtin.artifacts.memory.canonical import normalize_text
+from powercontext.builtin.artifacts.memory.canonical import canonical_error_code, normalize_text
+from powercontext.builtin.artifacts.memory.errors import InvalidMemoryCandidateError
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.atomic_memory import AtomicMemoryStateRepository
 from powercontext.builtin.persistence.atomic_memory_index import PreparedAtomicMemoryProjection
@@ -622,7 +623,13 @@ class AtomicMemoryService:
         evidence = lineage or ArtifactLineage()
         if evidence.memory_citations or evidence.publication_source is not None:
             raise AtomicMemoryRelationError("Atomic Memory accepts direct Sources and exact in-Scope Artifacts")  # noqa: TRY003
-        normalized_content = content.model_copy(update={"text": normalize_text(content.text)})
+        try:
+            text = normalize_text(content.text)
+        except (TypeError, ValueError) as error:
+            raise InvalidMemoryCandidateError(
+                "canonical", str(error), canonical_code=canonical_error_code(error)
+            ) from error
+        normalized_content = content.model_copy(update={"text": text})
         return AtomicMemoryDraft(content=normalized_content, sources=evidence.sources, artifacts=evidence.artifacts)
 
     @staticmethod
