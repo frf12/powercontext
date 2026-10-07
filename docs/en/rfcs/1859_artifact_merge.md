@@ -6,8 +6,9 @@
 
 Extract Atomic Memory's merge and undo into shared operations backed by one common set of database tables for merge state,
 input-to-result relationships, and undo records. Every Artifact Family can integrate with and reuse these operations and tables
-without creating its own merge, relationship, or undo tables. All Artifact creation and revision use the common write layer,
-with content and revisions remaining in existing Artifact storage. Each Artifact's business logic decides whether to initiate a merge.
+without creating its own merge, relationship, or undo tables. All Artifact creation and revision use the common write layer
+(`ArtifactRepository` and its shared persistence implementation), with content and revisions remaining in existing Artifact storage.
+Each Artifact's business logic decides whether to initiate a merge.
 
 # Motivation
 
