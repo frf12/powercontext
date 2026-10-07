@@ -1,6 +1,6 @@
 - Proposal Name: `artifact_merge`
 - Start Date: 2026-10-07
-- RFC PR: [oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- RFC PR: [oceanbase/powercontext#1859](https://github.com/oceanbase/powercontext/pull/1859)
 
 # Summary
 
