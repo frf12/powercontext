@@ -85,10 +85,18 @@ write surface. Legacy capacity and compact settings do not constrain Atomic Memo
 
 Legacy collection artifacts, entry versions, citations, Source records and lifecycle intervals remain
 available. Imported revisions reference the exact old collection revision that created each entry version
-and retain exact Artifact evidence. Revision two and later also reference their imported predecessor,
-keeping accumulated entry Sources reachable through the exact revision chain. Historical Source evidence
-resolves through retained history. The task
-neither reevaluates today's generation eligibility nor rebinds old lineage_only Sources or invents timestamps.
+and retain exact Artifact evidence. Readers verify the deterministic Atomic identity and revision against
+the anchored collection manifest and its immutable entry version, then follow only that entry's exact
+Source and Artifact evidence. The collection anchor remains readable provenance; its other entries'
+Sources do not become evidence for the imported memory. Revision two and later also reference their
+imported predecessor, keeping accumulated entry evidence reachable through the exact revision chain.
+Dream and automatic extraction use the same entry selection. Ordinary explicit collection evidence keeps
+its existing meaning. Historical lineage_only Sources retain their original targets and remain provenance
+without entering model input. The task neither rebinds old Sources nor invents timestamps.
+
+This evidence reading rule also applies to databases already imported by this migration. Upgrading the
+reader corrects evidence resolution without changing imported content or lineage rows. Plan, verify and
+repeat apply continue to verify the same immutable import representation.
 
 Cursors, CAS generations, high-water marks, pending/flush requests, accepted tasks and scheduling keys remain
 unchanged. Family `memory` and binding `memory-source-window` remain scheduling aliases. Old leases are

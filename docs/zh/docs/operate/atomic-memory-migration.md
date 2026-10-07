@@ -78,9 +78,15 @@ candidate，也会阻断，必须先按原契约明确处置。
 
 旧集合 Artifact、entry version、citation、Source 和已有生命周期区间全部保留。
 每个导入 revision 引用产生该 entry version 的精确旧集合 revision，并保留旧 Artifact 依据。
-第二个及后续 revision 还引用同一新 Artifact 的前一个 revision，使旧 entry 累积的 Source 依据
-沿精确版本链保持可达。它通过保留的历史解析原 Source 证据；迁移不重新评估今天的生成资格，不改变旧 lineage_only
-Source 的目标，也不生成替代历史时间。
+读取时，根据该集合的 manifest 和不可变 entry version 核验确定性的 Atomic 身份与 revision，
+只展开这条 entry 原有的精确 Source 和 Artifact 依据。集合锚点仍是可读取的历史记录，
+同集合其他 entry 的 Source 不会成为这条记忆的依据。第二个及后续 revision 还引用同一新 Artifact
+的前一个 revision，使旧 entry 累积的依据沿精确版本链保持可达。Dream 和自动抽取使用相同的 entry 选择规则；
+普通记忆明确引用旧集合时，保留该引用原有含义。旧 lineage_only Source 保留原目标，
+仍可溯源但不进入模型输入。迁移不改变旧 Source 的绑定，也不生成替代历史时间。
+
+已经完成此迁移的数据库也适用这一读取规则。升级读取代码即可修正证据解析，不改写已导入内容或 lineage 行；
+plan、verify 和重复 apply 继续核验同一不可变导入表示。
 
 Source Cursor、CAS generation、高水位、pending/flush 请求、已接受任务和旧调度键保持原值。
 `memory` Family 与 `memory-source-window` binding 继续作为调度兼容身份。

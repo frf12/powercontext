@@ -30,7 +30,11 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
     project_atomic_memory_evidence,
     require_atomic_memory_pipeline,
 )
-from powercontext.builtin.artifacts.atomic_memory.models import AtomicMemoryContent, AtomicMemoryStateValue
+from powercontext.builtin.artifacts.atomic_memory.models import (
+    AtomicMemory,
+    AtomicMemoryContent,
+    AtomicMemoryStateValue,
+)
 from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
     ATOMIC_MEMORY_RECONCILIATION_INSTRUCTIONS,
     AtomicMemoryReconciliationOutput,
@@ -40,8 +44,14 @@ from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
 from powercontext.builtin.artifacts.memory.canonical import canonical_embedding
 from powercontext.builtin.artifacts.prompt.errors import PromptError
 from powercontext.builtin.artifacts.prompt.service import PromptService, current_prompt
-from powercontext.builtin.inference import InferenceTimeoutError, InferenceUnavailableError, InvalidInferenceOutputError
+from powercontext.builtin.inference import (
+    InferenceTimeoutError,
+    InferenceUnavailableError,
+    InvalidInferenceOutputError,
+    embed_query,
+)
 from powercontext.builtin.persistence.atomic_memory_index import AtomicMemoryIndexError, AtomicMemoryRelatedRequest
+from powercontext.builtin.persistence.atomic_memory_legacy_evidence import read_imported_memory_evidence
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.errors import GenerationConflictError
 from powercontext.builtin.persistence.memory_windows import MemorySourceWindowRepository
@@ -484,7 +494,7 @@ class AtomicMemorySourceWindowProcessor:
         if mode in {"vector", "hybrid"}:
             try:
                 vector = await self._query_vector(query)
-            except AtomicMemoryIndexError:
+            except (AtomicMemoryIndexError, InferenceUnavailableError, InferenceTimeoutError):
                 if not self.config.related_fts_fallback:
                     raise
                 mode = "fts"
@@ -511,7 +521,7 @@ class AtomicMemorySourceWindowProcessor:
         model = self.application.embedding_model
         if model is None or profile is None or model.profile != profile:
             raise AtomicMemoryIndexError("embedding-profile", "Related-memory vector profile is unavailable")
-        result = await model.embed((query,))
+        result = await embed_query(model, (query,))
         if len(result.vectors) != 1:
             raise AtomicMemoryIndexError("embedding-result", "Related query requires one vector")
         return canonical_embedding(result.vectors[0], dimension=profile.dimension, normalization=profile.normalization)
@@ -519,21 +529,33 @@ class AtomicMemorySourceWindowProcessor:
     async def _supporting_sources(self, connection, scope_id, artifact, context):
         pending = [artifact]
         refs: dict[tuple[str, str, int], ArtifactRef] = {}
+        visited: set[tuple[str, str, int]] = set()
         source_refs = []
         while pending:
             current = pending.pop()
             ref_key = (current.family, current.artifact_id, current.revision)
-            if ref_key in refs:
+            if ref_key in visited:
                 continue
+            visited.add(ref_key)
             refs[ref_key] = current.as_ref()
-            source_refs.extend(current.lineage.sources)
-            for ref in current.lineage.artifacts:
-                if (ref.family, ref.artifact_id, ref.revision) not in refs:
+            lineage = current.lineage
+            if isinstance(current, AtomicMemory):
+                imported = await read_imported_memory_evidence(
+                    connection, self.application.artifacts, scope_id, current
+                )
+                if imported is not None:
+                    await self._authorize_artifact(connection, scope_id, context, imported.anchor)
+                    anchor = imported.anchor
+                    refs[(anchor.family, anchor.artifact_id, anchor.revision)] = anchor
+                    lineage = imported.lineage
+            source_refs.extend(lineage.sources)
+            for ref in lineage.artifacts:
+                if (ref.family, ref.artifact_id, ref.revision) not in visited:
                     await self._authorize_artifact(connection, scope_id, context, ref)
                     pending.append(await self.application.artifacts.get(connection, scope_id, ref))
         rows = await self.sources.get_many(connection, scope_id, tuple(source_refs))
         await self.application.security.authorize_sources(connection, scope_id, context, tuple(row.ref for row in rows))
-        return rows, tuple(refs.values())
+        return tuple(row for row in rows if is_generation_eligible(row.value)), tuple(refs.values())
 
     async def _authorize_model_input(
         self, scope_id, context, reads, source_refs, artifact_refs=(), *, generation_sources=()

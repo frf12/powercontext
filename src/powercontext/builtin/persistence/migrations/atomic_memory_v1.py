@@ -939,6 +939,9 @@ async def _insert(connection: AsyncConnection, table: str, columns: tuple[str, .
 
 
 def _imported_refs(entry: _Entry, row: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    # The creating collection is an immutable provenance anchor, not every
+    # entry's generation evidence. Runtime readers resolve this imported
+    # identity against its exact retained entry version before following Sources.
     values = [
         {"family": "memory", "artifact_id": entry.memory_id, "revision": row["created_in_revision"]},
         *_decode(row["artifact_refs"]),

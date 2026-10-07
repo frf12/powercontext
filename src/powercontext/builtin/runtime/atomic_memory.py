@@ -343,22 +343,29 @@ class ScopedAtomicMemory:
             raise InvalidBaseAccessRequestError("mode", "must be auto, text, vector, or hybrid")
         if kind is not None:
             AtomicMemoryContent(kind=kind, text="validation")
-        filters = await application.security.filters(self.scope_id, self._context(context), tags=tag_filter)
-        filters = replace(filters, kind=kind)
+        selected_context = self._context(context)
         mode, vector, query_embedding, embedding_calls = await self._resolve_query_embedding(
             query, mode, query_embedding, embedding_timeout_seconds, allow_embedding
         )
         profile = application.index.capabilities.embedding_profile if vector is not None else None
-        request = AtomicMemorySearchRequest(
-            query,
-            filters,
-            mode=cast(AtomicMemorySearchMode, "fts" if mode == "text" else mode),
-            limit=limit if application.reranker is None else max(limit, application.rerank_candidate_limit),
-            query_vector=vector,
-            embedding_profile=profile,
-            admission=admission,
-        )
-        async with application.database.transaction(consistent_snapshot=True) as connection:
+        # Inference finishes before authorization and retrieval share a read
+        # snapshot; decision audit writes flush only after that snapshot closes.
+        async with (
+            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            application.database.transaction(consistent_snapshot=True) as connection,
+        ):
+            filters = await application.security.filters(
+                self.scope_id, selected_context, tags=tag_filter, connection=connection
+            )
+            request = AtomicMemorySearchRequest(
+                query,
+                replace(filters, kind=kind),
+                mode=cast(AtomicMemorySearchMode, "fts" if mode == "text" else mode),
+                limit=limit if application.reranker is None else max(limit, application.rerank_candidate_limit),
+                query_vector=vector,
+                embedding_profile=profile,
+                admission=admission,
+            )
             channels = await application.index.search(connection, self.scope_id, request)
             hits = combine_atomic_memory_channels(channels)[: request.limit]
             await self._validate_search_hits(connection, hits, verify_vectors=vector is not None)
@@ -385,7 +392,7 @@ class ScopedAtomicMemory:
             limit,
             query_embedding if vector is not None else None,
             embedding_calls,
-            self._context(context),
+            selected_context,
         )
         return replace(page, recoverable=recoverable)
 

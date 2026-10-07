@@ -141,6 +141,7 @@ class AtomicMemorySecurity:
         *,
         tags: TagFilter | None = None,
         writable: bool = False,
+        connection: AsyncConnection | None = None,
     ) -> AtomicMemoryIndexFilter:
         scope_read = context.trusted_local and context.access is None
         groups: tuple[str, ...] = ()
@@ -158,7 +159,8 @@ class AtomicMemorySecurity:
                 supported = type(provider) is CasbinAuthorizationProvider
             if not supported:
                 raise AccessUnavailableError("atomic_memory_projection_authorization_unavailable")
-            decision = await context.access.check(
+            access = context.access if connection is None else context.access.with_connection(connection)
+            decision = await access.check(
                 context.principal, AccessAction.SCOPE_READ, ResourceRef.scope(scope_id), context=context.audit
             )
             scope_read = decision.allowed
