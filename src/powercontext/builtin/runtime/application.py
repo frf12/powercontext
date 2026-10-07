@@ -31,12 +31,10 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef
-from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
 from powercontext.builtin.artifacts.atomic_memory.models import (
     AtomicMemoryContent,
     AtomicMemoryMutationResult,
     AtomicMemoryRecord,
-    AtomicMemoryStateValue,
 )
 from powercontext.builtin.artifacts.experience import (
     EXPERIENCE_INCUBATION_WINDOW_LIMIT,
@@ -994,7 +992,7 @@ class ScopedContextApplication:
                 topic_reuse=topic_reuse,
                 round_zero=round_zero,
             )
-        await self._validate_atomic_candidates(memory_candidates)
+        memory_candidates = await self._available_atomic_candidates(memory_candidates)
         code = await self._code_candidates(request) if request.include_code else ()
         with self._runtime._stage(
             "context.build",
@@ -1049,22 +1047,19 @@ class ScopedContextApplication:
                     })
         return build, recall_effort
 
-    async def _validate_atomic_candidates(self, candidates: Sequence[PreparedMemoryCandidates]) -> None:
+    async def _available_atomic_candidates(
+        self, candidates: list[PreparedMemoryCandidates]
+    ) -> list[PreparedMemoryCandidates]:
         atomic = self._runtime.atomic_memory
         if atomic is None:
-            return
+            return candidates
+        available = []
         for group in candidates:
-            for candidate in group.hits:
-                hit = candidate.hit
-                current = await atomic.for_scope(group.scope_id).get(
-                    hit.artifact_ref.artifact_id, context=_PREPARE_ATOMIC_CONTEXT.get()
-                )
-                if (
-                    current.ref != hit.artifact_ref
-                    or current.state.state_version != hit.state_version
-                    or current.state.state is not AtomicMemoryStateValue.ACTIVE
-                ):
-                    raise AtomicMemoryConflictError("Memory changed before final Context assembly")  # noqa: TRY003
+            hits = await atomic.for_scope(group.scope_id)._filter_current_candidates(
+                group.hits, context=_PREPARE_ATOMIC_CONTEXT.get()
+            )
+            available.append(replace(group, hits=hits))
+        return available
 
     async def _code_candidates(self, request: PrepareContextRequest) -> tuple[PreparedCodeCandidate, ...]:
         try:
@@ -2459,6 +2454,10 @@ class ScopedAtomicMemoryApplication:
     async def get(self, artifact_id: str, *, revision: int | None = None, context=None):
         async with self._runtime._scope_operation(self.scope_id):
             return await self._scoped.get(artifact_id, revision=revision, context=context)
+
+    async def _filter_current_candidates(self, candidates, *, context=None):
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._scoped._filter_current_candidates(candidates, context=context)
 
     async def list(self, **kwargs):
         async with self._runtime._scope_operation(self.scope_id):

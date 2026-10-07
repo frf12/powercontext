@@ -252,7 +252,6 @@ class ScopedAtomicMemory:
         states = tuple(AtomicMemoryStateValue(state).value for state in states)
         if kind is not None:
             AtomicMemoryContent(kind=kind, text="validation")
-        await self.application.security.filters(self.scope_id, selected_context, tags=tag_filter)
         bound = {
             "endpoint": "atomic_memory_list",
             "version": 1,
@@ -273,6 +272,9 @@ class ScopedAtomicMemory:
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
             self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
+            await self.application.security.filters(
+                self.scope_id, selected_context, tags=tag_filter, connection=connection
+            )
             while len(items) <= limit:
                 statement = (
                     select(table.c.artifact_id)
@@ -552,26 +554,48 @@ class ScopedAtomicMemory:
         )
         return mode, vector, MemoryQueryEmbedding(vector, profile), 1
 
+    async def _filter_current_candidates(
+        self,
+        candidates: tuple[AtomicMemorySearchHit, ...],
+        *,
+        context: AtomicMemoryExecutionContext | None = None,
+    ) -> tuple[AtomicMemorySearchHit, ...]:
+        """Retain only exact, active candidates readable in one current authority snapshot."""
+        from powercontext.server.authz import AccessDeniedError
+
+        if not candidates:
+            return ()
+        application = self.application
+        selected_context = self._context(context)
+        available: list[AtomicMemorySearchHit] = []
+        async with (
+            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            application.database.transaction(consistent_snapshot=True) as connection,
+        ):
+            for candidate in candidates:
+                try:
+                    current = await application.service.get(
+                        connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, selected_context
+                    )
+                except AccessDeniedError:
+                    continue
+                if (
+                    current.ref == candidate.hit.artifact_ref
+                    and current.state.state_version == candidate.hit.state_version
+                    and current.state.state is AtomicMemoryStateValue.ACTIVE
+                ):
+                    available.append(candidate)
+        return tuple(available)
+
     async def _rerank(self, query, mode, candidates, limit, query_embedding, embedding_calls, context):
         application = self.application
         reranker = application.reranker
         if reranker is None or not candidates:
             return AtomicMemorySearchPage(mode, candidates[:limit], query_embedding, embedding_calls)
         # Reauthorize the exact candidate bodies immediately before an external rank model.
-        async with (
-            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
-            application.database.transaction(consistent_snapshot=True) as connection,
-        ):
-            for candidate in candidates:
-                current = await application.service.get(
-                    connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, context
-                )
-                if (
-                    current.ref != candidate.hit.artifact_ref
-                    or current.state.state_version != candidate.hit.state_version
-                    or current.state.state is not AtomicMemoryStateValue.ACTIVE
-                ):
-                    raise AtomicMemoryConflictError("Rerank candidate changed")  # noqa: TRY003
+        candidates = await self._filter_current_candidates(candidates, context=context)
+        if not candidates:
+            return AtomicMemorySearchPage(mode, (), query_embedding, embedding_calls)
         prompt = (
             None if application.prompt_context_factory is None else application.prompt_context_factory(self.scope_id)
         )
