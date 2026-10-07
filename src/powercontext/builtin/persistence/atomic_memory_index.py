@@ -28,14 +28,17 @@ from pydantic import BaseModel
 from sqlalchemy import Table, bindparam, delete, insert, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from powercontext.artifacts import ArtifactRef
+from powercontext.artifacts import ArtifactRef, ChannelScore
+from powercontext.artifacts.fusion import FusionCandidate, FusionChannel, RrfParameters, fuse_rrf
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.artifacts.memory.canonical import canonical_embedding, canonical_json, normalize_query
 from powercontext.builtin.artifacts.search import (
     DEFAULT_ADMISSION_FLOOR,
     AdmissionFloor,
+    InvalidSearchScore,
     analyze_text,
     fts_query_requirements,
+    lexical_search_score,
 )
 from powercontext.builtin.inference import EmbeddingModel
 from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
@@ -136,6 +139,8 @@ class AtomicMemoryIndexHit:
     text: str
     score: float
     distance: float | None = None
+    channel_scores: dict[str, ChannelScore] | None = None
+    retrieval_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -456,22 +461,36 @@ def atomic_memory_channel_hits(rows: Any, /, *, vector: bool = False) -> tuple[A
         raise AtomicMemoryIndexError(
             "incomplete-vector", "Eligible Atomic Memory vectors are incomplete or use another profile"
         )
-    return tuple(
-        AtomicMemoryIndexHit(
-            artifact_ref=ArtifactRef(
-                family="atomic-memory", artifact_id=str(row["artifact_id"]), revision=int(row["revision"])
-            ),
-            state_version=int(row["state_version"]),
-            kind=str(row["kind"]),
-            text=str(row["text"]),
-            score=-float(row["distance"]) if vector else float(row["score"]),
-            distance=float(row["distance"]) if vector else None,
+    hits = []
+    for row in rows:
+        distance = float(row["distance"]) if vector else None
+        channel_scores = None
+        if distance is not None:
+            if not math.isfinite(distance) or distance < 0:
+                raise InvalidSearchScore("Atomic vector distance must be finite and nonnegative")  # noqa: TRY003
+            channel_scores = {"vector": ChannelScore(distance, "l2_distance", False)}
+        elif "raw_score" in row:
+            _, observation = lexical_search_score(row["raw_score"], row.get("score_metric"))
+            channel_scores = {"text": observation}
+        hits.append(
+            AtomicMemoryIndexHit(
+                artifact_ref=ArtifactRef(
+                    family="atomic-memory", artifact_id=str(row["artifact_id"]), revision=int(row["revision"])
+                ),
+                state_version=int(row["state_version"]),
+                kind=str(row["kind"]),
+                text=str(row["text"]),
+                score=-distance if distance is not None else float(row["score"]),
+                distance=distance,
+                channel_scores=channel_scores,
+            )
         )
-        for row in rows
-    )
+    return tuple(hits)
 
 
-def combine_atomic_memory_channels(channels: AtomicMemorySearchChannels, /) -> tuple[AtomicMemoryIndexHit, ...]:
+def combine_atomic_memory_channels(
+    channels: AtomicMemorySearchChannels, /, *, fusion: RrfParameters | None = None, mode: str = "hybrid"
+) -> tuple[AtomicMemoryIndexHit, ...]:
     """Return exact-ref union with the RRF score used for its stable ordering.
 
     Vector distance remains independent of the fused ranking score. Revision or
@@ -481,7 +500,7 @@ def combine_atomic_memory_channels(channels: AtomicMemorySearchChannels, /) -> t
     versions: dict[str, tuple[int, int]] = {}
     hits: dict[str, AtomicMemoryIndexHit] = {}
     ranks: dict[str, float] = {}
-    for channel in (channels.fts, channels.vector):
+    for name, channel in (("text", channels.fts), ("vector", channels.vector)):
         for rank, hit in enumerate(channel):
             artifact_id = hit.artifact_ref.artifact_id
             version = (hit.artifact_ref.revision, hit.state_version)
@@ -489,9 +508,34 @@ def combine_atomic_memory_channels(channels: AtomicMemorySearchChannels, /) -> t
                 raise AtomicMemoryIndexError("stale-recall", "Atomic Memory changed between retrieval channels")
             versions[artifact_id] = version
             previous = hits.setdefault(artifact_id, hit)
+            if fusion is not None and (hit.channel_scores is None or name not in hit.channel_scores):
+                raise InvalidSearchScore("Atomic search channel did not return its raw score")  # noqa: TRY003
+            observations = dict(previous.channel_scores or {})
+            observations.update(hit.channel_scores or {})
+            if observations:
+                hits[artifact_id] = replace(previous, channel_scores=observations)
+                previous = hits[artifact_id]
             if previous.distance is None and hit.distance is not None:
                 hits[artifact_id] = replace(previous, distance=hit.distance)
             ranks[artifact_id] = ranks.get(artifact_id, 0.0) + 1.0 / (60 + rank + 1)
+    if fusion is not None:
+        enabled = ("text",) if mode == "text" else ("vector",) if mode == "vector" else ("text", "vector")
+        fused = fuse_rrf(
+            (
+                FusionChannel(
+                    name,
+                    fusion.weights.get(name, 1.0),
+                    tuple(
+                        FusionCandidate(hit.artifact_ref.artifact_id, rank)
+                        for rank, hit in enumerate(channels.fts if name == "text" else channels.vector, 1)
+                    ),
+                )
+                for name in enabled
+            ),
+            fusion,
+            tie_break=lambda identity: identity,
+        )
+        return tuple(replace(hits[item.key], score=float(item.raw_score), retrieval_score=item.score) for item in fused)
     return tuple(
         replace(hits[identity], score=ranks[identity])
         for identity in sorted(hits, key=lambda identity: (-ranks[identity], identity))

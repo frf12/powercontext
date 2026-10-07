@@ -145,6 +145,7 @@ from powercontext.builtin.runtime.artifact_processing import (
 )
 from powercontext.builtin.runtime.artifact_search import ArtifactSearchService
 from powercontext.builtin.runtime.atomic_memory_processing import AtomicMemoryProcessingConfig
+from powercontext.builtin.runtime.atomic_memory_search import AtomicArtifactSearcher
 from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.decision_model import (
@@ -636,6 +637,10 @@ async def open_builtin_runtime(
             capabilities=contexts.topic_memory_index.capabilities,
         )
         artifact_search.register(topic_memory_searcher, embedding_purpose=ModelUsagePurpose.TOPIC_MEMORY_RECALL)
+        artifact_search.register(
+            AtomicArtifactSearcher(application=contexts.atomic_memory),
+            embedding_purpose=ModelUsagePurpose.MEMORY_RECALL,
+        )
         runtime = await resources.enter_async_context(
             BuiltinRuntime(
                 code_service=await resources.enter_async_context(open_code_service(config.code, config.database)),

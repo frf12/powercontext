@@ -26,14 +26,17 @@ from uuid import uuid4
 
 from sqlalchemy import insert, select
 
+from powercontext.artifacts import ArtifactSearchContractError, ArtifactSearchMatch
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError, AtomicMemoryPreviewStaleError
 from powercontext.builtin.artifacts.atomic_memory.models import (
+    AtomicMemory,
     AtomicMemoryContent,
     AtomicMemoryRead,
     AtomicMemoryRecord,
     AtomicMemoryStateValue,
 )
 from powercontext.builtin.artifacts.atomic_memory.restoration import AtomicMemoryPreviewSigner
+from powercontext.builtin.artifacts.atomic_memory.search import AtomicArtifactSearchRequest, plan_atomic_search
 from powercontext.builtin.artifacts.atomic_memory.service import AtomicMemoryService
 from powercontext.builtin.artifacts.memory.canonical import canonical_embedding, canonical_json, normalize_query
 from powercontext.builtin.artifacts.memory.models import MemoryQueryEmbedding
@@ -63,6 +66,7 @@ from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_M
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_STATES_TABLE
 from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
 from powercontext.builtin.persistence.database import AsyncDatabase
+from powercontext.builtin.persistence.errors import RepositoryNotFoundError
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE, ARTIFACT_TAGS_TABLE
 from powercontext.builtin.persistence.tags import tag_predicate
 from powercontext.builtin.records import BaseOperationNotSupportedError, InvalidBaseAccessRequestError
@@ -112,6 +116,8 @@ class AtomicMemorySearchPage:
     admission: AdmissionCounts | None = None
     rerank: AtomicMemoryRerankTrace | None = None
     recoverable: bool = False
+    matches: tuple[ArtifactSearchMatch, ...] = ()
+    artifacts: tuple[AtomicMemory, ...] | None = None
 
 
 class AtomicMemoryApplication:
@@ -323,7 +329,7 @@ class ScopedAtomicMemory:
                     break
         return AtomicMemoryPage(tuple(items), self.application.cursor.encode(bound, last) if has_more else None)
 
-    async def search(
+    async def search(  # noqa: C901
         self,
         query: str,
         *,
@@ -337,8 +343,20 @@ class ScopedAtomicMemory:
         recovery_admission: AdmissionFloor | None = None,
         embedding_timeout_seconds: float | None = None,
         allow_embedding: bool = True,
+        artifact_request: AtomicArtifactSearchRequest | None = None,
     ) -> AtomicMemorySearchPage:
         application = self.application
+        plan = None
+        if artifact_request is not None:
+            model = application.embedding_model
+            plan = plan_atomic_search(
+                artifact_request,
+                application.index.capabilities,
+                embedding_profile=None if model is None else model.profile,
+            )
+            query, mode, limit = artifact_request.query, plan.mode, artifact_request.limit
+            kind, tag_filter = artifact_request.filters.kind, artifact_request.filters.as_tag_filter()
+            admission = artifact_request.admission.as_floor()
         _validate_limit(limit)
         normalize_query(query)
         if mode not in {"auto", "text", "vector", "hybrid"}:
@@ -347,7 +365,12 @@ class ScopedAtomicMemory:
             AtomicMemoryContent(kind=kind, text="validation")
         selected_context = self._context(context)
         mode, vector, query_embedding, embedding_calls = await self._resolve_query_embedding(
-            query, mode, query_embedding, embedding_timeout_seconds, allow_embedding
+            query,
+            mode,
+            query_embedding,
+            embedding_timeout_seconds,
+            allow_embedding,
+            public_search=artifact_request is not None,
         )
         profile = application.index.capabilities.embedding_profile if vector is not None else None
         # Inference finishes before authorization and retrieval share a read
@@ -369,8 +392,27 @@ class ScopedAtomicMemory:
                 admission=admission,
             )
             channels = await application.index.search(connection, self.scope_id, request)
-            hits = combine_atomic_memory_channels(channels)[: request.limit]
-            await self._validate_search_hits(connection, hits, verify_vectors=vector is not None)
+            hits = combine_atomic_memory_channels(
+                channels,
+                fusion=None if plan is None else plan.fusion,
+                mode=mode,
+            )
+            if artifact_request is not None and artifact_request.min_score is not None:
+                hits = tuple(
+                    hit
+                    for hit in hits
+                    if hit.retrieval_score is not None and hit.retrieval_score >= artifact_request.min_score
+                )
+            hits = hits[: request.limit]
+            try:
+                await self._validate_search_hits(connection, hits, verify_vectors=vector is not None)
+            except RepositoryNotFoundError as exc:
+                if artifact_request is None:
+                    raise
+                raise ArtifactSearchContractError("atomic-memory", "Selected exact revision is unavailable") from exc
+            artifacts = None
+            if artifact_request is not None:
+                artifacts = await self._search_artifacts(connection, hits)
             recoverable = recovery_admission is not None and await application.index.probe_recoverable(
                 connection, self.scope_id, request, recovery_admission
             )
@@ -395,8 +437,35 @@ class ScopedAtomicMemory:
             query_embedding if vector is not None else None,
             embedding_calls,
             selected_context,
+            artifact_request=artifact_request,
+            artifacts=artifacts,
         )
+        if artifact_request is not None:
+            matches = []
+            for item in page.hits:
+                if item.hit.retrieval_score is None:
+                    raise ArtifactSearchContractError("atomic-memory", "Selected result has no retrieval score")
+                matches.append(
+                    ArtifactSearchMatch(
+                        item.hit.artifact_ref,
+                        item.hit.retrieval_score,
+                        item.hit.channel_scores if artifact_request.include_scores else None,
+                    )
+                )
+            page = replace(page, matches=tuple(matches))
         return replace(page, recoverable=recoverable)
+
+    async def _search_artifacts(self, connection, hits) -> tuple[AtomicMemory, ...]:
+        artifacts = []
+        for hit in hits:
+            try:
+                artifact = await self.application.artifacts.get(connection, self.scope_id, hit.artifact_ref)
+            except RepositoryNotFoundError as exc:
+                raise ArtifactSearchContractError("atomic-memory", "Selected exact revision is unavailable") from exc
+            if not isinstance(artifact, AtomicMemory):
+                raise ArtifactSearchContractError("atomic-memory", "Selected result has another Artifact Family")
+            artifacts.append(artifact)
+        return tuple(artifacts)
 
     async def _validate_search_hits(self, connection, hits, *, verify_vectors):
         """Verify only returned candidates against one bounded authority snapshot.
@@ -524,7 +593,9 @@ class ScopedAtomicMemory:
             ):
                 raise AtomicMemoryIndexError("stale-projection", "Atomic Memory projection content is inconsistent")
 
-    async def _resolve_query_embedding(self, query, mode, reuse, embedding_timeout_seconds, allow_embedding):
+    async def _resolve_query_embedding(
+        self, query, mode, reuse, embedding_timeout_seconds, allow_embedding, *, public_search=False
+    ):
         application = self.application
         capabilities = application.index.capabilities
         profile = capabilities.embedding_profile
@@ -543,7 +614,9 @@ class ScopedAtomicMemory:
         try:
             async with asyncio.timeout(embedding_timeout_seconds):
                 result = await embed_query(model, (query,))
-        except (InferenceUnavailableError, InferenceTimeoutError, TimeoutError):
+        except (InferenceUnavailableError, InferenceTimeoutError, TimeoutError) as exc:
+            if public_search and isinstance(exc, TimeoutError) and not isinstance(exc, InferenceTimeoutError):
+                raise InferenceUnavailableError("embedding", "Atomic query embedding timed out") from exc
             if requested_mode != "auto" or not capabilities.fts:
                 raise
             return "text", None, None, 1
@@ -587,15 +660,52 @@ class ScopedAtomicMemory:
                     available.append(candidate)
         return tuple(available)
 
-    async def _rerank(self, query, mode, candidates, limit, query_embedding, embedding_calls, context):
+    async def _rerank(
+        self,
+        query,
+        mode,
+        candidates,
+        limit,
+        query_embedding,
+        embedding_calls,
+        context,
+        *,
+        artifact_request=None,
+        artifacts=None,
+    ):
         application = self.application
         reranker = application.reranker
         if reranker is None or not candidates:
-            return AtomicMemorySearchPage(mode, candidates[:limit], query_embedding, embedding_calls)
+            return AtomicMemorySearchPage(
+                mode,
+                candidates[:limit],
+                query_embedding,
+                embedding_calls,
+                artifacts=(() if artifacts is None else artifacts) if artifact_request is not None else None,
+            )
         # Reauthorize the exact candidate bodies immediately before an external rank model.
-        candidates = await self._filter_current_candidates(candidates, context=context)
+        try:
+            candidates = await self._filter_current_candidates(candidates, context=context)
+        except RepositoryNotFoundError as exc:
+            if artifact_request is None:
+                raise
+            raise ArtifactSearchContractError("atomic-memory", "Selected exact revision is unavailable") from exc
         if not candidates:
-            return AtomicMemorySearchPage(mode, (), query_embedding, embedding_calls)
+            return AtomicMemorySearchPage(
+                mode,
+                (),
+                query_embedding,
+                embedding_calls,
+                artifacts=() if artifact_request is not None else None,
+            )
+        complete_artifacts = []
+        if artifact_request is not None:
+            if artifacts is None:
+                raise ArtifactSearchContractError("atomic-memory", "Selected exact Artifacts are unavailable")
+            artifacts_by_ref = {_artifact_key(artifact.as_ref()): artifact for artifact in artifacts}
+            complete_artifacts = [
+                artifacts_by_ref[_artifact_key(candidate.hit.artifact_ref)] for candidate in candidates
+            ]
         prompt = (
             None if application.prompt_context_factory is None else application.prompt_context_factory(self.scope_id)
         )
@@ -620,7 +730,13 @@ class ScopedAtomicMemory:
             decision.usage,
         )
         return AtomicMemorySearchPage(
-            mode, tuple(candidates[rank - 1] for rank in ranks), query_embedding, embedding_calls, 1, rerank=trace
+            mode,
+            tuple(candidates[rank - 1] for rank in ranks),
+            query_embedding,
+            embedding_calls,
+            1,
+            rerank=trace,
+            artifacts=tuple(complete_artifacts[rank - 1] for rank in ranks) if artifact_request is not None else None,
         )
 
     async def merge(
