@@ -29,9 +29,9 @@ title: Atomic Memory 独立记忆制品
 （manifest），其中每一项指向一个不可变的 entry version。修改一条记忆，需要写入新的 entry version，
 再生成引用它的集合版本。
 
-[RFC 1345](1345_scope_organization_and_agent_integration.md) 引入 Scope 后，同一 Scope 仍然只有一个活跃的
-Memory 集合。因此，一条记忆同时涉及集合的 ID 和版本，以及 entry 的 ID 和版本。Scope 已经可以组织记忆，
-Artifact 也已经提供版本、证据、权限和标签，这层集合保留了额外的维护规则。
+[RFC 1345](1345_scope_organization_and_agent_integration.md) 引入 Scope 后，仍规定每个 Scope 只有一条活跃的
+Memory 推进线，由一个 Memory head 维护集合。因此，一条记忆同时涉及集合的 ID 和版本，以及 entry 的 ID 和
+版本。Scope 已经可以组织记忆，Artifact 也已经提供版本、证据、权限和标签，这层集合保留了额外的维护规则。
 
 ## 修改一条记忆，也要保存整个集合的目录
 
@@ -135,14 +135,19 @@ A、B 合并时，创建新的记忆 C。C 记录这次合并所使用的 A、B 
 ## 沿用的规范与本次调整
 
 Scope 归属和组织沿用 RFC 1345，Source 处理沿用 RFC 0019，身份、版本和证据沿用 RFC 1549。
-多条记忆成为独立 Artifact，不意味着每条记忆分别消费 Source；处理进度仍由所属 Scope 的抽取流程维护。
 
-本提案替代 RFC 0014、0019 中集合与 entry 分别维护版本的模型，并取消 RFC 1345 中每个 Scope 只有一个活跃
-Memory 集合的要求。
+本提案替代 RFC 0014、0019 中集合与 entry 分别维护版本的模型，将 RFC 1345 中每个 Scope 的单一 Memory head
+改为各 Atomic Memory 的独立 head。Scope 仍使用一个 Source journal，并由 Scope 的抽取流程维护处理进度；
+每条记忆不分别消费 Source，也没有独立 cursor。
 
 RFC 1652 的证据保留原则继续适用。Atomic Memory 的新增、更新与语义合并默认自动执行，冲突按时间自动处理，
 不适用其中语义合并逐次审批和保留未解决冲突的要求；多条记忆合并采用“新建结果、冻结输入”的方式。
 本提案不修改其他制品的审批及冲突处理规则。
+
+RFC 1652 的 `superseded` 是针对精确 entry version 的派生有效性，不直接对应整个 Artifact 的生命周期状态。
+新 Family 使用本文的四种 Artifact 生命周期状态：A 从版本 1 修订为版本 2 时，A 仍在役；版本 1 退出正常检索，
+仍可精确读取。A、B 合并成 C 时，才将 A、B 冻结为“被合并”。证据与后继引用由通用 Artifact 版本、
+lineage 和显式合并关系保留。
 
 RFC 1718 针对完整 manifest 设置的集合容量限制不适用于新 Family，不将其换算为 Scope 记忆总量上限，
 也不新增历史版本到期删除策略。旧配置的处理在发布兼容说明中明确。
@@ -153,7 +158,12 @@ RFC 1718 针对完整 manifest 设置的集合容量限制不适用于新 Family
 使用宽表或独立投影；全文、向量召回不使用业务表 JOIN。抽取选择可修改的记忆时，Scope、读写权限和在役状态
 须在候选选择阶段生效。
 
-单批大小用于控制每次读取和模型输入，不得截断达到阈值的总结果集。处理尚未完成时，不能将其报告为“没有新记忆”。
+普通 Prepare Context 按现有 Scope 选择和授权规则，召回有权读取的在役 Atomic Memory，沿用
+[Context Pack（RFC 0028）](0028_context_pack.md) 和 [上下文文本组装（RFC 1489）](1489_prepared_context_text_assembly.md)
+的选择、顺序、条数上限和 UTF-8 字节预算规则，并保留所选 Artifact 的精确版本引用。它采用有界召回；抽取则需要
+完整枚举达到阈值的相关记忆。
+
+抽取过程中，单批大小用于控制每次读取和模型输入，不得截断达到阈值的总结果集。处理尚未完成时，不能将其报告为“没有新记忆”。
 具体阈值、分批方式和索引选择由实现设计确定。
 
 合并、恢复及撤销涉及的记忆状态、关系和当前检索数据必须一起生效。不能出现原记忆已经恢复，而合并结果仍在
