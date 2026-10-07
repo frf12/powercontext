@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from sqlalchemy.engine import make_url
 
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
@@ -44,7 +46,7 @@ from powercontext.builtin.artifacts.memory import (
 )
 from powercontext.builtin.artifacts.memory.errors import InvalidMemoryCandidateError
 from powercontext.builtin.inference import EmbeddingResult, GenerationResult, InferenceConfigurationError
-from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
+from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
     HandoffReportConfig,
@@ -94,7 +96,6 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import McpConfig, ServerSettings
 from tests.e2e.dream_support import atomic_memory_pipeline, memory_source_text
 
-OCEANBASE_URL = os.environ.get("POWERCONTEXT_TEST_OCEANBASE_URL")
 _ACCESS_READINESS_CHECKS = {
     "access_mode": "disabled",
     "authentication_provider": "disabled",
@@ -111,6 +112,32 @@ EMBEDDING_PROFILE = EmbeddingProfile(
     distance="l2",
     normalization="unit",
 )
+
+
+@pytest.fixture
+def database(database_kind: str, tmp_path: Path) -> Iterator[SQLiteConfig | OceanBaseConfig]:
+    if database_kind == "sqlite":
+        yield SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+        return
+    configured_url = os.environ.get("POWERCONTEXT_TEST_OCEANBASE_URL")
+    if not configured_url:
+        pytest.skip("set POWERCONTEXT_TEST_OCEANBASE_URL with test database creation and deletion privileges")
+    configured = OceanBaseConfig(url=SecretStr(configured_url))
+    name = f"pc_runtime_{uuid4().hex}"
+
+    async def execute(statement: str) -> None:
+        async with (
+            OceanBaseProfile.open(configured, tables=()) as profile,
+            profile.database.transaction() as connection,
+        ):
+            await connection.exec_driver_sql(statement)
+
+    asyncio.run(execute(f"CREATE DATABASE `{name}`"))
+    try:
+        url = make_url(configured_url).set(database=name).render_as_string(hide_password=False)
+        yield OceanBaseConfig(url=SecretStr(url))
+    finally:
+        asyncio.run(execute(f"DROP DATABASE `{name}`"))
 
 
 class ContentCandidatePipeline:
@@ -178,15 +205,8 @@ def _server_settings(
 
 @pytest.mark.parametrize("database_kind", ["sqlite", "oceanbase"])
 def test_server_databases_share_source_to_memory_search_behavior(
-    database_kind: str,
-    tmp_path: Path,
+    database: SQLiteConfig | OceanBaseConfig,
 ) -> None:
-    if database_kind == "oceanbase":
-        if OCEANBASE_URL is None:
-            pytest.skip("set POWERCONTEXT_TEST_OCEANBASE_URL to a dedicated OceanBase MySQL-mode test database")
-        database = OceanBaseConfig(url=SecretStr(OCEANBASE_URL))
-    else:
-        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
     app = create_server_app(
         settings=ServerSettings(
             database=database,
@@ -264,15 +284,8 @@ def test_server_databases_share_source_to_memory_search_behavior(
 
 @pytest.mark.parametrize("database_kind", ["sqlite", "oceanbase"])
 def test_server_databases_keep_case_and_accent_variant_identities_distinct(
-    database_kind: str,
-    tmp_path: Path,
+    database: SQLiteConfig | OceanBaseConfig,
 ) -> None:
-    if database_kind == "oceanbase":
-        if OCEANBASE_URL is None:
-            pytest.skip("set POWERCONTEXT_TEST_OCEANBASE_URL to a dedicated OceanBase MySQL-mode test database")
-        database = OceanBaseConfig(url=SecretStr(OCEANBASE_URL))
-    else:
-        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'identity.db'}")
     marker = uuid4().hex[:12]
     memory_text = "Rotate the production signing key every ninety days."
     app = create_server_app(
@@ -706,15 +719,8 @@ def test_sdk_closes_the_delegation_handoff_and_outcome_loop(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("database_kind", ["sqlite", "oceanbase"])
 def test_server_databases_share_vector_and_hybrid_search_behavior(
-    database_kind: str,
-    tmp_path: Path,
+    database: SQLiteConfig | OceanBaseConfig,
 ) -> None:
-    if database_kind == "oceanbase":
-        if OCEANBASE_URL is None:
-            pytest.skip("set POWERCONTEXT_TEST_OCEANBASE_URL to a dedicated OceanBase MySQL-mode test database")
-        database = OceanBaseConfig(url=SecretStr(OCEANBASE_URL))
-    else:
-        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'vector-runtime.db'}")
     app = create_server_app(
         settings=ServerSettings(
             database=database,

@@ -69,7 +69,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Verify OceanBase Atomic Memory snapshots
+      - name: Verify OceanBase Atomic Memory and HTTP regressions
         if: matrix.database == 'oceanbase'
         env:
           COMPOSE_PROJECT_NAME: powercontext-e2e-oceanbase
@@ -101,7 +101,8 @@ jobs:
           PY
           uv run --locked --extra server python -m pytest -vv -ra \
             tests/e2e/test_atomic_memory_search_authorization_snapshot.py \
-            tests/e2e/test_atomic_memory_read_snapshot.py -k oceanbase \
+            tests/e2e/test_atomic_memory_read_snapshot.py \
+            tests/e2e/test_runtime_server.py -k oceanbase \
             --junitxml="$RUNNER_TEMP/atomic-memory-oceanbase-snapshots.xml"
           uv run --locked --extra server python - <<'PY'
           import json
@@ -114,9 +115,9 @@ jobs:
           for suite in suites:
               for key in counts:
                   counts[key] += int(suite.get(key, "0"))
-          print("OceanBase snapshot results:", json.dumps(counts))
+          print("OceanBase Atomic Memory and HTTP results:", json.dumps(counts))
           if not counts["tests"] or any(counts[key] for key in ("failures", "errors", "skipped")):
-              raise SystemExit("OceanBase snapshot regressions must execute without failures, errors, or skips")
+              raise SystemExit("OceanBase Atomic Memory and HTTP regressions must execute without failures, errors, or skips")
           PY
 
       - name: Run deterministic scenarios
