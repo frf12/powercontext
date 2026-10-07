@@ -366,8 +366,8 @@ def artifact_search_response(outcome: ArtifactSearchOutcome, /, *, include_score
             "family": artifact.family,
             "artifact_id": artifact.artifact_id,
             "revision": artifact.revision,
-            "content": artifact.content.model_dump(mode="json", serialize_as_any=True),
-            "lineage": artifact.lineage.model_dump(mode="json", serialize_as_any=True),
+            "content": artifact.content.model_dump(mode="json", by_alias=True, serialize_as_any=True),
+            "lineage": artifact.lineage.model_dump(mode="json", by_alias=True, serialize_as_any=True),
         }
         if include_scores:
             if match.channel_scores is None:

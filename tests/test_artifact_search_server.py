@@ -144,6 +144,36 @@ def test_artifact_search_http_returns_arbitrary_family_full_content_and_optional
     assert searcher.calls[0].model_fields_set == {"query", "filters"}
 
 
+def test_artifact_search_http_preserves_custom_content_json_aliases() -> None:
+    class AliasedContent(Content):
+        schema_: str = Field(alias="schema")
+
+    class AliasedSearcher(Searcher):
+        async def search(
+            self, scope_id: str, request: Query, /, *, execution_context: ArtifactSearchExecutionContext | None = None
+        ) -> Outcome:
+            outcome = await super().search(scope_id, request, execution_context=execution_context)
+            content = AliasedContent.model_validate({
+                "title": "中文",
+                "detail": "complete detail",
+                "schema": "custom-v1",
+            })
+            return Outcome(
+                matches=outcome.matches,
+                artifacts=tuple(artifact.model_copy(update={"content": content}) for artifact in outcome.artifacts),
+            )
+
+    with _client(AliasedSearcher()) as client:
+        response = client.post(PATH, json={"query": "needle"})
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["content"] == {
+        "title": "中文",
+        "detail": "complete detail",
+        "schema": "custom-v1",
+    }
+
+
 @pytest.mark.parametrize(
     "body",
     [
