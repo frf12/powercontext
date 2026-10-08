@@ -242,6 +242,8 @@ def test_memory_search_preserves_scope_references_and_result_pagination(dashboar
     first = dashboard.get("/dashboard/notes", params={"scope": scope, "q": "Release"})
     assert first.status_code == 200
     assert LABELS["constraint"] in first.text
+    assert f"{hits[0]['score']:.6f}" in first.text
+    assert 'data-memory-channel="text"' in first.text
     assert LABELS["page_number"].format(page=1) in first.text
     second = dashboard.get(page_link(first.text, LABELS["next_page"]))
     assert second.status_code == 200
@@ -274,6 +276,8 @@ def test_memory_search_preserves_scope_references_and_result_pagination(dashboar
         assert LABELS["notes_no_match"] in empty.text
         assert LABELS["page_number"].format(page=1) in empty.text
         assert not record_links(empty.text, "/dashboard/notes", "artifact")
+        assert LABELS["memory_requested_mode"] in empty.text
+        assert f"{LABELS['memory_used_mode']}: {LABELS['memory_mode_text']}" in empty.text
     single = dashboard.get("/dashboard/notes", params={"scope": scope, "q": "Invoices"})
     assert LABELS["page_number"].format(page=1) in single.text
     assert LABELS["previous_page"] in single.text
@@ -285,6 +289,81 @@ def test_memory_search_preserves_scope_references_and_result_pagination(dashboar
     assert collect_pages(dashboard, restored.text, "/dashboard/notes", "artifact") == {
         item["artifact"]["artifact_id"] for item in expected
     }
+
+
+def test_memory_search_modes_surface_semantic_hits_and_keep_navigation(tmp_path: Path) -> None:
+    from powercontext.builtin.artifacts.memory import EmbeddingProfile
+    from powercontext.builtin.inference import EmbeddingResult
+
+    class CoffeeEmbedding:
+        profile = EmbeddingProfile(
+            profile_id="dashboard-coffee", model="test", dimension=3, distance="l2", normalization="unit"
+        )
+
+        async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+            return EmbeddingResult(
+                vectors=tuple(
+                    (1.0, 0.0, 0.0) if any(word in text.lower() for word in ("coffee", "caffeine")) else (0.0, 1.0, 0.0)
+                    for text in texts
+                )
+            )
+
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path}/semantic.db"),
+            dashboard=DashboardConfig(enabled=True),
+            mcp=McpConfig(enabled=False),
+        ),
+        scheduler_path=tmp_path / "scheduler.db",
+        embedding_model=CoffeeEmbedding(),
+    )
+    with TestClient(app) as client:
+        scope = create_scope(client, "Coffee preferences")["scope_id"]
+        for index in range(8):
+            assert (
+                client.post(
+                    "/v1/memory/remember",
+                    json={"scope_id": scope, "kind": "fact", "text": f"Coffee preparation choice {index}."},
+                ).status_code
+                == 200
+            )
+        lexical = client.get("/dashboard/notes", params={"scope": scope, "q": "caffeine", "mode": "fts"})
+        assert lexical.status_code == 200
+        assert not record_links(lexical.text, "/dashboard/notes", "artifact")
+        semantic = client.get("/dashboard/notes", params={"scope": scope, "q": "caffeine", "mode": "vector"})
+        assert semantic.status_code == 200
+        assert len(record_links(semantic.text, "/dashboard/notes", "artifact")) == 6
+        assert 'data-memory-channel="vector"' in semantic.text
+        assert 'data-memory-channel="text"' not in semantic.text
+        following = client.get(page_link(semantic.text, LABELS["next_page"]))
+        assert following.url.params["mode"] == "vector"
+        assert len(record_links(following.text, "/dashboard/notes", "artifact")) == 2
+        selected_url = next(
+            unescape(url)
+            for url in re.findall(r'href="([^"]+)"', following.text)
+            if "artifact=" in unescape(url) and "/dashboard/notes?" in unescape(url)
+        )
+        selected = client.get(selected_url)
+        assert selected.status_code == 200
+        assert selected.url.params["mode"] == "vector"
+        assert 'data-memory-channel="vector"' in selected.text.split('id="memory-accordion"', 1)[1]
+        restored = client.get(page_link(selected.text, LABELS["clear_search"]))
+        assert restored.url.params["mode"] == "vector"
+        assert not restored.url.params.get("artifact")
+        assert "memory-search-evidence" not in restored.text
+        forgotten = client.get(page_link(restored.text, LABELS["memory_state_forgotten"]))
+        assert forgotten.url.params["mode"] == "vector"
+        assert forgotten.url.params["note_state"] == "forgotten"
+        automatic = client.get("/dashboard/notes", params={"scope": scope, "q": "coffee", "lang": "en"})
+        assert "Executed mode: Hybrid" in automatic.text
+        assert 'data-memory-channel="text"' in automatic.text
+        assert 'data-memory-channel="vector"' in automatic.text
+        assert "0.032787" in automatic.text
+        invalid = client.get(
+            "/dashboard/notes", params={"scope": scope, "q": "coffee", "mode": "keyword", "lang": "zh"}
+        )
+        assert LABELS["error_422"] in invalid.text
+        assert 'class="text-secondary memory-search-mode"' not in invalid.text
 
 
 def test_collection_errors_return_to_a_readable_list(dashboard: TestClient) -> None:
@@ -569,6 +648,15 @@ def test_reviewed_methods_link_to_exact_memory_evidence(dashboard: TestClient) -
     assert historical.status_code == 200
     assert "The original retry preserved one committed record." in historical.text
     assert LABELS["historical_revision"] in historical.text
+    searched_history = dashboard.get(
+        memory_link, params={**{key: value[0] for key, value in query.items()}, "q": "refined", "mode": "fts"}
+    )
+    assert searched_history.status_code == 200
+    assert 'data-memory-channel="text"' in searched_history.text
+    selected_header = re.search(r'<button\b[^>]*aria-expanded="true"[^>]*>(.*?)</button>', searched_history.text, re.S)
+    assert selected_header is not None
+    assert "The original retry preserved" in selected_header[1]
+    assert "memory-search-evidence" not in selected_header[1]
     other = create_scope(dashboard, "Unrelated Dream evidence")["scope_id"]
     denied_read = dashboard.get(
         f"/v1/scopes/{other}/artifacts/atomic-memory/{memory_ref['artifact_id']}/revisions/{memory_ref['revision']}"

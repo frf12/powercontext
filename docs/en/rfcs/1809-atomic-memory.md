@@ -31,10 +31,10 @@ RFC #1771.
 with each member pointing to an immutable entry version. Changing one memory writes a new entry version and then a
 collection revision that references it.
 
-After [RFC 1345](1345_scope_organization_and_agent_integration.md) introduced Scope, each Scope still retained one
-active Memory collection. A memory therefore involves both collection and entry IDs and versions. Scope already
-organizes memories, and Artifact already provides revisions, evidence, permissions, and tags. The collection layer
-retains additional maintenance rules.
+After [RFC 1345](1345_scope_organization_and_agent_integration.md) introduced Scope, it still required one active
+Memory progression line per Scope, with one Memory head maintaining the collection. A memory therefore involves both
+collection and entry IDs and versions. Scope already organizes memories, and Artifact already provides revisions,
+evidence, permissions, and tags. The collection layer retains additional maintenance rules.
 
 ## Changing one memory still stores the whole collection directory
 
@@ -158,16 +158,23 @@ restoration; routine extraction and merging remain automatic.
 ## Existing contracts and changes made here
 
 Scope membership and organization follow RFC 1345, Source processing follows RFC 0019, and identity, revisions, and
-evidence follow RFC 1549. Independent memory Artifacts do not each consume Source separately; the Scope's extraction
-flow still owns processing progress.
+evidence follow RFC 1549.
 
-This proposal replaces the collection and entry version layers of RFCs 0014 and 0019 and removes RFC 1345's requirement
-for one active Memory collection per Scope.
+This proposal replaces the collection and entry version layers of RFCs 0014 and 0019 and gives each Atomic Memory an
+independent head in place of RFC 1345's single Memory head per Scope. The Scope still uses one Source journal, and its
+extraction flow owns processing progress. Individual memories do not consume Source separately or have independent
+cursors.
 
 RFC 1652's evidence-preservation principles remain applicable. Atomic Memory creation, revision, and semantic merging
 run automatically, and the model resolves conflicts using time. Its per-operation merge approval and unresolved-conflict
 retention requirements do not apply to Atomic Memory. Merging multiple memories creates a new result and freezes the
 inputs. This RFC does not change approval or conflict-handling rules for other Artifact families.
+
+RFC 1652's `superseded` is derived validity for an exact entry version; it does not directly map to an entire Artifact's
+lifecycle state. The new Family uses the four Artifact lifecycle states defined here: when A advances from revision 1
+to revision 2, A remains active; revision 1 leaves normal search and remains readable by exact reference.
+Merging A and B into C freezes A and B as merged. Generic Artifact revisions, lineage, and explicit merge relationships
+preserve evidence and successor references.
 
 RFC 1718's collection capacity limits for complete manifests do not apply to the new Family. They are not converted
 into a Scope-wide memory count limit, and this proposal introduces no historical revision expiry policy. Release
@@ -180,7 +187,14 @@ Memory may use wide tables or separate projections, with no business-table joins
 When extraction selects memories it may modify, Scope, read/write permissions, and active state take effect during
 candidate selection.
 
-Batch sizes bound individual reads and model inputs without truncating the total set meeting the threshold.
+Ordinary Prepare Context follows existing Scope selection and authorization rules to retrieve active Atomic Memory
+Artifacts that the caller may read.
+Selection, ordering, entry limits, UTF-8 byte budgets, and assembly follow [Context Pack (RFC 0028)](0028_context_pack.md) and
+[Prepared Context Text Assembly (RFC 1489)](1489_prepared_context_text_assembly.md), retaining exact revision references
+to the selected Artifacts. Ordinary Prepare Context uses bounded recall; extraction requires complete enumeration of
+related memories meeting the threshold.
+
+During extraction, batch sizes bound individual reads and model inputs without truncating the total set meeting the threshold.
 Incomplete processing must not be reported as no new memory. Implementation design determines thresholds, batching,
 and index choices.
 

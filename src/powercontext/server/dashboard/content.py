@@ -64,8 +64,8 @@ async def load_notes(api: DashboardAPI, request: Request, ctx: dict[str, Any]) -
     try:
         if searching:
             result = await api.read(
-                "/v1/atomic-memory/search",
-                {"scope_id": ctx["scope"], "query": ctx["search_query"], "mode": "text", "limit": 50},
+                "/v1/memory/search",
+                {"scope_id": ctx["scope"], "query": ctx["search_query"], "mode": ctx["search_mode"], "limit": 50},
             )
         else:
             result = await api.read(
@@ -81,11 +81,16 @@ async def load_notes(api: DashboardAPI, request: Request, ctx: dict[str, Any]) -
         ctx["errors"]["notes"] = error
         return
     if searching:
-        items = memory_view({"items": [hit["memory"] for hit in result["hits"]]})
+        items = memory_view({
+            "items": [
+                {**hit["memory"], "matched_by": hit["matched_by"], "score": hit["score"]} for hit in result["hits"]
+            ]
+        })
         window = list_page(items, request.query_params.get("notes_page"))
         ctx["data"]["notes"] = window["items"]
         ctx["notes_pager"] = list_links(ctx, "notes", window)
         ctx["search_limited"] = len(result["hits"]) == 50
+        ctx["search_used_mode"] = result["mode"]
     else:
         ctx["data"]["notes"] = memory_view(result)
         if ctx["page"] == "notes":
@@ -141,6 +146,11 @@ async def select_note(api: DashboardAPI, request: Request, ctx: dict[str, Any]) 
         )
         if ref:
             ctx["selected_note"] = await api.atomic_memory_get(scope, ref["artifact_id"], ref["revision"])
+            current = next(
+                (item for item in ctx["data"]["notes"] if item["note_key"] == ctx["selected_note"]["note_key"]), None
+            )
+            if current and "matched_by" in current:
+                ctx["selected_note"].update(matched_by=current["matched_by"], score=current["score"])
 
 
 async def load_record(api: DashboardAPI, request: Request, ctx: dict[str, Any]) -> None:
