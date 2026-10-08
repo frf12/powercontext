@@ -5,6 +5,7 @@
     "deploy-server",
     "connect-remote-server",
     "artifact-processing-migration",
+    "atomic-memory-migration",
     "observability",
     "trace-with-phoenix",
     "trace-with-langfuse",

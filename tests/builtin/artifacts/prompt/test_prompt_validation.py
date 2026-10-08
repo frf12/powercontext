@@ -45,6 +45,31 @@ _EXPERIENCE = {
 
 
 def _case(key: str) -> dict[str, Any]:  # noqa: C901 - one branch per prompt key fixture
+    if key in {"atomic_memory.extract", "atomic_memory.reconcile"}:
+        evidence = {
+            "evidence_id": "source:content/turn-1",
+            "source_ref": {"source_type": "content", "source_id": "turn-1"},
+            "journal_position": 1,
+            "content": "Prefers Chinese.",
+            "source_metadata": {},
+        }
+        candidate = {"kind": "preference", "text": "Prefers Chinese.", "evidence_ids": [evidence["evidence_id"]]}
+        if key == "atomic_memory.extract":
+            return {"input": {"evidence": [evidence]}, "expected_output": {"candidates": [candidate]}}
+        return {
+            "input": {
+                "proposal": {"item_id": "candidate:1", "original_refs": [], **candidate},
+                "related": [],
+                "evidence": [evidence],
+            },
+            "expected_output": {
+                "action": "create",
+                "compared_ids": [],
+                "content": {"kind": "preference", "text": "Prefers Chinese."},
+                "evidence_ids": [evidence["evidence_id"]],
+                "reason": "The supplied Source supports this independent preference.",
+            },
+        }
     if key == "profile.generate":
         return {
             "input": {
@@ -186,6 +211,9 @@ def test_valid_demonstrations_preserve_their_original_json(key: str) -> None:
 @pytest.mark.parametrize(
     ("key", "path", "invalid"),
     [
+        ("atomic_memory.extract", ("expected_output", "candidates", 0, "evidence_ids"), ["source:99"]),
+        ("atomic_memory.reconcile", ("expected_output", "evidence_ids"), ["source:99"]),
+        ("atomic_memory.reconcile", ("expected_output", "compared_ids"), ["unknown-item"]),
         ("memory.extract", ("expected_output", "candidates", 0, "evidence_ids"), ["source:99"]),
         ("memory.extract", ("expected_output", "candidates", 0, "evidence_ids"), []),
         ("memory.extract", ("expected_output", "candidates", 0, "entry_id"), "entry:1"),

@@ -21,13 +21,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
+from urllib.parse import unquote, urlsplit
 from weakref import WeakKeyDictionary
 
 import sqlite_vec
 from aiosqlite import Connection
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Table, event
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -64,7 +65,7 @@ class SQLiteConfig(BaseModel):
 
     @property
     def is_in_memory(self) -> bool:
-        """Return whether this profile stores its database only in process memory."""
+        """Return whether this profile has no persistent database file."""
 
         return _is_memory_url(self.url)
 
@@ -103,13 +104,57 @@ class SQLiteProfile:
         finally:
             await database.close()
 
+    @classmethod
+    @asynccontextmanager
+    async def open_readonly(
+        cls,
+        config: SQLiteConfig,
+        *,
+        load_vector_extension: bool = False,
+    ) -> AsyncIterator[SQLiteProfile]:
+        """Read an existing persistent database without schema or journal initialization.
+
+        SQLite's normal WAL locking remains enabled so committed WAL data is
+        visible. Its shared-memory coordination may use the WAL/SHM sidecars.
+        """
+
+        if config.is_in_memory:
+            raise ValueError("read-only SQLite inspection requires a persistent database")  # noqa: TRY003
+        engine = create_async_engine(_readonly_sqlite_url(config.url), echo=config.echo, hide_parameters=True)
+        _configure_sqlite(engine, config, load_vector_extension=load_vector_extension, read_only=True)
+        database = AsyncDatabase.own(engine)
+        try:
+            await database.ping()
+            yield cls(database=database, tables=())
+        finally:
+            await database.close()
+
 
 def _is_memory_url(value: str) -> bool:
-    database = make_url(value).database
-    return database in {None, "", ":memory:"}
+    url = make_url(value)
+    database = url.database or ""
+    if database in {"", ":memory:"}:
+        return True
+    uri = str(url.query.get("uri", "false")).lower() in {"1", "true", "yes", "on", "t", "y"}
+    return (
+        uri
+        and database.startswith("file:")
+        and (unquote(urlsplit(database).path) in {"", ":memory:"} or url.query.get("mode") == "memory")
+    )
+
+
+def _readonly_sqlite_url(value: str) -> URL:
+    url = make_url(value)
+    database = url.database or ""
+    uri = str(url.query.get("uri", "false")).lower() in {"1", "true", "yes", "on", "t", "y"}
+    filename = database if uri and database.startswith("file:") else Path(database).absolute().as_uri()
+    query = {key: option for key, option in url.query.items() if key not in {"immutable", "nolock"}}
+    return url.set(database=filename, query={**query, "mode": "ro", "uri": "true"})
 
 
 def _create_database_directory(value: str) -> None:
+    if _is_memory_url(value):
+        return
     database = make_url(value).database
     if not database or database == ":memory:":
         return
@@ -121,6 +166,7 @@ def _configure_sqlite(
     config: SQLiteConfig,
     *,
     load_vector_extension: bool,
+    read_only: bool = False,
 ) -> None:
     @event.listens_for(engine.sync_engine, "connect")
     def set_pragmas(dbapi_connection: DBAPIConnection, _connection_record: object) -> None:
@@ -130,6 +176,8 @@ def _configure_sqlite(
         try:
             cursor.execute(f"PRAGMA busy_timeout = {config.busy_timeout_ms}")
             cursor.execute(f"PRAGMA foreign_keys = {'ON' if config.foreign_keys else 'OFF'}")
+            if read_only:
+                cursor.execute("PRAGMA query_only = ON")
         finally:
             cursor.close()
 
