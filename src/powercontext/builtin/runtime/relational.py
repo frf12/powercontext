@@ -39,6 +39,7 @@ from typing_extensions import override
 
 from powercontext._logging import log_safely
 from powercontext.artifacts import Artifact, ArtifactRef, MemoryCitation
+from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemory
 from powercontext.builtin.artifacts.atomic_memory.extraction import AtomicMemoryGenerationPipeline
 from powercontext.builtin.artifacts.experience import (
@@ -1103,6 +1104,7 @@ class RelationalContexts:
         admission: AdmissionFloor | None = None,
         query_embedding: MemoryQueryEmbedding | None = None,
         artifact_request: TopicArtifactSearchRequest | None = None,
+        execution_context: ArtifactSearchExecutionContext | None = None,
     ) -> TopicMemorySearchResult:
         """Search current active Topic projections in this deployment."""
 
@@ -1110,7 +1112,29 @@ class RelationalContexts:
             query_vector = query_embedding.query_vector
             embedding_profile = query_embedding.embedding_profile
         scope = validate_scope_id(scope_id)
-        async with self.database.transaction() as connection:
+        access = None if execution_context is None else execution_context.access
+        if execution_context is not None and access is None and not execution_context.trusted_local:
+            from powercontext.server.authz import AccessDeniedError
+
+            raise AccessDeniedError
+        audit = nullcontext() if access is None else access.defer_decision_audit()
+        async with audit, self.database.transaction(consistent_snapshot=True) as connection:
+            if execution_context is not None and access is not None:
+                # Establish the data snapshot before a remote PDP can suspend.
+                # Local providers then read their policy through this same connection.
+                await connection.execute(
+                    select(ARTIFACT_HEADS_TABLE.c.revision)
+                    .where(
+                        ARTIFACT_HEADS_TABLE.c.scope_id == scope, ARTIFACT_HEADS_TABLE.c.family == TopicMemory.family
+                    )
+                    .limit(1)
+                )
+                await access.require_scope_read(
+                    execution_context.principal,
+                    scope,
+                    connection=connection,
+                    context=execution_context.audit,
+                )
             return await self.repositories.topic_memories.search(
                 connection,
                 scope,

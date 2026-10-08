@@ -328,6 +328,7 @@ class TopicMemorySearch(Protocol):
         embedding_profile: EmbeddingProfile | None = None,
         admission: AdmissionFloor | None = None,
         query_embedding: MemoryQueryEmbedding | None = None,
+        execution_context: ArtifactSearchExecutionContext | None = None,
     ) -> Awaitable[TopicMemorySearchResult]: ...
 
 
@@ -2727,6 +2728,7 @@ class ScopedTopicMemoryApplication:
         query_embedding: MemoryQueryEmbedding | None = None,
         embedding_timeout_seconds: float | None = None,
         allow_embedding: bool = True,
+        execution_context: ArtifactSearchExecutionContext | None = None,
     ) -> TopicMemorySearchResult:
         searcher = self._runtime._topic_memory_searcher
         if searcher is None:
@@ -2751,6 +2753,7 @@ class ScopedTopicMemoryApplication:
                 query_embedding=query_embedding,
                 embedding_timeout_seconds=embedding_timeout_seconds,
                 allow_embedding=allow_embedding,
+                execution_context=execution_context,
             )
 
     async def get(self, request: GetTopicMemoryRequest, /) -> PublishedTopicMemory:

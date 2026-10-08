@@ -112,6 +112,7 @@ class TopicMemorySearcher:
             artifact_request=request,
             plan=plan,
             embedding_model=embedding,
+            execution_context=execution_context,
         )
         if result.artifacts is None:
             if self._get is None:
@@ -142,6 +143,7 @@ class TopicMemorySearcher:
         query_embedding: MemoryQueryEmbedding | None = None,
         embedding_timeout_seconds: float | None = None,
         allow_embedding: bool = True,
+        execution_context: ArtifactSearchExecutionContext | None = None,
     ) -> TopicMemorySearchResult:
         result, fallback = await self._execute(
             scope_id,
@@ -152,6 +154,7 @@ class TopicMemorySearcher:
             embedding_timeout_seconds=embedding_timeout_seconds,
             allow_embedding=allow_embedding,
             embedding_model=self._embedding,
+            execution_context=execution_context,
         )
         self._observe(result, fallback)
         return result
@@ -169,6 +172,7 @@ class TopicMemorySearcher:
         allow_embedding: bool = True,
         artifact_request: TopicArtifactSearchRequest | None = None,
         plan: TopicSearchPlan | None = None,
+        execution_context: ArtifactSearchExecutionContext | None = None,
     ) -> tuple[TopicMemorySearchResult, bool]:
         embedding = embedding_model if allow_embedding and (plan is None or plan.mode != "fts") else None
         keywords: dict[str, Any] = {"limit": limit}
@@ -176,7 +180,14 @@ class TopicMemorySearcher:
             keywords["admission"] = admission
         if artifact_request is not None:
             keywords["artifact_request"] = artifact_request
-        if embedding is not None and self._browse is not None and not await self._browse(scope_id, limit=1, after=None):
+        if execution_context is not None:
+            keywords["execution_context"] = execution_context
+        if (
+            embedding is not None
+            and self._browse is not None
+            and (execution_context is None or (execution_context.access is None and execution_context.trusted_local))
+            and not await self._browse(scope_id, limit=1, after=None)
+        ):
             if artifact_request is not None and plan is not None and not plan.fallback_allowed:
                 return TopicMemorySearchResult(mode=plan.mode, artifacts=()), False
             embedding = None

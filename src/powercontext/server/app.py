@@ -1221,7 +1221,13 @@ class _MemoryApplication(Protocol):
 
 
 class _ScopedTopicMemoryApplication(Protocol):
-    async def search(self, request: RuntimeSearchTopicMemoryRequest, /) -> TopicMemorySearchResult: ...
+    async def search(
+        self,
+        request: RuntimeSearchTopicMemoryRequest,
+        /,
+        *,
+        execution_context: ArtifactSearchExecutionContext | None = None,
+    ) -> TopicMemorySearchResult: ...
 
     async def get(self, request: RuntimeGetTopicMemoryRequest, /) -> PublishedTopicMemory: ...
 
@@ -2488,9 +2494,18 @@ async def flush_topic_memory(
 async def search_topic_memory(
     request: SearchTopicMemoryRequest,
     application: Annotated[ServerApplication, Depends(_require_application)],
+    http_request: Request,
 ) -> SearchTopicMemoryResponse:
+    access = access_control_for_mode(http_request.app.state.access_control, mode=http_request.app.state.access_mode)
+    execution_context = ArtifactSearchExecutionContext(
+        principal=_require_principal() if access is not None else None,
+        access=access,
+        audit=_access_audit_context(SEARCH_TOPIC_MEMORY.operation_id),
+        trusted_local=access is None and http_request.app.state.access_mode == "disabled",
+    )
     result = await application.topic_memory.for_scope(request.scope_id).search(
-        mapping.topic_memory_search_request(request)
+        mapping.topic_memory_search_request(request),
+        **({} if access is None else {"execution_context": execution_context}),
     )
     return mapping.topic_memory_search_response(result)
 
