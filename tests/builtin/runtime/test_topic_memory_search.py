@@ -167,6 +167,43 @@ def test_topic_service_requires_declared_public_search_capabilities():
         asyncio.run(service.search("scope", TopicArtifactSearchRequest(query="needle", mode="text")))
 
 
+@pytest.mark.parametrize("mode", [None, "text", "vector", "hybrid"])
+def test_topic_empty_scope_rejects_a_supplied_context_without_authority(mode):
+    from powercontext.artifacts.search import ArtifactSearchExecutionContext
+    from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
+    from powercontext.builtin.runtime.topic_memory_search import TopicMemorySearcher
+    from powercontext.server.authz import AccessDeniedError
+
+    async def scenario():
+        embedding = Embedding()
+        async with open_builtin_contexts(BuiltinConfig(), embedding_model=embedding) as contexts:
+            service = TopicMemorySearcher(
+                search=contexts.search_topic_memories,
+                browse=contexts.browse_topic_memories,
+                embedding_model=embedding,
+                capabilities=contexts.topic_memory_index.capabilities,
+            )
+            request = TopicArtifactSearchRequest.model_validate({
+                "query": "needle",
+                **({} if mode is None else {"mode": mode}),
+            })
+            with pytest.raises(AccessDeniedError):
+                await service.search("scope", request, execution_context=ArtifactSearchExecutionContext())
+            # Missing SDK context and an explicitly trusted local invocation retain local policy.
+            assert (await service.search("scope", request)).hits == ()
+            assert (
+                await service.search(
+                    "scope", request, execution_context=ArtifactSearchExecutionContext(trusted_local=True)
+                )
+            ).hits == ()
+            with pytest.raises(AccessDeniedError):
+                await service.search_legacy(
+                    "scope", "needle", limit=4, execution_context=ArtifactSearchExecutionContext()
+                )
+
+    asyncio.run(scenario())
+
+
 def test_topic_service_rejects_mismatched_embedding_profile_before_empty_scope():
     embedding = Embedding()
     profile = EmbeddingProfile(profile_id="other", model="other", dimension=2)
