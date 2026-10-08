@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
+from fractions import Fraction
 from numbers import Real
 from typing import Annotated, Any, Generic, TypeVar
 
@@ -69,8 +71,8 @@ class FusionHit(Generic[KeyT]):
     """A normalized score and raw RRF sum, ordered with the Family's tie break.
 
     Ordinary raw sums remain floats. A Decimal preserves positive raw values
-    only when the sum would overflow or underflow float representation. This
-    internal value is never a public channel score.
+    when float accumulation would overflow, underflow, or produce a subnormal
+    result. This internal value is never a public channel score.
     """
 
     key: KeyT
@@ -98,22 +100,24 @@ def fuse_rrf(
     if not terms:
         return ()
 
-    maximum_weight = max(channel.weight for channel in enabled)
-    scaled_upper = math.fsum(channel.weight / maximum_weight for channel in enabled)
     upper = _raw_sum([(channel.weight, 1) for channel in enabled if channel.weight > 0], params.rank_constant)
+    exact_upper: Fraction | None = None
     hits = []
     for key, contributions in terms.items():
         raw = _raw_sum(contributions, params.rank_constant)
         if isinstance(raw, float) and isinstance(upper, float):
             score = raw / upper
         else:
-            score = (
-                math.fsum(
-                    (weight / maximum_weight) * ((params.rank_constant + 1) / (params.rank_constant + rank))
-                    for weight, rank in contributions
+            # Round only the combined ratio, including at subnormal midpoints.
+            if exact_upper is None:
+                exact_upper = sum((Fraction.from_float(float(channel.weight)) for channel in enabled), Fraction(0)) / (
+                    params.rank_constant + 1
                 )
-                / scaled_upper
+            exact_raw = sum(
+                (Fraction.from_float(float(weight)) / (params.rank_constant + rank) for weight, rank in contributions),
+                Fraction(0),
             )
+            score = float(exact_raw / exact_upper)
         hits.append(FusionHit(key, score, raw))
     return tuple(
         sorted(
@@ -168,7 +172,8 @@ def _raw_sum(terms: list[tuple[float, int]], rank_constant: int) -> float | Deci
         raw = 0.0
         for weight, rank in terms:
             raw += weight / (rank_constant + rank)
-        if math.isfinite(raw) and raw > 0:
+        # Subnormal sums can lose rank differences before normalization.
+        if math.isfinite(raw) and raw >= sys.float_info.min:
             return raw
     except OverflowError:
         pass
