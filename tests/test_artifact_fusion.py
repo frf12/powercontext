@@ -15,6 +15,7 @@
 """Behavior contracts for family-independent Artifact fusion."""
 
 import math
+import sys
 from decimal import Decimal
 
 import pytest
@@ -150,6 +151,80 @@ def test_rrf_large_weights_normalize_without_overflow():
     )
     assert hits[0].score == 0.5
     assert math.isfinite(hits[0].raw_score)
+
+
+@pytest.mark.parametrize(
+    "weight", [math.ulp(0.0), 1e-320, sys.float_info.min, sys.float_info.min * 30.5, sys.float_info.max]
+)
+def test_rrf_uniform_weight_scaling_preserves_normalized_scores_and_threshold(weight):
+    from powercontext.artifacts.fusion import FusionCandidate, FusionChannel, RrfParameters, fuse_rrf
+
+    def search(channel_weight):
+        return fuse_rrf(
+            (
+                FusionChannel("left", channel_weight, (FusionCandidate("a", 1), FusionCandidate("b", 2))),
+                FusionChannel("right", channel_weight, (FusionCandidate("b", 1), FusionCandidate("a", 2))),
+            ),
+            RrfParameters(),
+            tie_break=lambda key: key,
+        )
+
+    ordinary = search(1.0)
+    scaled = search(weight)
+    assert [hit.key for hit in scaled] == [hit.key for hit in ordinary]
+    assert [hit.score for hit in scaled] == pytest.approx([hit.score for hit in ordinary], rel=1e-15, abs=0)
+    assert [hit.key for hit in scaled if hit.score >= 0.999] == []
+
+
+@pytest.mark.parametrize("weight", [math.ulp(0.0), 1e-320, sys.float_info.min, sys.float_info.max])
+def test_rrf_uniform_weight_scaling_preserves_distinct_candidate_order(weight):
+    from powercontext.artifacts.fusion import FusionCandidate, FusionChannel, RrfParameters, fuse_rrf
+
+    hits = fuse_rrf(
+        (
+            FusionChannel("left", weight, (FusionCandidate("z", 1), FusionCandidate("a", 2))),
+            FusionChannel("right", weight, (FusionCandidate("a", 3), FusionCandidate("z", 4))),
+        ),
+        RrfParameters(),
+        tie_break=lambda key: key,
+    )
+    assert [hit.key for hit in hits] == ["z", "a"]
+    assert hits[0].score > hits[1].score
+
+
+def test_rrf_mixed_normal_and_subnormal_weights_preserve_normal_raw_score():
+    from powercontext.artifacts.fusion import FusionCandidate, FusionChannel, RrfParameters, fuse_rrf
+
+    hits = fuse_rrf(
+        (
+            FusionChannel("normal", 1.0, (FusionCandidate("both", 1),)),
+            FusionChannel("subnormal", math.ulp(0.0), (FusionCandidate("both", 1), FusionCandidate("tiny", 2))),
+        ),
+        RrfParameters(),
+        tie_break=lambda key: key,
+    )
+    assert [hit.key for hit in hits] == ["both", "tiny"]
+    assert hits[0].score == 1.0
+    assert isinstance(hits[0].raw_score, float)
+    assert hits[0].raw_score == 1 / 61
+    assert hits[1].raw_score > 0
+
+
+@pytest.mark.parametrize("empty_weight, expected_score", [(120.0, math.ulp(0.0)), (124.0, math.ulp(0.0)), (244.0, 0.0)])
+def test_rrf_subnormal_contributions_combine_before_normalization(empty_weight, expected_score):
+    from powercontext.artifacts.fusion import FusionCandidate, FusionChannel, RrfParameters, fuse_rrf
+
+    hits = fuse_rrf(
+        (
+            FusionChannel("empty", empty_weight, ()),
+            FusionChannel("left", 61 * math.ulp(0.0), (FusionCandidate("a", 1),)),
+            FusionChannel("right", 61 * math.ulp(0.0), (FusionCandidate("a", 1),)),
+        ),
+        RrfParameters(),
+        tie_break=lambda key: key,
+    )
+    assert hits[0].raw_score > 0
+    assert hits[0].score == expected_score
 
 
 def test_rrf_large_integer_rank_constant_normalizes_without_overflow():
