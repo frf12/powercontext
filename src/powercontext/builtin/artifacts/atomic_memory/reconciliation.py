@@ -45,8 +45,13 @@ Choose noop with one target_id when that item already expresses the proposal, wi
 Choose noop with no target only when the candidate is unworthy or unsupported and has no published original_refs.
 Never discard or silently transfer published original_refs during noop. If earlier decisions and a later item both
 represent published identities, use merge to reconcile them. Every create/revise/merge must cite supplied evidence.
-Keep each identity's final decision consistent with previously combined working content. Preserve independent
-historical events, conditions, exceptions and effective dates. Never request approval or store conflict markers.
+For the same enduring fact (same entity, attribute and applicability), prefer revising a supplied existing identity
+over creating an independent memory, including when its values have different effective dates. Use merge when
+multiple existing identities represent that fact. Express the temporal progression clearly: prior values remain
+historical and late old evidence must not become current. Keep facts that can change independently and genuinely
+different applicability separate. Keep each identity's final decision consistent with previously combined working
+content. Preserve independent historical events, conditions, exceptions and effective dates.
+Never request approval or store conflict markers.
 {TIME_RULES}
 """.strip()
 
