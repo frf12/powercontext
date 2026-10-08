@@ -148,15 +148,22 @@ def _restoration_writes(
     restored: list[ArtifactMergeRestoreItem] = []
     for artifact_id, state in sorted(final.items()):
         current = records[artifact_id]
+        source = selected if artifact_id == target_id and selected is not None else current.artifact
+        changed = (
+            state != current.state.lifecycle_state
+            or current.state.merged_into_id is not None
+            or current.state.replacement_artifact_id is not None
+            or (artifact_id == target_id and selected is not None)
+        )
         draft = None
-        if artifact_id == target_id and selected is not None:
+        if changed:
             # Historical lineage_only Sources stay bound to their historical
             # target; a precise historical Artifact reference retains evidence.
             refs = tuple(
-                dict.fromkeys((ref.family, ref.artifact_id, ref.revision) for ref in (current.ref, selected.as_ref()))
+                dict.fromkeys((ref.family, ref.artifact_id, ref.revision) for ref in (current.ref, source.as_ref()))
             )
             draft = adapter.draft(
-                selected.content,
+                source.content,
                 ArtifactLineage(
                     artifacts=tuple(
                         ArtifactRef(family=family, artifact_id=identity, revision=revision)
@@ -169,18 +176,11 @@ def _restoration_writes(
             restored.append(
                 ArtifactMergeRestoreItem(
                     artifact_id=artifact_id,
-                    source_revision=selected.revision
-                    if draft is not None and selected is not None
-                    else current.artifact.revision,
+                    source_revision=source.revision,
                     creates_revision=draft is not None,
                 )
             )
-        if (
-            state != current.state.lifecycle_state
-            or current.state.merged_into_id is not None
-            or current.state.replacement_artifact_id is not None
-            or draft is not None
-        ):
+        if changed:
             writes.append(ArtifactMergeWrite(artifact_id=artifact_id, state=state, draft=draft, current=current))
     return writes, restored
 

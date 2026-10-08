@@ -22,8 +22,10 @@ import pytest
 
 from powercontext.builtin.artifacts.merge import ArtifactMergeService
 from powercontext.builtin.artifacts.merge_restoration import ArtifactMergePreviewSigner
+from powercontext.builtin.persistence.sources import SourceRepository
 from powercontext.builtin.records import BaseOperationNotSupportedError
 from powercontext.builtin.runtime import ArtifactMergeApplication
+from powercontext.builtin.sources.content import CONTENT_SOURCE_ADAPTER
 from tests.builtin.persistence.contract import HandoffContent, HandoffDraft, repository_profile
 
 
@@ -74,6 +76,7 @@ def test_constructor_registration_reuses_shared_merge_preview_and_restore() -> N
         async with repository_profile() as (profile, repositories):
             service = ArtifactMergeService(
                 artifacts=repositories.artifacts,
+                sources=SourceRepository((CONTENT_SOURCE_ADAPTER,)),
                 adapter=_TestFamilyAdapter(),
                 security=_LocalSecurity(),
                 merge_tags=_tags,
@@ -103,8 +106,14 @@ def test_constructor_registration_reuses_shared_merge_preview_and_restore() -> N
                 result.ref.artifact_id, operation="undo_merge", preview_token=preview.preview_token
             )
             assert restored.undo_merge_results == (result.ref.artifact_id,)
-            assert (await scoped.get("a")).artifact == a.artifact
-            assert (await scoped.get("b")).artifact == b.artifact
+            for original in (a, b):
+                current = await scoped.get(original.ref.artifact_id)
+                assert current.artifact.content == original.artifact.content
+                assert current.ref.revision == 2
+                assert (await scoped.get(original.ref.artifact_id, revision=1)).artifact == original.artifact
             assert (await scoped.get(result.ref.artifact_id)).state.lifecycle_state == "retired"
+            assert restored.primary.ref.revision == 2
+            outcome = await scoped.restoration_outcome(result.ref.artifact_id, revision=2)
+            assert outcome is not None and outcome.undo_merge_results == (result.ref,)
 
     asyncio.run(scenario())

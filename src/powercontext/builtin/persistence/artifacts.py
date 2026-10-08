@@ -32,7 +32,7 @@ from powercontext.artifacts import (
     ArtifactRef,
     MemoryCitation,
 )
-from powercontext.builtin.persistence.artifact_governance import InvalidArtifactLifecycleError
+from powercontext.builtin.persistence.artifact_governance import ArtifactGovernance, InvalidArtifactLifecycleError
 from powercontext.builtin.persistence.citation_codec import dump_memory_citations, load_memory_citations
 from powercontext.builtin.persistence.codec import dump_model, load_model, stored_bytes, validate_json_model
 from powercontext.builtin.persistence.errors import (
@@ -40,6 +40,7 @@ from powercontext.builtin.persistence.errors import (
     InvalidPublicationLineageError,
     InvalidRepositoryArgumentError,
     RepositoryNotFoundError,
+    StoredPayloadConflictError,
 )
 from powercontext.builtin.persistence.tables import (
     ARTIFACT_HEADS_TABLE,
@@ -93,6 +94,12 @@ class ArtifactRepository:
         """Return the registered domain Families whose writes require their owning service."""
 
         return frozenset(self._by_family)
+
+    @property
+    def source_repository(self) -> Any | None:
+        """Expose the composed Source repository to services recording revision provenance."""
+
+        return self._sources
 
     async def create(
         self,
@@ -250,6 +257,36 @@ class ArtifactRepository:
     ) -> Artifact[Any]:
         """Commit a next revision only when ``artifact`` remains the head."""
 
+        return await self._revise(connection, scope_id, artifact, draft)
+
+    async def revise_for_restoration(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        artifact: Artifact[Any],
+        draft: ArtifactDraft[Any] | RepositoryArtifactDraft,
+        expected: ArtifactGovernance,
+        /,
+    ) -> Artifact[Any]:
+        """Append to a frozen input under the restoration service's exact governance dependency.
+
+        The caller must apply its validated final group state in the same
+        transaction. Already retired identities remain immutable.
+        """
+
+        if expected.artifact != artifact.as_ref():
+            raise StoredPayloadConflictError("artifact-governance", (scope_id, artifact.family, artifact.artifact_id))
+        return await self._revise(connection, scope_id, artifact, draft, restoration=expected)
+
+    async def _revise(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        artifact: Artifact[Any],
+        draft: ArtifactDraft[Any] | RepositoryArtifactDraft,
+        *,
+        restoration: ArtifactGovernance | None = None,
+    ) -> Artifact[Any]:
         _require_scope(scope_id)
         artifact_type = self._artifact_type(artifact.family)
         if type(artifact) is not artifact_type or draft.family != artifact.family:
@@ -288,7 +325,14 @@ class ArtifactRepository:
             .mappings()
             .one()
         )
-        if head["merged_into_id"] is not None or head["lifecycle_state"] == "retired":
+        if restoration is not None and (
+            head["lifecycle_state"] != restoration.lifecycle_state.value
+            or head["merged_into_id"] != restoration.merged_into_id
+            or head["replacement_artifact_id"] != restoration.replacement_artifact_id
+            or head["governance_generation"] != restoration.governance_generation
+        ):
+            raise StoredPayloadConflictError("artifact-governance", (scope_id, artifact.family, artifact.artifact_id))
+        if head["lifecycle_state"] == "retired" or (head["merged_into_id"] is not None and restoration is None):
             raise InvalidArtifactLifecycleError("frozen and retired Artifact identities cannot be revised")  # noqa: TRY003
 
         ref = ArtifactRef(

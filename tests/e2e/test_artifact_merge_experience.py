@@ -287,10 +287,12 @@ def test_registered_families_keep_same_result_identity_and_projections_separate(
                 hit.hit.artifact_ref for hit in (await runtime.atomic_memory.for_scope(scope).search("rollout")).hits
             ) == (atomic.ref,)
             assert _refs(hit.artifact_ref for hit in await _search(runtime, scope, "rollout")) == _refs(
-                item.ref for item in inputs
+                item.ref.model_copy(update={"revision": item.ref.revision + 1}) for item in inputs
             )
             restored = await merged_api.restore(result.primary.ref.artifact_id, operation="undo_merge")
-            assert _refs(restored.restored) == _refs(item.ref for item in originals)
+            assert _refs(restored.restored) == _refs(
+                item.ref.model_copy(update={"revision": item.ref.revision + 1}) for item in originals
+            )
             assert (
                 await runtime.atomic_memory.for_scope(scope).get(result.primary.ref.artifact_id)
             ).state.state == "retired"
@@ -336,17 +338,29 @@ def test_experience_nested_restore_republishes_the_selected_group(database, tmp_
             preview = await merge.preview_restoration(identity, **kwargs)
             assert preview.endpoint.ref == last.ref
             result = await merge.restore(identity, preview_token=preview.preview_token, **kwargs)
+            outcome = await merge.restoration_outcome(identity, revision=result.primary.ref.revision)
+            assert outcome is not None and outcome.operation == kwargs.get("operation", "restore")
+            assert outcome.undo_merge_results == ((last.ref,) if target == "endpoint" else (last.ref, first.ref))
+            assert _refs(item.after_ref for item in outcome.writes) == _refs((*result.restored, *result.retired))
+            source = next(item.content_from_ref for item in outcome.writes if item.after_ref.artifact_id == identity)
+            assert source == (last.ref if target == "endpoint" else b.ref if historical else b_current.ref)
+            assert len(result.primary.artifact.lineage.sources) == 1
+            assert all(not item.artifact.lineage.sources for item in result.records if item.ref.artifact_id != identity)
             expected_refs = (
-                (first.ref, d.ref)
+                (first.ref.model_copy(update={"revision": 3}), d.ref.model_copy(update={"revision": 2}))
                 if target == "endpoint"
                 else (
-                    a.ref,
-                    d.ref,
-                    ArtifactRef(family="experience", artifact_id=b.ref.artifact_id, revision=3 if historical else 2),
+                    a.ref.model_copy(update={"revision": 2}),
+                    d.ref.model_copy(update={"revision": 2}),
+                    ArtifactRef(family="experience", artifact_id=b.ref.artifact_id, revision=3),
                 )
             )
             assert _refs(result.restored) == _refs(expected_refs)
-            assert (await merge.get(last.ref.artifact_id)).state.lifecycle_state == "retired"
+            retired = await merge.get(last.ref.artifact_id)
+            assert retired.state.lifecycle_state == "retired"
+            assert retired.ref.revision == 2
+            assert retired.ref in result.retired
+            assert all(item.creates_revision for item in preview.restore)
             assert result.undo_merge_results == (
                 (last.ref.artifact_id,) if target == "endpoint" else (last.ref.artifact_id, first.ref.artifact_id)
             )
@@ -356,7 +370,11 @@ def test_experience_nested_restore_republishes_the_selected_group(database, tmp_
             } == {ref.artifact_id for ref in expected_refs}
             if target == "endpoint":
                 assert (await merge.get(b.ref.artifact_id)).state.merged_into_id == first.ref.artifact_id
-                assert (await merge.get(first.ref.artifact_id)).artifact == first.artifact
+                restored_first = await merge.get(first.ref.artifact_id)
+                assert restored_first.ref.revision == 3
+                assert restored_first.artifact.content == first.artifact.content
+                assert restored_first.artifact.lineage.artifacts == (first.ref,)
+                assert (await merge.get(first.ref.artifact_id, revision=2)).artifact == first.artifact
             else:
                 assert (await merge.get(first.ref.artifact_id)).state.lifecycle_state == "retired"
                 restored = await merge.get(b.ref.artifact_id)
@@ -393,6 +411,87 @@ def test_experience_merge_preserves_explicit_caller_identity_and_denies_foreign_
                 len((await runtime.records.for_scope(scope).query_artifacts("experience", limit=20, cursor=None)).items)
                 == 2
             )
+
+    asyncio.run(scenario())
+
+
+def test_restoration_outcome_survives_reopen_and_requires_group_read_access(database, tmp_path) -> None:
+    async def scenario() -> None:
+        from powercontext.server.authz import (
+            AccessAuditContext,
+            AccessBinding,
+            AccessBindingState,
+            AccessControlService,
+            AccessRole,
+            BuiltinAuthorizationProvider,
+        )
+
+        config = BuiltinConfig(database=database)
+        scheduler_path = tmp_path / "scheduler.db"
+        async with open_builtin_runtime(config, scheduler_path=scheduler_path) as runtime:
+            scope = await _scope(runtime)
+            assert runtime.artifact_merge is not None
+            merge = runtime.artifact_merge.for_scope(scope, "experience")
+            a, b = await _create(runtime, scope, "canary"), await _create(runtime, scope, "pause")
+            merged = (await merge.merge((a.as_read(), b.as_read()), _content("combined"))).primary
+            assert await merge.restoration_outcome(a.ref.artifact_id, revision=1) is None
+            restored = await merge.restore(a.ref.artifact_id)
+            outcome = await merge.restoration_outcome(a.ref.artifact_id, revision=2)
+            assert outcome is not None
+            assert outcome.operation == "restore" and outcome.target == a.ref
+            assert outcome.undo_merge_results == (merged.ref,)
+            assert _refs(item.before_ref for item in outcome.writes) == _refs((a.ref, b.ref, merged.ref))
+            assert _refs(item.after_ref for item in outcome.writes) == _refs((*restored.restored, *restored.retired))
+            assert all(item.content_from_ref == item.before_ref for item in outcome.writes)
+            assert {item.after_ref.artifact_id: item.lifecycle_state for item in outcome.writes} == {
+                a.ref.artifact_id: "active",
+                b.ref.artifact_id: "active",
+                merged.ref.artifact_id: "retired",
+            }
+            frozen_outcome = outcome.model_dump(mode="json")
+            await runtime.records.for_scope(scope).replace_artifact(
+                "experience", a.ref.artifact_id, '"revision:2"', ArtifactWrite(content=_content("latest").model_dump())
+            )
+            again = await merge.merge(
+                ((await merge.get(a.ref.artifact_id)).as_read(), (await merge.get(b.ref.artifact_id)).as_read()),
+                _content("again"),
+            )
+            reader = PrincipalRef(type="user", id="artifact-only-reader")
+            contexts = cast(RelationalContexts, runtime._provider)
+            async with contexts.database.transaction() as connection:
+                await RelationalAccessRepository(contexts.database, connection=connection).create_binding(
+                    AccessBinding(
+                        binding_id="primary-only",
+                        subject=reader,
+                        resource=ResourceRef.artifact(scope, family="experience", artifact_id=a.ref.artifact_id),
+                        role=AccessRole.ARTIFACT_VIEWER,
+                        granted_by=contexts.atomic_memory.default_context.principal,
+                        reason=None,
+                        created_at=datetime.now(UTC),
+                        expires_at=None,
+                        state=AccessBindingState.ACTIVE,
+                        version=1,
+                        policy_revision="pending",
+                        idempotency_key="primary-only",
+                    )
+                )
+            repository = RelationalAccessRepository(contexts.database)
+            access = AccessControlService(
+                BuiltinAuthorizationProvider(repository), relationships=repository, audit=repository
+            )
+            context = AtomicMemoryExecutionContext(
+                principal=reader, access=access, audit=AccessAuditContext(transport="test", operation="restore-outcome")
+            )
+            assert (await merge.get(a.ref.artifact_id, revision=2, context=context)).ref == restored.primary.ref
+            with pytest.raises(AccessDeniedError):
+                await merge.restoration_outcome(a.ref.artifact_id, revision=2, context=context)
+        async with open_builtin_runtime(config, scheduler_path=scheduler_path) as reopened:
+            assert reopened.artifact_merge is not None
+            merge = reopened.artifact_merge.for_scope(scope, "experience")
+            recovered = await merge.restoration_outcome(a.ref.artifact_id, revision=2)
+            assert recovered is not None and recovered.model_dump(mode="json") == frozen_outcome
+            assert (await merge.get(a.ref.artifact_id)).ref.revision == 3
+            assert (await merge.get(a.ref.artifact_id)).state.merged_into_id == again.primary.ref.artifact_id
 
     asyncio.run(scenario())
 

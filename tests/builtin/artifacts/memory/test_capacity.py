@@ -255,9 +255,9 @@ def test_atomic_forgetting_preserves_history_tags_and_current_projection(databas
             assert await atomic_row_counts(contexts, scope_id) == (before[0], before[1], 1)
             restored = await memory.restore(tagged.artifact_id)
             assert restored.primary.state.state is AtomicMemoryStateValue.ACTIVE
-            assert restored.primary.ref.revision == 1
+            assert restored.primary.ref.revision == 2
             assert await contexts.records.get_tags(scope_id, target) == tags
-            assert await atomic_row_counts(contexts, scope_id) == (*before[:2], 2)
+            assert await atomic_row_counts(contexts, scope_id) == (before[0] + 1, before[1], 2)
 
     asyncio.run(scenario())
 
@@ -488,8 +488,9 @@ def test_atomic_forgetting_preserves_tags_added_before_commit(database_config, m
             restored = await memory.restore(created[0].artifact_id)
             assert restored.primary.state.state is AtomicMemoryStateValue.ACTIVE
             hits = (await memory.search("Capacity project", tag_filter=TagFilter(tags=("newly protected",)))).hits
-            assert [hit.hit.artifact_ref for hit in hits] == [current.ref]
-            assert await atomic_row_counts(contexts, scope_id) == before
+            assert [hit.hit.artifact_ref for hit in hits] == [restored.primary.ref]
+            assert restored.primary.ref.revision == 2
+            assert await atomic_row_counts(contexts, scope_id) == (before[0] + 1, *before[1:])
             assert (await contexts.records.get_tags(scope_id, target)).tags == ("newly protected",)
 
     asyncio.run(scenario())

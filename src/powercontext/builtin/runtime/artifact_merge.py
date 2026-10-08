@@ -40,6 +40,7 @@ from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.tables import ARTIFACT_TAGS_TABLE
 from powercontext.builtin.records import BaseOperationNotSupportedError
 from powercontext.builtin.sources import validate_scope_id
+from powercontext.builtin.sources.content import ArtifactRestorationOutcome
 from powercontext.builtin.tags import normalize_tags
 
 
@@ -134,6 +135,19 @@ class ScopedArtifactMerge:
         prepared = await self.service.prepare_merge(plan)
         async with self.application.database.transaction() as connection:
             return await self.service.commit(connection, prepared, context)
+
+    async def restoration_outcome(
+        self, artifact_id: str, *, revision: int, context: Any = None
+    ) -> ArtifactRestorationOutcome | None:
+        """Read the saved exact group outcome from a restoration's primary revision."""
+
+        context = self._context(context)
+        access = getattr(context, "access", None)
+        async with (
+            access.defer_decision_audit() if access is not None else nullcontext(),
+            self.application.database.transaction(consistent_snapshot=True) as connection,
+        ):
+            return await self.service.restoration_outcome(connection, self.scope_id, artifact_id, revision, context)
 
     async def preview_restoration(
         self,

@@ -88,6 +88,12 @@ def test_ordinary_revision_rejects_frozen_or_retired_identity(lifecycle: str, me
                 await repositories.artifacts.revise(
                     connection, "project", original, HandoffDraft(content=HandoffContent(summary="edited"))
                 )
+            if lifecycle == "retired":
+                expected = await ArtifactGovernanceRepository().get(connection, "project", "handoff", "input")
+                with pytest.raises(InvalidArtifactLifecycleError):
+                    await repositories.artifacts.revise_for_restoration(
+                        connection, "project", original, HandoffDraft(content=original.content), expected
+                    )
             assert await repositories.artifacts.get(connection, "project", original.as_ref()) == original
 
     asyncio.run(scenario())

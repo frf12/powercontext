@@ -2551,6 +2551,12 @@ class ScopedArtifactMergeApplication:
         async with self._runtime._scope_operation(self.scope_id):
             return await self._scoped.get(artifact_id, revision=revision, context=self._context(context))
 
+    async def restoration_outcome(self, artifact_id: str, *, revision: int, context: Any = None):
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._scoped.restoration_outcome(
+                artifact_id, revision=revision, context=self._context(context)
+            )
+
     async def merge(
         self,
         inputs: Sequence[ArtifactMergeRead],
