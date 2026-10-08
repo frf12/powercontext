@@ -45,8 +45,9 @@ class AtomicMemoryExecutionContext:
 
 
 class AtomicMemorySecurity:
-    def __init__(self, database: AsyncDatabase) -> None:
+    def __init__(self, database: AsyncDatabase, *, family: str = "atomic-memory") -> None:
         self.database = database
+        self.family = family
 
     async def lock_transaction(self, connection: AsyncConnection, scope_id: str, context: Any) -> None:
         from powercontext.server.authz import AccessUnavailableError
@@ -119,8 +120,8 @@ class AtomicMemorySecurity:
         from powercontext.server.authz import ArtifactOwnerRelation, ResourceRef
         from powercontext.server.authz.repository import RelationalAccessRepository
 
-        resource = ResourceRef.artifact(scope_id, family="atomic-memory", artifact_id=artifact_id)
-        key = f"atomic-memory-owner:{scope_id}:{artifact_id}"
+        resource = ResourceRef.artifact(scope_id, family=self.family, artifact_id=artifact_id)
+        key = f"{self.family}-owner:{scope_id}:{artifact_id}"
         if context.access is not None:
             await context.access.with_connection(connection).establish_artifact_owner(
                 resource, context.principal, idempotency_key=key, context=context.audit

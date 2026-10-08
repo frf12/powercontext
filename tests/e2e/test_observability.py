@@ -378,7 +378,8 @@ def test_database_failure_log_does_not_include_memory_content(caplog, tmp_path) 
         with sqlite3.connect(database_path) as connection:
             connection.executescript("""
                 CREATE TRIGGER reject_memory_insert
-                BEFORE INSERT ON pc_atomic_memory_states
+                BEFORE INSERT ON pc_artifact_heads
+                WHEN NEW.family = 'atomic-memory'
                 BEGIN
                     SELECT RAISE(ABORT, 'forced persistence failure');
                 END;
@@ -644,7 +645,8 @@ def test_memory_commit_failure_is_traced_and_rolls_back(tmp_path) -> None:
         with sqlite3.connect(database_path) as connection:
             connection.executescript("""
                 CREATE TRIGGER reject_memory_insert
-                BEFORE INSERT ON pc_atomic_memory_states
+                BEFORE INSERT ON pc_artifact_heads
+                WHEN NEW.family = 'atomic-memory'
                 BEGIN
                     SELECT RAISE(ABORT, 'forced Memory commit failure');
                 END;

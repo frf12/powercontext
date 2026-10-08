@@ -43,6 +43,7 @@ from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
     AtomicMemoryReconciliationOutput,
 )
 from powercontext.builtin.artifacts.experience import ExperienceCandidatePipeline, ExperienceGenerator
+from powercontext.builtin.artifacts.experience.merge import ExperienceMergeAdapter
 from powercontext.builtin.artifacts.handoff import (
     DefaultHandoffEvidenceProjector,
     HandoffGenerationPipeline,
@@ -58,6 +59,8 @@ from powercontext.builtin.artifacts.memory import (
     MemoryWriteGate,
 )
 from powercontext.builtin.artifacts.memory.reranking import MemoryRerankText
+from powercontext.builtin.artifacts.merge import ArtifactMergeService
+from powercontext.builtin.artifacts.merge_restoration import ArtifactMergePreviewSigner
 from powercontext.builtin.artifacts.profile.generation import PROFILE_INSTRUCTIONS, LLMProfileGenerator
 from powercontext.builtin.artifacts.profile.service import (
     ProfileGenerationInput,
@@ -92,11 +95,13 @@ from powercontext.builtin.inference.usage import (
     UsageReportingEmbeddingModel,
     UsageReportingStructuredGenerator,
 )
-from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_TABLES
 from powercontext.builtin.persistence.dream_schema import ensure_dream_schema
 from powercontext.builtin.persistence.experience_index import ensure_artifact_head_searchable_text
 from powercontext.builtin.persistence.memory_index import CompositeMemoryIndex, MemoryIndex
-from powercontext.builtin.persistence.migrations.atomic_memory_v1 import assert_atomic_memory_migration_ready
+from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
+    assert_atomic_memory_migration_ready,
+    ensure_supported_atomic_memory_schema,
+)
 from powercontext.builtin.persistence.oceanbase.atomic_memory_index import OceanBaseAtomicMemoryIndex
 from powercontext.builtin.persistence.oceanbase.experience_index import OceanBaseExperienceFTSIndex
 from powercontext.builtin.persistence.oceanbase.memory_index import (
@@ -137,6 +142,7 @@ from powercontext.builtin.runtime.application import (
     ScheduledExperienceRunner,
     ScheduledSourceRunner,
 )
+from powercontext.builtin.runtime.artifact_merge import ArtifactMergeApplication, merge_artifact_tags
 from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingBinding,
     ArtifactProcessingSupervisor,
@@ -144,7 +150,7 @@ from powercontext.builtin.runtime.artifact_processing import (
     SpawnArtifactProcessingWorkerLauncher,
 )
 from powercontext.builtin.runtime.atomic_memory_processing import AtomicMemoryProcessingConfig
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
+from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext, AtomicMemorySecurity
 from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.decision_model import (
     DECISION_INSTRUCTIONS,
@@ -380,6 +386,36 @@ def _configured_memory_write_gate(
             extra={"event": "memory.write-gate.unavailable", "decision_kind": "memory.write-gate"},
         )
     return gate
+
+
+def _artifact_merge_application(contexts: RelationalContexts, config: RuntimeConfig) -> ArtifactMergeApplication:
+    signer = (
+        None
+        if config.atomic_memory_preview_signing_secret is None
+        else ArtifactMergePreviewSigner(
+            keys={
+                config.atomic_memory_preview_signing_key_id: config.atomic_memory_preview_signing_secret.get_secret_value().encode(
+                    "utf-8"
+                )
+            },
+            active_key_id=config.atomic_memory_preview_signing_key_id,
+            ttl_seconds=config.atomic_memory_preview_ttl_seconds,
+        )
+    )
+    experience = ArtifactMergeService(
+        artifacts=contexts.repositories.artifacts,
+        adapter=ExperienceMergeAdapter(contexts.experience_index),
+        security=AtomicMemorySecurity(contexts.database, family="experience"),
+        merge_tags=partial(merge_artifact_tags, family="experience"),
+        preview_signer=signer,
+    )
+    return ArtifactMergeApplication(
+        contexts.database,
+        (contexts.atomic_memory.service.shared, experience),
+        default_context=contexts.atomic_memory.default_context,
+        id_factory=contexts.atomic_memory.id_factory,
+        restore_retry_budget=config.atomic_memory_restore_retry_budget,
+    )
 
 
 @asynccontextmanager
@@ -675,6 +711,7 @@ async def open_builtin_runtime(
                 statistics_service=contexts.statistics,
                 record_service=contexts.records,
                 atomic_memory_application=contexts.atomic_memory,
+                artifact_merge_application=_artifact_merge_application(contexts, config.runtime),
                 prompt_service=contexts.prompts,
                 recall_token_estimator=contexts.estimate_recall_tokens,
                 recall_effort_sink=recall_effort_sink,
@@ -936,10 +973,11 @@ async def open_builtin_contexts(
         atomic_index = SQLiteAtomicMemoryIndex(None if embedding_model is None else embedding_model.profile)
         async with SQLiteProfile.open(
             database,
-            tables=BUILTIN_TABLES + index.tables + topic_index.tables + ATOMIC_MEMORY_TABLES + atomic_index.tables,
+            tables=BUILTIN_TABLES + index.tables + topic_index.tables + atomic_index.tables,
             load_vector_extension=embedding_model is not None,
         ) as profile:
             async with profile.database.transaction() as connection:
+                await ensure_supported_atomic_memory_schema(connection)
                 await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
                 await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                 await ensure_skill_distribution_schema(connection)
@@ -1026,7 +1064,7 @@ async def open_builtin_contexts(
         topic_indexes.append(OceanBaseTopicMemoryVectorIndex(embedding_model.profile))
     topic_index = CompositeTopicMemoryIndex(*topic_indexes)
     atomic_index = OceanBaseAtomicMemoryIndex(None if embedding_model is None else embedding_model.profile)
-    tables = BUILTIN_TABLES + index.tables + topic_index.tables + ATOMIC_MEMORY_TABLES + atomic_index.tables
+    tables = BUILTIN_TABLES + index.tables + topic_index.tables + atomic_index.tables
     if isinstance(database, OceanBaseConfig):
         profile_context = OceanBaseProfile.open(database, tables=tables)
     elif isinstance(database, SeekDBConfig):
@@ -1035,6 +1073,7 @@ async def open_builtin_contexts(
         raise BuiltinConfigurationError("database")
     async with profile_context as profile:
         async with profile.database.transaction() as connection:
+            await ensure_supported_atomic_memory_schema(connection)
             await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
             await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
             await ensure_skill_distribution_schema(connection)

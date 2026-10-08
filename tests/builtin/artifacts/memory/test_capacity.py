@@ -34,11 +34,11 @@ from powercontext.builtin.artifacts.memory import (
     MemoryService,
 )
 from powercontext.builtin.artifacts.memory.canonical import memory_content_bytes
-from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_STATES_TABLE
 from powercontext.builtin.persistence.memory import RelationalMemoryBackend
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.persistence.tables import (
+    ARTIFACT_HEADS_TABLE,
     ARTIFACTS_TABLE,
     MEMORY_ENTRY_HEADS_TABLE,
     MEMORY_ENTRY_VERSIONS_TABLE,
@@ -103,7 +103,7 @@ async def atomic_row_counts(contexts, scope_id):
     async with contexts.database.connection() as connection:
         return tuple([
             await connection.scalar(select(func.count()).select_from(table).where(table.c.scope_id == scope_id))
-            for table in (ARTIFACTS_TABLE, ATOMIC_MEMORY_STATES_TABLE, contexts.atomic_memory.index.table)
+            for table in (ARTIFACTS_TABLE, ARTIFACT_HEADS_TABLE, contexts.atomic_memory.index.table)
         ])
 
 

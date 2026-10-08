@@ -39,6 +39,7 @@ from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
     apply_atomic_memory_migration,
     plan_atomic_memory_migration,
     verify_atomic_memory_migration,
+    verify_atomic_memory_migration_authority,
 )
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.sqlite.atomic_memory_index import SQLiteAtomicMemoryIndex
@@ -511,5 +512,113 @@ def test_server_startup_keeps_grant_projection_current(tmp_path: Path, entrypoin
             )
             assert response.status_code == 200, response.text
             await verify()
+
+    asyncio.run(scenario())
+
+
+def test_offline_inspection_and_apply_upgrade_released_common_columns(tmp_path: Path) -> None:
+    _prepare(tmp_path)
+    database = tmp_path / "migration.db"
+    with sqlite3.connect(database) as connection:
+        for table, columns in (
+            (
+                "pc_artifact_heads",
+                "scope_id, family, artifact_id, revision, searchable_text, lifecycle_state, "
+                "replacement_artifact_id, governance_generation",
+            ),
+            (
+                "pc_artifact_lineage_artifacts",
+                "scope_id, family, artifact_id, revision, ordinal, "
+                "upstream_family, upstream_artifact_id, upstream_revision",
+            ),
+        ):
+            connection.execute(f"CREATE TABLE released AS SELECT {columns} FROM {table}")  # noqa: S608
+            connection.execute(f"DROP TABLE {table}")
+            connection.execute(f"ALTER TABLE released RENAME TO {table}")
+        connection.execute("PRAGMA journal_mode = DELETE")
+    original = database.read_bytes()
+
+    async def inspect() -> None:
+        async with (
+            SQLiteProfile.open_readonly(_config(tmp_path)) as profile,
+            profile.database.transaction() as connection,
+        ):
+            plan = await plan_atomic_memory_migration(connection)
+            assert plan.counts["pending_entries"] == 2
+            assert not plan.ready
+            for report in (
+                await verify_atomic_memory_migration(connection),
+                await verify_atomic_memory_migration_authority(connection),
+            ):
+                assert not report.ready
+                assert any("merge columns" in error for error in report.errors), report.errors
+
+    asyncio.run(inspect())
+    assert database.read_bytes() == original
+    result = asyncio.run(_apply(tmp_path))
+    assert result.ready, result.errors
+    assert result.counts["imported_entries"] == 2
+    with sqlite3.connect(database) as connection:
+        heads = connection.execute(
+            "SELECT lifecycle_state, governance_generation, merged_into_id, revision "
+            "FROM pc_artifact_heads WHERE family = 'atomic-memory' ORDER BY artifact_id"
+        ).fetchall()
+        assert heads == [("active", 0, None, 1), ("active", 0, None, 1)]
+        assert connection.execute(
+            "SELECT DISTINCT is_merge_input FROM pc_artifact_lineage_artifacts WHERE family = 'atomic-memory'"
+        ).fetchall() == [(0,)]
+        assert (
+            connection.execute("SELECT name FROM sqlite_master WHERE name = 'pc_atomic_memory_states'").fetchone()
+            is None
+        )
+
+
+def test_migration_replay_preserves_evolved_head_and_imported_history(tmp_path: Path) -> None:
+    _prepare(tmp_path)
+    assert asyncio.run(_apply(tmp_path)).ready
+    with sqlite3.connect(tmp_path / "migration.db") as connection:
+        target = connection.execute(
+            "SELECT artifact_id FROM pc_artifact_heads WHERE family = 'atomic-memory' ORDER BY artifact_id LIMIT 1"
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE pc_artifact_heads SET lifecycle_state = 'deprecated', governance_generation = 4 "
+            "WHERE family = 'atomic-memory' AND artifact_id = ?",
+            (target,),
+        )
+        connection.execute("DELETE FROM pc_atomic_memory_current WHERE artifact_id = ?", (target,))
+        connection.execute("DELETE FROM pc_atomic_memory_current_fts WHERE artifact_id = ?", (target,))
+    retained = {
+        table: _snapshot(tmp_path, table)
+        for table in (
+            "pc_artifacts",
+            "pc_artifact_heads",
+            "pc_artifact_lineage_artifacts",
+            "pc_access_owners",
+            "pc_artifact_tags",
+            "pc_access_relationships",
+            "pc_access_idempotency",
+        )
+    }
+    repeated = asyncio.run(_apply(tmp_path))
+    assert repeated.ready, repeated.errors
+    assert repeated.counts["imported_entries"] == 0
+    for table, rows in retained.items():
+        assert _snapshot(tmp_path, table) == rows
+
+
+def test_verification_rejects_imported_evidence_marked_as_merge_input(tmp_path: Path) -> None:
+    _prepare(tmp_path)
+    assert asyncio.run(_apply(tmp_path)).ready
+    with sqlite3.connect(tmp_path / "migration.db") as connection:
+        connection.execute("UPDATE pc_artifact_lineage_artifacts SET is_merge_input = 1 WHERE family = 'atomic-memory'")
+
+    async def scenario() -> None:
+        async with (
+            SQLiteProfile.open_readonly(_config(tmp_path)) as profile,
+            profile.database.transaction() as connection,
+        ):
+            report = await verify_atomic_memory_migration(connection)
+            assert not report.ready
+            assert any("imported exact evidence differs" in error for error in report.errors), report.errors
 
     asyncio.run(scenario())

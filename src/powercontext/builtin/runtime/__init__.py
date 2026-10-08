@@ -77,6 +77,7 @@ from powercontext.builtin.runtime.application import (
     TopicMemoryApplication,
     WorkApplication,
 )
+from powercontext.builtin.runtime.artifact_merge import ArtifactMergeApplication, ScopedArtifactMerge
 from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingBinding,
     ArtifactProcessingSupervisor,
@@ -218,6 +219,7 @@ __all__ = [
     "ActivateHandoff",
     "ApproveArtifactCandidateRequest",
     "ArtifactInventoryStatistics",
+    "ArtifactMergeApplication",
     "ArtifactProcessingBinding",
     "ArtifactProcessingSupervisor",
     "ArtifactProcessingSupervisorStatus",
@@ -359,6 +361,7 @@ __all__ = [
     "ScheduledExperienceProcessor",
     "ScheduledSourceProcessor",
     "ScopeStatistics",
+    "ScopedArtifactMerge",
     "ScopedAtomicMemoryApplication",
     "ScopedDreamApplication",
     "ScopedExperienceApplication",
