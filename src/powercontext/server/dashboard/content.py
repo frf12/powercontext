@@ -86,12 +86,11 @@ async def load_notes(api: DashboardAPI, request: Request, ctx: dict[str, Any]) -
         ctx["errors"]["notes"] = error
         return
     if searching:
-        items = [
-            {**item, "matched_by": hit["matched_by"], "score": hit["score"]}
-            for item, hit in zip(
-                memory_view({"items": [hit["memory"] for hit in result["hits"]]}), result["hits"], strict=True
-            )
-        ]
+        items = memory_view({
+            "items": [
+                {**hit["memory"], "matched_by": hit["matched_by"], "score": hit["score"]} for hit in result["hits"]
+            ]
+        })
         window = list_page(items, request.query_params.get("notes_page"))
         ctx["data"]["notes"] = window["items"]
         ctx["notes_pager"] = list_links(ctx, "notes", window)
@@ -153,12 +152,7 @@ async def select_note(api: DashboardAPI, request: Request, ctx: dict[str, Any]) 
         if ref:
             ctx["selected_note"] = await api.atomic_memory_get(scope, ref["artifact_id"], ref["revision"])
             current = next(
-                (
-                    item
-                    for item in ctx["data"]["notes"]
-                    if item["artifact_id"] == ref["artifact_id"] and item["revision"] == ref["revision"]
-                ),
-                None,
+                (item for item in ctx["data"]["notes"] if item["note_key"] == ctx["selected_note"]["note_key"]), None
             )
             if current and "matched_by" in current:
                 ctx["selected_note"].update(matched_by=current["matched_by"], score=current["score"])

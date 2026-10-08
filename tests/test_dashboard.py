@@ -323,13 +323,15 @@ def test_memory_search_modes_surface_semantic_hits_and_keep_navigation(tmp_path:
             assert (
                 client.post(
                     "/v1/memory/remember",
-                    json={"scope_id": scope, "kind": "preference", "text": f"Coffee preparation choice {index}."},
+                    json={"scope_id": scope, "kind": "fact", "text": f"Coffee preparation choice {index}."},
                 ).status_code
                 == 200
             )
         lexical = client.get("/dashboard/notes", params={"scope": scope, "q": "caffeine", "mode": "fts"})
+        assert lexical.status_code == 200
         assert not record_links(lexical.text, "/dashboard/notes", "artifact")
         semantic = client.get("/dashboard/notes", params={"scope": scope, "q": "caffeine", "mode": "vector"})
+        assert semantic.status_code == 200
         assert len(record_links(semantic.text, "/dashboard/notes", "artifact")) == 6
         assert 'data-memory-channel="vector"' in semantic.text
         assert 'data-memory-channel="text"' not in semantic.text
@@ -349,6 +351,9 @@ def test_memory_search_modes_surface_semantic_hits_and_keep_navigation(tmp_path:
         assert restored.url.params["mode"] == "vector"
         assert not restored.url.params.get("artifact")
         assert "memory-search-evidence" not in restored.text
+        forgotten = client.get(page_link(restored.text, LABELS["memory_state_forgotten"]))
+        assert forgotten.url.params["mode"] == "vector"
+        assert forgotten.url.params["note_state"] == "forgotten"
         automatic = client.get("/dashboard/notes", params={"scope": scope, "q": "coffee", "lang": "en"})
         assert "Executed mode: Hybrid" in automatic.text
         assert 'data-memory-channel="text"' in automatic.text
@@ -643,6 +648,15 @@ def test_reviewed_methods_link_to_exact_memory_evidence(dashboard: TestClient) -
     assert historical.status_code == 200
     assert "The original retry preserved one committed record." in historical.text
     assert LABELS["historical_revision"] in historical.text
+    searched_history = dashboard.get(
+        memory_link, params={**{key: value[0] for key, value in query.items()}, "q": "refined", "mode": "fts"}
+    )
+    assert searched_history.status_code == 200
+    assert 'data-memory-channel="text"' in searched_history.text
+    selected_header = re.search(r'<button\b[^>]*aria-expanded="true"[^>]*>(.*?)</button>', searched_history.text, re.S)
+    assert selected_header is not None
+    assert "The original retry preserved" in selected_header[1]
+    assert "memory-search-evidence" not in selected_header[1]
     other = create_scope(dashboard, "Unrelated Dream evidence")["scope_id"]
     denied_read = dashboard.get(
         f"/v1/scopes/{other}/artifacts/atomic-memory/{memory_ref['artifact_id']}/revisions/{memory_ref['revision']}"
