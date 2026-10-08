@@ -564,7 +564,7 @@ class _CaptureReconciler:
         )
 
 
-def test_source_flush_supplies_only_the_migrated_related_entry_evidence(migrated) -> None:
+def test_source_flush_supplies_the_migrated_related_entry_current_content(migrated) -> None:
     reconciler = _CaptureReconciler()
     pipeline = AtomicMemoryGenerationPipeline(
         extractor=_TriggerExtractor(), reconciler=reconciler, estimator=character_token_estimator()
@@ -583,10 +583,10 @@ def test_source_flush_supplies_only_the_migrated_related_entry_evidence(migrated
                 evidence = {item.evidence_id: item for item in request.evidence}
                 for related in request.related:
                     if any(original.ref == _atomic("alpha", 2) for original in related.original_refs):
-                        observed.append(tuple(evidence[key].source_ref for key in related.evidence_ids))
+                        observed.append(tuple(evidence[key] for key in related.evidence_ids))
             assert observed, "The public flush must compare the imported alpha identity."
-            assert all(
-                tuple(sorted(sources, key=lambda source: source.model_dump_json())) == (A, C) for sources in observed
-            )
+            for (published,) in observed:
+                assert published.artifact_ref == _atomic("alpha", 2)
+                assert published.content.text == "Tasks A and C were completed."
 
     asyncio.run(scenario())
