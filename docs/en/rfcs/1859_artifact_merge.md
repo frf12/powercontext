@@ -36,9 +36,13 @@ shared operation and writes to the same common tables.
 
 ## Undo
 
-To undo the merge that created C, the shared operation reads its inputs from the merge record, restores A and B at their frozen
-revisions and pre-merge states, and retires C. Later revisions of C are not automatically distributed back to A and B.
-C's history remains readable, and its retired identity cannot be reactivated.
+To undo the merge that created C, the shared operation reads its inputs from the merge record and restores A and B to their
+pre-merge states. Each restored input appends a revision under its existing Artifact identity, using its frozen content.
+An explicit `restore` may select a historical revision only for its target; `undo_merge` does not accept a historical revision.
+C also appends a revision under its existing identity to record retirement. Each new
+revision is the Artifact's current revision plus one; existing revisions and the original merge relationships remain intact.
+Later revisions of C are not automatically distributed back to A and B. C's history remains readable, and its retired identity
+cannot be reactivated. Default effective reads follow the new revisions.
 
 Successive merges follow currently effective relationships. If A and B form C, and C and D form E, restoring B undoes E and then C,
 restores A, B, and D, and retires C and E. Undoing only E restores C and D while A and B remain frozen.
@@ -47,6 +51,8 @@ Ordinary evidence references do not trigger cascading undo, and external operati
 A caller can preview the impact before undo or request undo directly, letting the server calculate and return the actual impact.
 Execution based on a preview must reject it if relevant revisions, states, or relationships have changed rather than expanding
 the confirmed scope.
+
+If no state changes are needed and no historical revision is selected, the operation is a no-op and does not append revisions.
 
 # Reference-level explanation
 
@@ -58,7 +64,10 @@ They are not tied to any Family's content format. Shared storage must represent:
 - The inputs, result, and exact revisions used by each merge.
 - Input freezing, pre-merge states, and each input's current merge destination.
 - Whether merge relationships remain effective and how successive merges are connected.
-- Undo records and the objects actually restored or retired.
+- Undo records with exact references to the revisions actually restored or retired and the frozen or selected historical
+  revisions used for restoration. Existing revision and provenance records can retain these references without a separate
+  operation ledger. The actual group result remains queryable by the operation's primary exact revision, subject to read
+  permission checks on the affected Artifacts.
 
 The shared layer maintains these authoritative records for merge and undo. Content stays in existing Artifact revisions and is
 not duplicated in the common tables. Ordinary lineage continues to record evidence; it cannot replace merge records or establish
@@ -93,6 +102,7 @@ without redirecting to the merge result. Integration does not require enabling a
 Merge and undo check permissions, revisions, states, and relationships for every affected Artifact. Reads during content generation
 do not replace publication-time checks. Result publication, input freezing, common relationships, and associated current state
 become effective together. Undo is also effective as a group; failure must not leave partially frozen or restored inputs.
+The revisions appended for restoration and retirement and their current state become effective in the same transaction.
 An input can belong to only one currently effective merge result. Concurrent operations cannot merge the same input into two
 simultaneously effective results.
 
@@ -104,7 +114,8 @@ undo behavior of RFC #1809. Common records are authoritative for merge and undo.
 Acceptance should cover Atomic Memory and another Family, confirming that both use the same operations and common tables without
 adding dedicated merge tables. It should also verify that ordinary writes do not trigger merges, that business entry points
 cannot bypass freeze checks, and that successive merges, cascading undo, stale previews, concurrent competition, group failure,
-and exact historical reads behave as specified.
+and exact historical reads behave as specified. Restoration and retirement must append the next revision under each existing
+identity, preserve exact undo references, and leave unchanged requests without a selected historical revision as no-ops.
 
 # Drawbacks
 
