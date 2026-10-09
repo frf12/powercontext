@@ -87,7 +87,7 @@ struct LegacySaveResponse {
 #[serde(untagged)]
 enum SaveResponse {
     Atomic(MemoryMutationResponse),
-    Legacy(LegacySaveResponse),
+    Legacy(Box<LegacySaveResponse>),
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
