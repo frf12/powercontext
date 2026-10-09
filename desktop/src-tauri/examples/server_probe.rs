@@ -266,7 +266,7 @@ async fn main() {
         serde_json::json!({
             "result":"passed",
             "qualification":"candidate native real-Server evidence; product profile is separate",
-            "contractSha256":contract_sha256,
+            "contractSha256":fixture.compatibility_profile.contract_sha256,
             "performance": {
                 "scope":"Native ConnectionManager round trips, including identity recheck; local fixture; no UI latency or approved budget",
                 "noteCount":13,
