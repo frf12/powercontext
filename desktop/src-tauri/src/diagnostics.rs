@@ -326,6 +326,27 @@ fn execute(
     project(kind, &result.stdout, result.exit_code)
 }
 
+pub struct DiagnosticHost {
+    #[cfg(windows)]
+    pub local: Option<LocalDiagnostics>,
+}
+impl DiagnosticHost {
+    pub fn new(directory: Option<std::path::PathBuf>) -> Self {
+        #[cfg(windows)]
+        {
+            Self {
+                local: directory
+                    .map(|path| LocalDiagnostics::new(path.join("diagnostic-cli.json"))),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = directory;
+            Self {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::supported_cli_version;
@@ -364,26 +385,5 @@ mod tests {
             "1.2.1.dev{}",
             "a".repeat(128)
         )));
-    }
-}
-
-pub struct DiagnosticHost {
-    #[cfg(windows)]
-    pub local: Option<LocalDiagnostics>,
-}
-impl DiagnosticHost {
-    pub fn new(directory: Option<std::path::PathBuf>) -> Self {
-        #[cfg(windows)]
-        {
-            Self {
-                local: directory
-                    .map(|path| LocalDiagnostics::new(path.join("diagnostic-cli.json"))),
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = directory;
-            Self {}
-        }
     }
 }
