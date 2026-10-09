@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+mod common;
+
 use powercontext_desktop::{
     connections::{
         profiles::ProfileRepository,
@@ -147,17 +149,10 @@ async fn setup() -> Fixture {
         }
     });
     let dir = tempfile::tempdir().unwrap();
-    let manager = Arc::new(ConnectionManager::new(
+    let manager = Arc::new(common::connection_manager(
         ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(WindowsVault)).unwrap(),
     ));
-    let state = manager.state().unwrap();
-    let compatibility = state
-        .compatibility_profiles
-        .iter()
-        .find(|profile| profile.id == "sqlite-6e237568-v1")
-        .expect("bundled legacy qualification")
-        .id
-        .clone();
+    let compatibility = common::PROFILE_ID;
     let mut ids = vec![];
     for name in ["A", "B"] {
         let state = manager.save_profile(serde_json::from_value(serde_json::json!({"id":null,"revision":null,"name":name,"endpoint":endpoint,"authentication":"unauthenticated_loopback","caPem":null,"compatibility":compatibility,"keepCredential":false,"credential":null})).unwrap()).unwrap();

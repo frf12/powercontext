@@ -12,4 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Versioned, explicitly invoked domain migrations; never startup backfills."""
+"""Versioned, explicitly invoked migrations; never startup backfills.
+
+Bundles explicitly describe the objects they own. The experimental fixture bundle
+is an isolated four-table prototype, not a migration for a deployed PowerContext DB.
+"""
+
+from .bundle import MigrationBundle
+from .models import MigrationError, MigrationPlan, MigrationResult
+from .sqlite import SQLiteMigrationRunner
+
+__all__ = ["MigrationBundle", "MigrationError", "MigrationPlan", "MigrationResult", "SQLiteMigrationRunner"]

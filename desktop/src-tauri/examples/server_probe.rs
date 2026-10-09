@@ -27,6 +27,7 @@ use powercontext_desktop::{
 use serde::Deserialize;
 #[derive(Deserialize)]
 struct Fixture {
+    compatibility_profile: CompatibilityProfile,
     response_loss_path: Option<String>,
     identity_change_path: Option<String>,
     endpoint: String,
@@ -122,33 +123,16 @@ async fn main() {
     assert_eq!(exact.text, text);
     // Exercise the same native context owner used by product IPC, not only bare HTTP adapters.
     let temporary = tempfile::tempdir().unwrap();
-    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&args[1]).unwrap()).unwrap();
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../src/transport/operations.json")).unwrap();
-    let contract_sha256 = contract["contractSha256"].as_str().unwrap();
-    // This candidate exercises a real Server; success is evidence for later product qualification.
-    let compatibility = "candidate-atomic-contract";
-    let candidate = CompatibilityProfile {
-        id: compatibility.into(),
-        server_commit: "candidate-under-validation".into(),
-        contract_sha256: contract_sha256.into(),
-        artifact_sha256: "candidate-under-validation".into(),
-        operations: contract["operations"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect(),
-        evidence: "isolated real-Server probe; candidate until its complete run passes".into(),
-    };
-    let manager = ConnectionManager::for_validation(
+    let manager = ConnectionManager::with_compatibility(
         ProfileRepository::open(
             temporary.path().join("profiles.json"),
             std::sync::Arc::new(WindowsVault),
         )
         .unwrap(),
-        vec![candidate],
+        vec![fixture.compatibility_profile.clone()],
     );
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&args[1]).unwrap()).unwrap();
+    let compatibility = &fixture.compatibility_profile.id;
     let credential = raw["token"]
         .as_str()
         .map(|value| serde_json::json!({"secret":value,"storage":"session_only"}));
