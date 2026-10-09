@@ -21,6 +21,7 @@ import {
   screen,
   fireEvent,
   act,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -480,6 +481,11 @@ test.each(["scope", "page"])(
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
     await user.click(screen.getByRole("button", { name: "记忆" }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { level: 1, name: "记忆" }),
+      ),
+    );
     await user.type(screen.getByLabelText("记忆内容"), "draft A");
     await user.click(screen.getByRole("button", { name: "保存" }));
     if (switchKind === "scope") {
@@ -500,7 +506,17 @@ test.each(["scope", "page"])(
       await user.click(screen.getByRole("button", { name: "Scope B" }));
     } else {
       await user.click(screen.getByRole("button", { name: "总览" }));
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          screen.getByRole("heading", { level: 1, name: "总览" }),
+        ),
+      );
       await user.click(screen.getByRole("button", { name: "记忆" }));
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          screen.getByRole("heading", { level: 1, name: "记忆" }),
+        ),
+      );
     }
     await user.type(screen.getByLabelText("记忆内容"), "draft B");
     await act(async () => {
