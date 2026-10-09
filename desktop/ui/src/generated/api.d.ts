@@ -596,6 +596,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/handoff/hint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare optional compact continuity hints from a selected Handoff
+         * @description Explicitly request untrusted historical orientation for a fresh session. Select an exact Revision, a complete transferred PreparedHandoff, or latest only after resolving the intended workstream Scope. Hints project existing Handoff fields and authorized evidence references without transcript summaries or model generation. They never replace full Handoff reads, evidence checks, current instructions, or live validation. The complete rendered UTF-8 hint is limited to max_bytes (at most 4000); omit it rather than truncate when budget or evidence is insufficient. Blocked hints include the full recorded state only when the complete hint fits. Authorization matches Continue: exact/latest require artifact.read and handoff.evidence.inspect on the selected Handoff, covering only its citation manifest without general Scope read; prepared requires scope.read. General evidence APIs retain their independent permission checks. Prepared selection provides no exact Revision reference; the receiver must retain the complete transferred PreparedHandoff.
+         */
+        post: operations["prepare_handoff_hint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/topic-memory/flush": {
         parameters: {
             query?: never;
@@ -610,6 +630,26 @@ export interface paths {
          * @description Persist a flush generation without waiting for background processing to complete. Request pending Topic Memory processing when the user explicitly asks for that processing. Processing depends on configured capabilities and can yield no changes. Do not use it as an explicit Memory save or infer success from Source acceptance alone.
          */
         post: operations["flush_topic_memory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scopes/{scope_id}/artifacts/{family}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search one Artifact Family in a Scope
+         * @description Search registered Artifact Families using their supported retrieval controls. Results contain complete exact Artifact revisions. Score metadata is returned only when requested; min_score compares normalized retrieval scores.
+         */
+        post: operations["search_artifacts"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2753,6 +2793,19 @@ export interface components {
             prepared?: components["schemas"]["PreparedHandoff"];
             revision?: components["schemas"]["ArtifactReference"];
         };
+        PrepareHandoffHintRequest: {
+            scope_id: string;
+            selection: components["schemas"]["HandoffSelection"];
+            /** @description Required only for prepared selection; retain this complete value for continuation. */
+            prepared?: components["schemas"]["PreparedHandoff"];
+            /** @description Required only for exact selection. */
+            revision?: components["schemas"]["ArtifactReference"];
+            /**
+             * @description Complete rendered UTF-8 text budget including notice, boundaries, and exact references.
+             * @default 2000
+             */
+            max_bytes: number;
+        };
         FinalizeHandoffRequest: {
             scope_id: string;
             draft: components["schemas"]["HandoffDraft"];
@@ -3711,6 +3764,58 @@ export interface components {
             snippet: string | null;
             score: number;
             matched_by: components["schemas"]["TopicMemoryMatchedBy"][];
+        };
+        ArtifactSearchFusion: {
+            method: string;
+            /** @default {} */
+            params: {
+                [key: string]: unknown;
+            };
+        };
+        SearchArtifactsRequest: {
+            query: string;
+            /** @default 10 */
+            limit: number;
+            mode?: string;
+            filters?: {
+                [key: string]: unknown;
+            };
+            admission?: {
+                [key: string]: unknown;
+            };
+            fusion?: components["schemas"]["ArtifactSearchFusion"];
+            min_score?: number;
+            /** @default false */
+            include_scores: boolean;
+            rerank?: {
+                [key: string]: unknown;
+            };
+        };
+        ArtifactChannelScore: {
+            raw: number;
+            metric: string;
+            higher_is_better: boolean;
+        };
+        ArtifactSearchScores: {
+            retrieval: number;
+            channels: {
+                [key: string]: components["schemas"]["ArtifactChannelScore"];
+            };
+        };
+        ArtifactSearchItem: {
+            family: string;
+            artifact_id: string;
+            revision: number;
+            content: {
+                [key: string]: unknown;
+            };
+            lineage: {
+                [key: string]: unknown;
+            };
+            scores?: components["schemas"]["ArtifactSearchScores"];
+        };
+        SearchArtifactsResponse: {
+            results: components["schemas"]["ArtifactSearchItem"][];
         };
         SearchTopicMemoryRequest: {
             scope_id: string;
@@ -5522,6 +5627,37 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    prepare_handoff_hint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrepareHandoffHintRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded orientation text, or empty when no complete supported hint can be delivered. */
+            200: {
+                headers: {
+                    "X-PowerContext-Request-ID": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreparedContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["InvalidRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     flush_topic_memory: {
         parameters: {
             query?: never;
@@ -5547,6 +5683,39 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            422: components["responses"]["InvalidRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    search_artifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+                family: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchArtifactsRequest"];
+            };
+        };
+        responses: {
+            /** @description Complete matching Artifact revisions in retrieval order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchArtifactsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["InvalidRequest"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["Unavailable"];
