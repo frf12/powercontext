@@ -21,6 +21,7 @@ use powercontext_desktop::{
     },
     credentials::WindowsVault,
     error::SafeError,
+    transport::{MemoryMutationResult, MemoryReference},
 };
 use std::sync::{
     Arc, Mutex,
@@ -49,6 +50,14 @@ impl Drop for Fixture {
     }
 }
 async fn setup() -> Fixture {
+    setup_response(serde_json::json!({"memory":{"family":"memory","artifact_id":"mem-a","revision":1},"entry":null})).await
+}
+async fn setup_response(response: serde_json::Value) -> Fixture {
+    let compatibility_id = if response.get("records").is_some() {
+        "sqlite-atomic-7bd5b85c-v1"
+    } else {
+        "sqlite-6e237568-v1"
+    };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let started = Arc::new(Notify::new());
@@ -70,6 +79,7 @@ async fn setup() -> Fixture {
                 bodies.clone(),
                 failure.clone(),
             );
+            let response = response.clone();
             tokio::spawn(async move {
                 let mut bytes = vec![];
                 let end = loop {
@@ -125,10 +135,7 @@ async fn setup() -> Fixture {
                         if status != 200 {
                             (status, serde_json::json!({"detail":"must not leak"}))
                         } else {
-                            (
-                                200,
-                                serde_json::json!({"memory":{"family":"memory","artifact_id":"mem-a","revision":1},"entry":null}),
-                            )
+                            (200, response)
                         }
                     }
                     path if path.starts_with("/v1/scopes/") => (
@@ -150,9 +157,14 @@ async fn setup() -> Fixture {
     let manager = Arc::new(ConnectionManager::new(
         ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(WindowsVault)).unwrap(),
     ));
-    let compatibility = manager.state().unwrap().compatibility_profiles[0]
-        .id
-        .clone();
+    let compatibility = manager
+        .state()
+        .unwrap()
+        .compatibility_profiles
+        .into_iter()
+        .find(|profile| profile.id == compatibility_id)
+        .unwrap()
+        .id;
     let mut ids = vec![];
     for name in ["A", "B"] {
         let state = manager.save_profile(serde_json::from_value(serde_json::json!({"id":null,"revision":null,"name":name,"endpoint":endpoint,"authentication":"unauthenticated_loopback","caPem":null,"compatibility":compatibility,"keepCredential":false,"credential":null})).unwrap()).unwrap();
@@ -210,7 +222,7 @@ async fn dispatched_write_keeps_its_original_target_and_rejects_duplicate_clicks
     assert_eq!(outcome.record.context.connection_id, fixture.a);
     assert_eq!(outcome.record.context.scope_id, "scope-a");
     assert!(outcome.result.is_none());
-    assert!(outcome.record.citation.is_none());
+    assert!(outcome.record.references.is_empty());
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(
         requests.as_slice(),
@@ -248,8 +260,56 @@ async fn nullable_entry_success_does_not_invent_a_citation() {
         .await
         .unwrap();
     assert_eq!(result.record.status, WriteStatus::Succeeded);
-    assert!(result.record.citation.is_none());
-    assert!(result.result.unwrap().entry.is_none());
+    assert!(result.record.references.is_empty());
+    let MemoryMutationResult::Legacy(saved) = result.result.unwrap() else {
+        panic!("legacy nullable entry must retain its protocol shape");
+    };
+    assert!(saved.entry.is_none());
+}
+
+#[tokio::test]
+async fn atomic_write_retains_every_record_and_exact_reference() {
+    let response = serde_json::json!({"changed":true,"records":[
+        {"artifact":{"family":"atomic-memory","artifact_id":"atomic-a","revision":3},"kind":"note","text":"first","state":"active","state_version":1,"merged_into_id":null},
+        {"artifact":{"family":"atomic-memory","artifact_id":"atomic-b","revision":5},"kind":"note","text":"second","state":"forgotten","state_version":2,"merged_into_id":null}
+    ]});
+    let fixture = setup_response(response.clone()).await;
+    fixture.release.notify_one();
+    let outcome = fixture
+        .manager
+        .remember(
+            fixture.manager.state().unwrap().generation,
+            "synthetic note",
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.record.status, WriteStatus::Succeeded);
+    let result = outcome.result.unwrap();
+    assert_eq!(serde_json::to_value(&result).unwrap(), response);
+    assert_eq!(outcome.record.references, result.references());
+    assert_eq!(outcome.record.references.len(), 2);
+    for (reference, expected) in outcome
+        .record
+        .references
+        .iter()
+        .zip([("atomic-a", 3), ("atomic-b", 5)])
+    {
+        let MemoryReference::Artifact { artifact } = reference else {
+            panic!("Atomic writes must never invent a legacy citation");
+        };
+        assert_eq!(artifact.artifact_id, expected.0);
+        assert_eq!(artifact.revision, expected.1);
+    }
+    assert_eq!(
+        fixture
+            .manager
+            .state()
+            .unwrap()
+            .last_write
+            .unwrap()
+            .references,
+        outcome.record.references
+    );
 }
 
 #[tokio::test]
