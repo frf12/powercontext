@@ -146,7 +146,6 @@ from powercontext.builtin.runtime.artifact_processing import (
 from powercontext.builtin.runtime.artifact_search import ArtifactSearchService
 from powercontext.builtin.runtime.atomic_memory_processing import AtomicMemoryProcessingConfig
 from powercontext.builtin.runtime.atomic_memory_search import AtomicMemoryArtifactSearcher
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.decision_model import (
     DECISION_INSTRUCTIONS,
@@ -946,12 +945,6 @@ async def open_builtin_contexts(
 
     database = config.database
     configured_token_estimator = character_token_estimator() if token_estimator is None else token_estimator
-    # Processing workers reuse the parent's schema. Composition does not implicitly
-    # grant them an Atomic Memory execution identity; family dispatch supplies the
-    # identity required by each operation.
-    atomic_memory_execution_context = (
-        AtomicMemoryExecutionContext(principal=None, trusted_local=False) if _topic_memory_worker else None
-    )
     if isinstance(database, SQLiteConfig):
         experience_index = SQLiteExperienceFTSIndex()
         indexes: list[MemoryIndex] = [SQLiteMemoryFTSIndex()]
@@ -994,7 +987,6 @@ async def open_builtin_contexts(
                 index=index,
                 topic_memory_index=topic_index,
                 atomic_memory_index=atomic_index,
-                atomic_memory_execution_context=atomic_memory_execution_context,
                 atomic_memory_preview_signing_secret=None
                 if config.runtime.atomic_memory_preview_signing_secret is None
                 else config.runtime.atomic_memory_preview_signing_secret.get_secret_value().encode("utf-8"),
@@ -1085,7 +1077,6 @@ async def open_builtin_contexts(
             index=index,
             topic_memory_index=topic_index,
             atomic_memory_index=atomic_index,
-            atomic_memory_execution_context=atomic_memory_execution_context,
             atomic_memory_preview_signing_secret=None
             if config.runtime.atomic_memory_preview_signing_secret is None
             else config.runtime.atomic_memory_preview_signing_secret.get_secret_value().encode("utf-8"),

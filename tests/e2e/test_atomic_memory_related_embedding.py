@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
     AtomicMemoryExtractionOutput,
@@ -44,7 +45,6 @@ from powercontext.builtin.inference import (
 from powercontext.builtin.inference.minimax import MiniMaxEmbeddingModel
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import BuiltinConfig, RuntimeConfig, open_builtin_contexts
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.server.authz import (
     AccessAction,
     AccessAuditContext,
@@ -179,11 +179,11 @@ class _RecordingCreateReconciler:
         )
 
 
-async def _configured_flush_context(contexts, principal):
+async def _configured_flush_context(contexts, principal, binding_id="related-contributor"):
     repository = RelationalAccessRepository(contexts.database)
     await repository.create_binding(
         AccessBinding(
-            binding_id="related-contributor",
+            binding_id=binding_id,
             subject=principal,
             resource=ResourceRef.scope("project"),
             role=AccessRole.SCOPE_CONTRIBUTOR,
@@ -194,13 +194,13 @@ async def _configured_flush_context(contexts, principal):
             state=AccessBindingState.ACTIVE,
             version=1,
             policy_revision="pending",
-            idempotency_key="related-contributor",
+            idempotency_key=binding_id,
         )
     )
     provider = _ConfiguredArtifactProvider(repository)
     access = AccessControlService(provider, relationships=repository, audit=repository)
     return (
-        AtomicMemoryExecutionContext(
+        ArtifactSearchExecutionContext(
             principal=principal,
             access=access,
             audit=AccessAuditContext(transport="background", operation="related-source-flush"),
@@ -229,21 +229,22 @@ def test_source_flush_compares_all_permitted_owned_matches_with_a_custom_provide
             context = await contexts.get("project")
             memory = contexts.atomic_memory.for_scope("project")
             execution, provider = await _configured_flush_context(contexts, owner)
+            foreign, _ = await _configured_flush_context(contexts, other, "related-other-contributor")
             # Exceed both a comparison batch and ordinary search's default topK.
             owned = await contexts.records.create_atomic_memories(
                 "project",
                 tuple({"kind": "fact", "text": f"Permitted owned rollout fact {number}."} for number in range(23)),
-                execution_context=AtomicMemoryExecutionContext(principal=owner, trusted_local=True),
+                execution_context=execution,
             )
             (denied,) = await contexts.records.create_atomic_memories(
                 "project",
                 ({"kind": "fact", "text": "DENIED_OWNED_MATCH_SENTINEL"},),
-                execution_context=AtomicMemoryExecutionContext(principal=owner, trusted_local=True),
+                execution_context=execution,
             )
             await contexts.records.create_atomic_memories(
                 "project",
                 ({"kind": "fact", "text": "FOREIGN_OWNER_MATCH_SENTINEL"},),
-                execution_context=AtomicMemoryExecutionContext(principal=other, trusted_local=True),
+                execution_context=foreign,
             )
             await context.triggers.flush(limit=100)
             before = (await memory.list(limit=100)).items
@@ -300,7 +301,7 @@ def test_source_flush_propagates_custom_artifact_authority_unavailable_without_a
             (original,) = await contexts.records.create_atomic_memories(
                 "project",
                 ({"kind": "fact", "text": ORIGINAL},),
-                execution_context=AtomicMemoryExecutionContext(principal=owner, trusted_local=True),
+                execution_context=execution,
             )
             await context.triggers.flush(limit=100)
             before = (await memory.list()).items

@@ -177,7 +177,6 @@ from powercontext.builtin.runtime._scope_cache import (
 )
 from powercontext.builtin.runtime.artifact_search import ArtifactSearchService
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchHit, AtomicMemorySearchPage
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.decision_model import DecisionModel
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
 from powercontext.builtin.runtime.models import (
@@ -847,7 +846,7 @@ class StatisticsApplication:
         )
 
 
-_PREPARE_ATOMIC_CONTEXT: ContextVar[AtomicMemoryExecutionContext | None] = ContextVar(
+_PREPARE_ATOMIC_CONTEXT: ContextVar[ArtifactSearchExecutionContext | None] = ContextVar(
     "prepare_atomic_context", default=None
 )
 
@@ -865,7 +864,7 @@ class ScopedContextApplication:
         /,
         *,
         authorize_scopes: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
-        atomic_context: AtomicMemoryExecutionContext | None = None,
+        atomic_context: ArtifactSearchExecutionContext | None = None,
     ) -> PreparedContext:
         if (
             request.assembly is not None
@@ -2560,7 +2559,6 @@ class AtomicMemoryRuntimeApplication:
     def __init__(self, runtime: BuiltinRuntime, application) -> None:
         self._runtime = runtime
         self._application = application
-        self.default_context = application.default_context
 
     def for_scope(self, scope_id: str, /) -> ScopedAtomicMemoryApplication:
         return ScopedAtomicMemoryApplication(self._runtime, self._application, scope_id)

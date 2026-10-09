@@ -61,7 +61,7 @@ from powercontext.builtin.persistence.tables import (
 )
 from powercontext.builtin.runtime import BuiltinConfig, RuntimeConfig, open_builtin_contexts
 from powercontext.builtin.sources.content import ContentSource, ContentSourceInternal, ContentSourceTarget
-from powercontext.server.authz import ArtifactOwnerRelation, MemoryEntrySelector, ResourceRef
+from powercontext.server.authz import ArtifactOwnerRelation, MemoryEntrySelector, PrincipalRef, ResourceRef
 from powercontext.server.authz.repository import RelationalAccessRepository
 from powercontext.sources import SourceMaterialization, SourceRef
 
@@ -244,7 +244,7 @@ async def _seed_and_migrate(config: SQLiteConfig) -> bytes:
                             artifact_id=COLLECTION,
                             selector=MemoryEntrySelector(entry_id=entry_id),
                         ),
-                        owner=contexts.atomic_memory.default_context.principal,
+                        owner=PrincipalRef(type="service", id="migration-owner"),
                         established_at=datetime(2026, 1, 1, tzinfo=UTC),
                         policy_revision="pending",
                         idempotency_key=f"owner:{entry_id}",
@@ -512,12 +512,12 @@ def test_ordinary_atomic_explicit_collection_reference_keeps_collection_evidence
                     SCOPE,
                     "ordinary-collection-memory",
                     AtomicMemoryContent(kind="fact", text="Both tasks completed."),
-                    application.default_context,
+                    None,
                     lineage=ArtifactLineage(artifacts=(_collection(1),)),
                 )
             prepared = await application.service.prepare_change(plan)
             async with contexts.database.transaction() as connection:
-                created = await application.service.commit(connection, prepared, application.default_context)
+                created = await application.service.commit(connection, prepared, None)
             async with contexts.database.transaction() as connection:
                 resolved = await _resolver(contexts).resolve(connection, artifacts=(created.primary.ref,))
                 assert _projected_sources(resolved) == (A, B)

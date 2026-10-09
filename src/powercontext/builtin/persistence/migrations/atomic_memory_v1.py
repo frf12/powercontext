@@ -50,7 +50,6 @@ from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry
 from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemoryIndex,
     AtomicMemoryProjectionPublisher,
-    AtomicMemoryProjectionSecurity,
     PreparedAtomicMemoryProjection,
     atomic_memory_embedding_input_hash,
     atomic_memory_profile_fingerprint,
@@ -1209,22 +1208,6 @@ async def _load_tags(connection: AsyncConnection, scope_id: str, artifact_id: st
     return tuple(sorted({row["tag_key"] for row in rows}))
 
 
-async def _load_security(
-    connection: AsyncConnection, scope_id: str, artifact_id: str, _context: Any
-) -> AtomicMemoryProjectionSecurity:
-    key = _digest(_resource_key(scope_id, _FAMILY, artifact_id))
-    owners = await _rows(
-        connection,
-        "pc_access_owners",
-        _OWNER_COLUMNS,
-        "WHERE owner_kind = 'artifact' AND object_key_hash = :key",
-        key=key,
-    )
-    if len(owners) != 1:
-        raise AtomicMemoryMigrationError((f"{scope_id}/{artifact_id}: formal Owner is absent or ambiguous",))
-    return AtomicMemoryProjectionSecurity(owner_type=owners[0]["owner_type"], owner_id=owners[0]["owner_id"])
-
-
 async def apply_atomic_memory_migration(
     database: AsyncDatabase,
     index: AtomicMemoryIndex,
@@ -1249,9 +1232,7 @@ async def apply_atomic_memory_migration(
     async with database.transaction() as connection:
         await connection.run_sync(lambda value: _STATE_METADATA.create_all(value, tables=[_STATES], checkfirst=True))
         await index.initialize(connection)
-    publisher = AtomicMemoryProjectionPublisher(
-        index, load_tags=_load_tags, load_security=_load_security, embedding_model=embedding_model
-    )
+    publisher = AtomicMemoryProjectionPublisher(index, embedding_model=embedding_model)
     imported = 0
     migrated_grant_receipts = 0
     for entry in inventory.entries:
@@ -1289,7 +1270,7 @@ async def apply_atomic_memory_migration(
                     ),
                     state=SimpleNamespace(state="active", state_version=entry.state_version),
                 )
-                await publisher.publish(connection, entry.scope_id, record, prepared, None)
+                await publisher.publish(connection, entry.scope_id, record, prepared)
             else:
                 await publisher.remove(connection, entry.scope_id, entry.artifact_id)
             imported += 1
@@ -1387,7 +1368,6 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                 "public governance summary disagrees with Family state",
             )
             _require((state["state"] == "merged") == (state["merged_into_id"] is not None), "invalid merge destination")
-            security = await _load_security(connection, entry.scope_id, entry.artifact_id, None)
             legacy_bindings = await _rows(
                 connection,
                 "pc_access_relationships",
@@ -1418,7 +1398,7 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                     await connection.execute(
                         text(
                             "SELECT revision, state_version, content_hash, projection_format, kind, text, searchable_text, tag_keys, "
-                            "owner_type, owner_id, embedding, profile_fingerprint, embedding_input_hash "
+                            "embedding, profile_fingerprint, embedding_input_hash "
                             "FROM pc_atomic_memory_current WHERE scope_id = :scope AND artifact_id = :id"
                         ),
                         {"scope": entry.scope_id, "id": entry.artifact_id},
@@ -1465,10 +1445,6 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                     tuple(sorted(_decode(projection["tag_keys"])))
                     == await _load_tags(connection, entry.scope_id, entry.artifact_id),
                     "projection tags differ from formal tags",
-                )
-                _require(
-                    (projection["owner_type"], projection["owner_id"]) == (security.owner_type, security.owner_id),
-                    "projection Owner differs",
                 )
                 if index is not None:
                     profile = index.capabilities.embedding_profile

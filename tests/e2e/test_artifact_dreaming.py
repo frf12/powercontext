@@ -657,6 +657,14 @@ def test_enforced_access_rechecks_background_actor_and_attests_candidate(databas
                 dream_candidate_attester=adapter.attest_candidate,
             ) as runtime:
                 scope, _, citation = await seed(runtime)
+                assert runtime.atomic_memory is not None
+                for record in (await runtime.atomic_memory.for_scope(scope).list()).items:
+                    await access.establish_artifact_owner(
+                        ResourceRef.artifact(scope, family=record.ref.family, artifact_id=record.ref.artifact_id),
+                        admin,
+                        idempotency_key=f"dream-memory-owner:{record.ref.artifact_id}",
+                        context=context,
+                    )
                 await access.create_binding(
                     admin,
                     CreateBinding(
@@ -857,11 +865,10 @@ def test_dream_candidate_attestation_preserves_configured_casbin_denial(tmp_path
                     context=context,
                 )
                 memory = ResourceRef.artifact(scope, family=citation.family, artifact_id=citation.artifact_id)
-                ownership = await relationships.artifact_owner(memory)
-                assert ownership is not None
-                await decisions.establish_artifact_owner(
-                    memory, ownership.owner, idempotency_key="dream-memory-owner", context=context
-                )
+                for authority in (relationships, decisions):
+                    await authority.establish_artifact_owner(
+                        memory, admin, idempotency_key="dream-memory-owner", context=context
+                    )
                 dream = runtime.dream.for_scope(scope, principal_id=principal_identity(author))
                 accepted = await dream.create(
                     CreateDreamRunRequest(

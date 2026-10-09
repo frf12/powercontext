@@ -90,7 +90,6 @@ from powercontext.builtin.runtime.artifact_processing import (
     SpawnArtifactProcessingWorkerLauncher,
 )
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchHit, AtomicMemorySearchPage
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.composition import (
     BuiltinConfigurationError,
     open_builtin_contexts,
@@ -228,7 +227,6 @@ __all__ = [
     "ArtifactProcessingWorkerCompletion",
     "ArtifactProcessingWorkerFailure",
     "ArtifactProcessingWorkerOutcome",
-    "AtomicMemoryExecutionContext",
     "AtomicMemoryPage",
     "AtomicMemoryRuntimeApplication",
     "AtomicMemorySearchHit",

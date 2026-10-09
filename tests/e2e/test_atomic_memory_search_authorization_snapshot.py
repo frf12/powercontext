@@ -35,7 +35,7 @@ from powercontext.builtin.inference import EmbeddingResult
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemorySecurity
+from powercontext.builtin.runtime.atomic_memory import AtomicMemoryAccess
 from powercontext.builtin.runtime.config import DatabaseConfig, RuntimeConfig
 from powercontext.client import ForbiddenResponseError, PowerContextClient
 from powercontext.http import (
@@ -231,7 +231,7 @@ def test_search_pins_access_and_content_without_blocking_writers(
             _server(database, provider, tmp_path, _Embedding()) as (_, admin, viewer),
         ):
             scope_id, original, binding = await _seed(admin)
-            filters = AtomicMemorySecurity.filters
+            filters = AtomicMemoryAccess.filters
             authorized = asyncio.Event()
             resume = asyncio.Event()
 
@@ -242,7 +242,7 @@ def test_search_pins_access_and_content_without_blocking_writers(
                 return result
 
             with monkeypatch.context() as patch:
-                patch.setattr(AtomicMemorySecurity, "filters", pause_after_access)
+                patch.setattr(AtomicMemoryAccess, "filters", pause_after_access)
                 pending = asyncio.create_task(
                     viewer.search_atomic_memory(
                         SearchAtomicMemoryRequest(scope_id=scope_id, query="alpha", mode=AtomicMemorySearchMode(mode))

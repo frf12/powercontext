@@ -57,8 +57,6 @@ _FTS_COLUMNS = (
     "text",
     "searchable_text",
     "tag_keys",
-    "owner_type",
-    "owner_id",
     "identity_token",
 )
 _HIT_COLUMNS = "artifact_id, revision, state_version, kind, text"

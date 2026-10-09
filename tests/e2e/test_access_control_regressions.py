@@ -478,9 +478,6 @@ def test_owner_failure_blocks_collections_and_context_before_content(tmp_path, m
                         ACCESS_OWNERS_TABLE.c.artifact_id == stored["artifact_id"],
                     )
                 )
-            with pytest.raises(AccessUnavailableError) as pending:
-                await app.state.application.atomic_memory.for_scope(scope_id).list()
-            assert pending.value.code == "artifact_owner_pending"
             artifact_url = f"/v1/scopes/{scope_id}/artifacts/atomic-memory/{stored['artifact_id']}"
             referencing = await client.post(
                 "/v1/scopes",

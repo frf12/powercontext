@@ -655,7 +655,7 @@ class AtomicMemoryManagementWriter:
     ) -> AtomicMemoryManagementPrepared:
         from powercontext.builtin.artifacts.atomic_memory.models import AtomicMemoryContent
 
-        context = self.application.default_context if execution_context is None else execution_context
+        context = execution_context
         async with self.application.database.transaction() as connection:
             plan = await self.application.service.inspect_change(
                 connection,

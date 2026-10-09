@@ -414,7 +414,7 @@ Atomic 的 Owner 要求与其他制品对齐：
 
 按 `(scope, memory_id, entry_id)` 迁移已有 Owner，不从集合 Owner 推导，也不把无 Owner 的记忆分配给迁移执行人。合法的无鉴权旧库可以保持 Owner 为空；缺失了启用鉴权时必需的授权数据，则按既有规则报告。
 
-实施时同步调整 Atomic 自身的创建、修改检查，current 的加载、写入和重建，以及抽取候选过滤。`pc_atomic_memory_current.owner_type/owner_id` 允许同时为空；启用鉴权时仍校验有效 Owner。不能只放宽导入程序，否则导入后的记忆仍可能在发布投影或抽取时被拒绝。
+实施时同步调整 Atomic 自身的创建、修改检查，current 的加载、写入和重建，以及抽取候选过滤。`pc_atomic_memory_current` 不再保存 Owner 列，抽取候选也不按调用者 Owner 预先过滤，逐条由公共授权判定能否读写；启用鉴权时 Owner 仍由公共授权服务建立和校验。不能只放宽导入程序，否则导入后的记忆仍可能在发布投影或抽取时被拒绝。
 
 删除 `atomic_memory_security.py` 及其中的独立授权规则，使用其他制品已经采用的公共授权服务和事务回调。合并、恢复和后台抽取的实际读写目标接入公共检查；投影构建中的标签、Owner 数据读取归入对应持久化职责。无鉴权不额外比较调用者与 Owner，不保留 Atomic 专属的全局权限版本锁，也不修改 Casbin 或公共授权算法。
 

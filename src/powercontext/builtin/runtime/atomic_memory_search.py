@@ -29,7 +29,6 @@ from powercontext.builtin.artifacts.atomic_memory.search import (
 )
 from powercontext.builtin.persistence.errors import RepositoryNotFoundError
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryApplication
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.sources import validate_scope_id
 
 
@@ -54,23 +53,13 @@ class AtomicMemoryArtifactSearcher:
             # The existing page retains fused RRF ranks, not every native channel score.
             raise ArtifactSearchUnsupported(self.family, field="include_scores")
         scope = validate_scope_id(scope_id)
-        context = (
-            None
-            if execution_context is None
-            else AtomicMemoryExecutionContext(
-                principal=execution_context.principal,
-                access=execution_context.access,
-                audit=execution_context.audit,
-                trusted_local=execution_context.trusted_local,
-            )
-        )
         page = await self._application.for_scope(scope).search(
             request.query,
             mode=request.mode,
             limit=request.limit,
             kind=request.filters.kind,
             tag_filter=request.filters.tag_filter,
-            context=context,
+            context=execution_context,
         )
         matches = tuple(ArtifactSearchMatch(item.hit.artifact_ref, item.hit.score) for item in page.hits)
         artifacts: list[AtomicMemory] = []

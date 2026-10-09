@@ -191,7 +191,6 @@ from powercontext.builtin.runtime.atomic_memory_processing import (
     AtomicMemoryProcessingConfig,
     AtomicMemorySourceWindowProcessor,
 )
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.decision_model import DecisionModel
 from powercontext.builtin.runtime.models import (
     CommitConnectorCheckpoint,
@@ -567,7 +566,6 @@ class RelationalContexts:
         index: MemoryIndex | None = None,
         topic_memory_index: TopicMemoryIndex | None = None,
         atomic_memory_index: AtomicMemoryIndex | None = None,
-        atomic_memory_execution_context: AtomicMemoryExecutionContext | None = None,
         atomic_memory_preview_signing_secret: bytes | None = None,
         atomic_memory_preview_signing_key_id: str = "atomic-memory-v1",
         atomic_memory_preview_ttl_seconds: int = 300,
@@ -632,12 +630,6 @@ class RelationalContexts:
                 atomic_memory_index = OceanBaseAtomicMemoryIndex(
                     None if embedding_model is None else embedding_model.profile
                 )
-        if atomic_memory_execution_context is None:
-            from powercontext.server.authz import PrincipalRef
-
-            atomic_memory_execution_context = AtomicMemoryExecutionContext(
-                principal=PrincipalRef(type="service", id="local-runtime"), trusted_local=True
-            )
         from powercontext.builtin.artifacts.atomic_memory.restoration import AtomicMemoryPreviewSigner
 
         preview_signer = (
@@ -653,7 +645,6 @@ class RelationalContexts:
             database,
             artifact_repository,
             atomic_memory_index,
-            default_context=atomic_memory_execution_context,
             embedding_model=embedding_model,
             reranker=memory_reranker,
             rerank_candidate_limit=memory_rerank_candidate_limit,
@@ -1501,7 +1492,7 @@ class RelationalContexts:
         await self.atomic_memory.security.authorize(
             connection,
             scope_id,
-            self.atomic_memory.default_context if context is None else context,
+            context,
             "write",
             ArtifactRef(family="atomic-memory", artifact_id=artifact_id, revision=1),
         )
@@ -1515,7 +1506,7 @@ class RelationalContexts:
         processing: ScopeInvocation | None = None,
         authorize_snapshot: MemorySnapshotAuthorizer | None = None,
         on_commit: MemoryCommitHook | None = None,
-        atomic_context: AtomicMemoryExecutionContext | None = None,
+        atomic_context: ArtifactSearchExecutionContext | None = None,
     ) -> MemoryFlushResult:
         services = self._services_for(scope_id)
         return await _RelationalTriggers(
@@ -1850,7 +1841,7 @@ class _RelationalTriggers:
         processing: ScopeInvocation | None = None,
         authorize_snapshot: MemorySnapshotAuthorizer | None = None,
         on_commit: MemoryCommitHook | None = None,
-        atomic_context: AtomicMemoryExecutionContext | None = None,
+        atomic_context: ArtifactSearchExecutionContext | None = None,
     ) -> MemoryFlushResult:
         if authorize_snapshot is not None or on_commit is not None:
             from powercontext.builtin.records import BaseOperationNotSupportedError

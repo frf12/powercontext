@@ -349,10 +349,6 @@ class RelationalRecordService:
         )
         try:
             async with self._database.transaction() as connection:
-                if isinstance(writer, AtomicMemoryManagementWriter):
-                    await writer.application.security.lock_transaction(
-                        connection, scope_id, cast(AtomicMemoryManagementPrepared, prepared).execution_context
-                    )
                 stored = await self._sources.add(connection, scope_id, source)
                 artifact = await writer.create(connection, scope_id, artifact_id, prepared, stored.ref)
         except (StoredPayloadConflictError, RevisionConflictError) as error:
@@ -376,7 +372,6 @@ class RelationalRecordService:
             prepared.append((artifact_id, command, value))
         created = []
         async with self._database.transaction() as connection:
-            await writer.application.security.lock_transaction(connection, scope_id, prepared[0][2].execution_context)
             for artifact_id, command, value in prepared:
                 payload = cast(dict[str, JsonValue], command.model_dump(mode="json", by_alias=True, exclude_none=True))
                 source = ContentSource(
@@ -642,9 +637,6 @@ class RelationalRecordService:
         try:
             async with self._database.transaction() as connection:
                 if isinstance(writer, AtomicMemoryManagementWriter):
-                    await writer.application.security.lock_transaction(
-                        connection, scope_id, cast(AtomicMemoryManagementPrepared, prepared).execution_context
-                    )
                     current = cast(AtomicMemoryManagementPrepared, prepared).prepared.plan.writes[0].current.artifact
                 else:
                     try:

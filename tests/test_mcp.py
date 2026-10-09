@@ -29,15 +29,12 @@ from fastmcp.client.transports import StreamableHttpTransport
 from jsonschema import Draft202012Validator
 
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.server.access import HttpAccessLogMiddleware
 from powercontext.server.app import create_app
-from powercontext.server.authz import PrincipalRef
 from powercontext.server.context import is_internal_bridge
 from powercontext.server.mcp import create_mcp_server, mount_mcp
 
 ResultT = TypeVar("ResultT")
-_LOCAL_CONTEXT = AtomicMemoryExecutionContext(PrincipalRef(type="service", id="local-runtime"), trusted_local=True)
 
 
 def test_mcp_guidance_is_visible_without_loading_a_skill() -> None:
@@ -329,13 +326,11 @@ def test_mcp_bridge_reuses_logical_request_id_and_is_marked_internal(caplog) -> 
             return self
 
         async def list(self, *, include_inactive=False, limit=50, cursor=None, tag_filter=None, atomic_context=None):
-            assert atomic_context is _LOCAL_CONTEXT
+            assert atomic_context is None
             return AtomicMemoryPage(items=())
 
     app = create_app(
-        application=SimpleNamespace(
-            memory=MemoryApplication(), sources=object(), atomic_memory=SimpleNamespace(default_context=_LOCAL_CONTEXT)
-        )
+        application=SimpleNamespace(memory=MemoryApplication(), sources=object(), atomic_memory=SimpleNamespace())
     )
     requests: list[tuple[str, str, bool]] = []
 
@@ -390,13 +385,11 @@ def test_mcp_access_log_counts_the_logical_tool_call_without_the_bridge(caplog) 
             return self
 
         async def list(self, *, include_inactive=False, limit=50, cursor=None, tag_filter=None, atomic_context=None):
-            assert atomic_context is _LOCAL_CONTEXT
+            assert atomic_context is None
             return AtomicMemoryPage(items=())
 
     app = create_app(
-        application=SimpleNamespace(
-            memory=MemoryApplication(), sources=object(), atomic_memory=SimpleNamespace(default_context=_LOCAL_CONTEXT)
-        )
+        application=SimpleNamespace(memory=MemoryApplication(), sources=object(), atomic_memory=SimpleNamespace())
     )
     app.add_middleware(HttpAccessLogMiddleware, skip_paths=("/mcp",))
     mount_mcp(app, access_log=True)

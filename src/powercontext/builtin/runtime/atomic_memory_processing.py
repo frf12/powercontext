@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 from sqlalchemy import update
 
 from powercontext.artifacts import ArtifactLineage, ArtifactRef
+from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryEvidence,
@@ -54,8 +55,7 @@ from powercontext.builtin.persistence.errors import GenerationConflictError
 from powercontext.builtin.persistence.memory_windows import MemorySourceWindowRepository
 from powercontext.builtin.persistence.sources import SourceRepository
 from powercontext.builtin.persistence.tables import SOURCE_JOURNAL_HEADS_TABLE
-from powercontext.builtin.runtime.atomic_memory import AtomicMemoryApplication
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
+from powercontext.builtin.runtime.atomic_memory import AtomicMemoryApplication, deferred_decision_audit
 from powercontext.builtin.runtime.models import MemoryFlushResult
 from powercontext.builtin.runtime.processing_execution import ScopeInvocation
 from powercontext.builtin.runtime.protocols import RuntimeTracing
@@ -125,14 +125,12 @@ class AtomicMemorySourceWindowProcessor:
         limit: int,
         *,
         processing: ScopeInvocation | None = None,
-        context: AtomicMemoryExecutionContext | None = None,
+        context: ArtifactSearchExecutionContext | None = None,
     ) -> MemoryFlushResult:
-        selected_context = self.application.default_context if context is None else context
+        selected_context = context
         # Scope checks may retain a separate configured audit connection. Flush its
         # decision events after every business transaction in this operation closes.
-        async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext()
-        ):
+        async with deferred_decision_audit(selected_context):
             with self._stage("memory.flush", {"powercontext.memory.flush.source_count": 0}) as span:
                 if self.prompts is not None:
                     legacy = await self.prompts.read_configuration(scope_id, "memory.extract")
@@ -163,7 +161,6 @@ class AtomicMemorySourceWindowProcessor:
         application = self.application
         trigger = SourceWindowTrigger()
         async with application.database.transaction() as connection:
-            await application.security.lock_transaction(connection, scope_id, context)
             if processing is not None:
                 await processing.start(connection)
             await application.security.authorize(connection, scope_id, context, "read")
@@ -220,7 +217,6 @@ class AtomicMemorySourceWindowProcessor:
 
     async def _reduce_window(self, scope_id, context, processing, cursor, state, action, high_watermark):
         async with self.application.database.transaction() as connection:
-            await self.application.security.lock_transaction(connection, scope_id, context)
             if processing is not None:
                 await processing.guard(connection)
             await self.cursors.save(
@@ -294,9 +290,8 @@ class AtomicMemorySourceWindowProcessor:
             },
         ):
             async with application.database.transaction() as connection:
-                # Every Atomic write uses policy -> journal -> heads. Source capture's
-                # journal reservation prevents the exact window changing under validation.
-                await application.security.lock_transaction(connection, scope_id, context)
+                # Every Atomic write uses journal -> heads. Source capture's journal
+                # reservation prevents the exact window changing under validation.
                 await connection.execute(
                     update(SOURCE_JOURNAL_HEADS_TABLE)
                     .where(SOURCE_JOURNAL_HEADS_TABLE.c.scope_id == scope_id)
@@ -473,7 +468,8 @@ class AtomicMemorySourceWindowProcessor:
 
     async def _recall(self, scope_id, query, context):
         application = self.application
-        filters = await application.security.filters(scope_id, context, writable=True)
+        async with self._read_transaction(context) as connection:
+            filters = await application.security.filters(connection, scope_id, context)
         mode = self.config.related_mode
         profile = application.index.capabilities.embedding_profile
         if mode == "auto":
@@ -537,19 +533,14 @@ class AtomicMemorySourceWindowProcessor:
                 await self._authorize_artifact(connection, scope_id, context, ref)
 
     async def _authorize_artifact(self, connection, scope_id, context, ref):
-        # Frozen collection lineage is historical metadata, never per-entry authority.
-        # Source-window generation already requires Scope read; shared entry grants alone
-        # cannot expose the collection's supporting Sources.
-        await self.application.security.authorize(
-            connection, scope_id, context, "read", None if ref.family == "memory" else ref
-        )
+        await self.application.security.authorize(connection, scope_id, context, "read", ref)
 
     @asynccontextmanager
     async def _read_transaction(self, context):
         # Builtin authority shares the preparation snapshot; configured providers
         # retain their own decision boundary. Audit writes flush after this read.
         async with (
-            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
+            deferred_decision_audit(context),
             self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
             yield connection

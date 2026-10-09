@@ -6,7 +6,7 @@
 
 ## 1. 迁移后的结构
 
-下面是迁移写入的目标结构。`pc_atomic_memory_states` 和 `pc_atomic_memory_current` 已由 Atomic Memory 功能引入，迁移负责填充状态和重建当前投影，Owner 字段允许无鉴权部署留空。
+下面是迁移写入的目标结构。`pc_atomic_memory_states` 和 `pc_atomic_memory_current` 已由 Atomic Memory 功能引入，迁移负责填充状态和重建当前投影；当前投影不保存 Owner，无鉴权部署的记忆可以没有 Owner。
 
 ```mermaid
 flowchart TD

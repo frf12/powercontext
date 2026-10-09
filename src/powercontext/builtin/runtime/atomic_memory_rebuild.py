@@ -38,6 +38,7 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     atomic_memory_embedding_input,
     atomic_memory_embedding_input_hash,
     atomic_memory_profile_fingerprint,
+    load_atomic_memory_tags,
 )
 from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_STATES_TABLE
@@ -45,11 +46,6 @@ from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import verify_atomic_memory_migration_authority
 from powercontext.builtin.persistence.oceanbase.atomic_memory_index import OceanBaseAtomicMemoryIndex
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE
-from powercontext.builtin.runtime.atomic_memory_security import (
-    AtomicMemorySecurity,
-    load_atomic_memory_security,
-    load_atomic_memory_tags,
-)
 
 
 class AtomicMemoryProjectionRebuildReport(BaseModel):
@@ -150,7 +146,6 @@ async def _projection_differences(
     content = record.artifact.content
     profile = index.capabilities.embedding_profile
     fingerprint = None if profile is None else atomic_memory_profile_fingerprint(profile)
-    security = await load_atomic_memory_security(connection, scope_id, artifact_id)
     expected = {
         "revision": record.artifact.revision,
         "state_version": record.state.state_version,
@@ -159,8 +154,6 @@ async def _projection_differences(
         "kind": content.kind,
         "text": content.text,
         "searchable_text": analyze_text(atomic_memory_embedding_input(content.kind, content.text)),
-        "owner_type": security.owner_type,
-        "owner_id": security.owner_id,
         "profile_fingerprint": fingerprint,
         "embedding_input_hash": None
         if profile is None
@@ -278,10 +271,7 @@ async def rebuild_atomic_memory_projection(
     publisher = AtomicMemoryProjectionPublisher(
         index,
         embedding_model=embedding_model,
-        load_tags=load_atomic_memory_tags,
-        load_security=load_atomic_memory_security,
     )
-    security = AtomicMemorySecurity(database)
     after = None
     rebuilt = removed = 0
     while True:
@@ -298,7 +288,6 @@ async def rebuild_atomic_memory_projection(
                 else None
             )
             async with database.transaction() as connection:
-                await security.lock_transaction(connection, scope_id, None)
                 await artifacts.lock_heads(connection, scope_id, (before.ref,))
                 current = await _record(connection, artifacts, scope_id, artifact_id)
                 if current.as_read() != before.as_read():
@@ -307,7 +296,7 @@ async def rebuild_atomic_memory_projection(
                     )
                 if prepared is not None:
                     publisher.validate_prepared(prepared)
-                    await publisher.publish(connection, scope_id, current, prepared, None)
+                    await publisher.publish(connection, scope_id, current, prepared)
                     rebuilt += 1
                 else:
                     present = await connection.scalar(
@@ -319,7 +308,6 @@ async def rebuild_atomic_memory_projection(
                     removed += present is not None
             after = scope_id, artifact_id
     async with database.transaction() as connection:
-        await security.lock_transaction(connection, "maintenance", None)
         obsolete = int(
             await connection.scalar(select(func.count()).select_from(index.table).where(_obsolete_current(index))) or 0
         )

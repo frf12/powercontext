@@ -23,8 +23,7 @@ import pytest
 from powercontext.builtin.artifacts.memory import MemoryRerankDecision
 from powercontext.builtin.inference import InferenceUsage
 from powercontext.builtin.runtime.application import ScopedContextApplication
-from powercontext.builtin.runtime.atomic_memory import ScopedAtomicMemory
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemorySecurity
+from powercontext.builtin.runtime.atomic_memory import AtomicMemoryAccess, ScopedAtomicMemory
 from powercontext.builtin.runtime.recall_sufficiency import REASON_EXPANSION_FAILED, RecallSufficiencyPolicy
 from tests.e2e.test_access_control_regressions import _grant, _scope, _server
 
@@ -307,7 +306,7 @@ def test_list_pins_scope_authorization_and_records_to_one_snapshot(tmp_path, mon
             original = await _remember(client, scope_id, "Alpha authorized original body.")
             binding = await _grant(client, scope_id, "viewer", "scope.viewer")
             pause = _Pause()
-            filters = AtomicMemorySecurity.filters
+            filters = AtomicMemoryAccess.filters
 
             async def paused(*args, **kwargs):
                 result = await filters(*args, **kwargs)
@@ -319,7 +318,7 @@ def test_list_pins_scope_authorization_and_records_to_one_snapshot(tmp_path, mon
                 await _remember(client, scope_id, "Alpha new private body.")
 
             with monkeypatch.context() as patch:
-                patch.setattr(AtomicMemorySecurity, "filters", paused)
+                patch.setattr(AtomicMemoryAccess, "filters", paused)
                 pending = asyncio.create_task(
                     client.post("/v1/atomic-memory/list", headers=_VIEWER, json={"scope_id": scope_id})
                 )

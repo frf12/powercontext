@@ -27,6 +27,7 @@ from fastapi.routing import APIRoute
 from starlette.middleware import Middleware
 
 from powercontext._logging import log_safely
+from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory.extraction import AtomicMemoryGenerationPipeline
 from powercontext.builtin.artifacts.experience import ExperienceCandidatePipeline, ExperienceGenerator
 from powercontext.builtin.artifacts.handoff import HandoffGenerationPipeline
@@ -43,7 +44,6 @@ from powercontext.builtin.runtime import (
     MemoryFlushResult,
 )
 from powercontext.builtin.runtime.application import ScheduledExperienceRunner, ScheduledSourceRunner
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.composition import open_builtin_runtime
 from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import processing_capabilities
@@ -403,7 +403,7 @@ def _scheduled_access_runners(
         await access.bootstrap_static_scope(principal, scope_id, context=context)
         await access.require(principal, AccessAction.SCOPE_CONTRIBUTE, ResourceRef.scope(scope_id), context=context)
         return await runtime.memory.for_scope(scope_id).flush(
-            atomic_context=AtomicMemoryExecutionContext(principal=principal, access=access, audit=context),
+            atomic_context=ArtifactSearchExecutionContext(principal=principal, access=access, audit=context),
         )
 
     async def incubate_experience(scope_id: str, runtime: BuiltinRuntime) -> ExperienceIncubationResult:

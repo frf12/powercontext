@@ -22,7 +22,6 @@ from dataclasses import replace
 import pytest
 
 from powercontext.artifacts.search import ArtifactSearchExecutionContext
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.server.authz import AccessControlService, AccessDeniedError, PrincipalRef
 from powercontext.server.authz.repository import RelationalAccessRepository
 from tests.e2e.test_access_control_regressions import AUDIT, _grant, _resource, _scope, _server
@@ -78,7 +77,7 @@ def test_unified_atomic_search_requires_scope_read_but_exact_share_remains_reada
             page = await app.state.application.atomic_memory.for_scope(scope).search(
                 "alpha",
                 mode="text",
-                context=AtomicMemoryExecutionContext(principal=context.principal, access=access, audit=AUDIT),
+                context=ArtifactSearchExecutionContext(principal=context.principal, access=access, audit=AUDIT),
             )
             assert tuple(match.artifact_ref for match in outcome.matches) == tuple(
                 hit.hit.artifact_ref for hit in page.hits

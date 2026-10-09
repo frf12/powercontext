@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
-from sqlalchemy import Table, bindparam, delete, insert, inspect, text, update
+from sqlalchemy import Table, bindparam, delete, insert, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import ArtifactRef
@@ -38,6 +37,7 @@ from powercontext.builtin.artifacts.search import (
 )
 from powercontext.builtin.inference import EmbeddingModel
 from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
+from powercontext.builtin.persistence.tables import ARTIFACT_TAGS_TABLE
 from powercontext.builtin.tags import TagFilter
 
 AtomicMemorySearchMode = Literal["fts", "vector", "hybrid"]
@@ -61,24 +61,11 @@ class AtomicMemoryIndexCapabilities:
 
 
 @dataclass(frozen=True)
-class AtomicMemoryProjectionSecurity:
-    owner_type: str
-    owner_id: str
-
-
-@dataclass(frozen=True)
 class AtomicMemoryIndexFilter:
-    """Same-row content filters and the extraction ownership restriction.
-
-    Scope read is authorized by the runtime before ordinary search. Owner
-    fields restrict complete related enumeration; configured artifact read and
-    write decisions are still required before a candidate enters model input.
-    """
+    """Same-row content filters; the runtime authorizes Scope read first."""
 
     tag_filter: TagFilter | None = None
     kind: str | None = None
-    owner_type: str | None = None
-    owner_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,7 +86,6 @@ class AtomicMemoryProjection:
     state_version: int
     prepared: PreparedAtomicMemoryProjection
     tag_keys: tuple[str, ...]
-    security: AtomicMemoryProjectionSecurity
 
 
 @dataclass(frozen=True)
@@ -179,13 +165,9 @@ class AtomicMemoryProjectionPublisher:
         self,
         index: AtomicMemoryIndex,
         *,
-        load_tags: Callable[[AsyncConnection, str, str], Awaitable[tuple[str, ...]]],
-        load_security: Callable[[AsyncConnection, str, str, Any], Awaitable[AtomicMemoryProjectionSecurity]],
         embedding_model: EmbeddingModel | None = None,
     ) -> None:
         self.index = index
-        self._load_tags = load_tags
-        self._load_security = load_security
         self._embedding_model = embedding_model
 
     @property
@@ -242,7 +224,6 @@ class AtomicMemoryProjectionPublisher:
         scope_id: str,
         record: Any,
         prepared: PreparedAtomicMemoryProjection,
-        execution_context: Any,
     ) -> None:
         artifact = record.artifact
         if record.state.state != "active":
@@ -252,8 +233,7 @@ class AtomicMemoryProjectionPublisher:
         if content_hash != prepared.content_hash:
             raise AtomicMemoryIndexError("prepared-content", "Prepared projection does not match the committed content")
         self.validate_prepared(prepared)
-        tags = await self._load_tags(connection, scope_id, artifact.artifact_id)
-        security = await self._load_security(connection, scope_id, artifact.artifact_id, execution_context)
+        tags = await load_atomic_memory_tags(connection, scope_id, artifact.artifact_id)
         await self.index.replace(
             connection,
             scope_id,
@@ -262,12 +242,29 @@ class AtomicMemoryProjectionPublisher:
                 state_version=record.state.state_version,
                 prepared=prepared,
                 tag_keys=tags,
-                security=security,
             ),
         )
 
     async def remove(self, connection: AsyncConnection, scope_id: str, artifact_id: str) -> None:
         await self.index.delete(connection, scope_id, artifact_id)
+
+
+async def load_atomic_memory_tags(connection: AsyncConnection, scope_id: str, artifact_id: str) -> tuple[str, ...]:
+    rows = (
+        await connection.execute(
+            select(ARTIFACT_TAGS_TABLE.c.tag_key)
+            .where(
+                ARTIFACT_TAGS_TABLE.c.scope_id == scope_id,
+                ARTIFACT_TAGS_TABLE.c.family == "atomic-memory",
+                ARTIFACT_TAGS_TABLE.c.artifact_id == artifact_id,
+                ARTIFACT_TAGS_TABLE.c.target_type == "artifact",
+                ARTIFACT_TAGS_TABLE.c.target_id == artifact_id,
+            )
+            .order_by(ARTIFACT_TAGS_TABLE.c.tag_key)
+            .with_for_update()
+        )
+    ).scalars()
+    return tuple(str(row) for row in rows)
 
 
 def atomic_memory_embedding_input(kind: str, body: str, /) -> str:
@@ -289,11 +286,6 @@ def atomic_memory_filter_sql(
 
     parameters: dict[str, object] = {}
     conditions: list[str] = []
-    if (filters.owner_type is None) != (filters.owner_id is None):
-        raise AtomicMemoryIndexError("owner", "Both owner type and ID are required")
-    if filters.owner_type is not None:
-        parameters.update(owner_type=filters.owner_type, owner_id=filters.owner_id)
-        conditions.append("(owner_type = :owner_type AND owner_id = :owner_id)")
     if filters.tag_filter is not None:
         tags: list[str] = []
         for index, tag_key in enumerate(filters.tag_filter.keys):
@@ -435,9 +427,6 @@ class RelationalAtomicMemoryIndex:
         if projection.artifact_ref.family != "atomic-memory":
             raise AtomicMemoryIndexError("family", "Atomic Memory index only accepts atomic-memory artifacts")
         prepared = projection.prepared
-        security = projection.security
-        if not security.owner_type or not security.owner_id:
-            raise AtomicMemoryIndexError("owner", "Current projection requires a formal artifact owner")
         embedding = None
         fingerprint = None
         input_hash = None
@@ -472,8 +461,6 @@ class RelationalAtomicMemoryIndex:
                 text=prepared.text,
                 searchable_text=prepared.searchable_text,
                 tag_keys=json.dumps(sorted(set(projection.tag_keys)), ensure_ascii=False),
-                owner_type=security.owner_type,
-                owner_id=security.owner_id,
                 embedding=embedding,
                 profile_fingerprint=fingerprint,
                 embedding_input_hash=input_hash,
@@ -603,7 +590,6 @@ __all__ = [
     "AtomicMemoryIndexHit",
     "AtomicMemoryProjection",
     "AtomicMemoryProjectionPublisher",
-    "AtomicMemoryProjectionSecurity",
     "AtomicMemoryRelatedRequest",
     "AtomicMemorySearchChannels",
     "AtomicMemorySearchRequest",
@@ -615,4 +601,5 @@ __all__ = [
     "atomic_memory_filter_sql",
     "atomic_memory_profile_fingerprint",
     "combine_atomic_memory_channels",
+    "load_atomic_memory_tags",
 ]

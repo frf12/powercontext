@@ -315,7 +315,6 @@ from powercontext.builtin.runtime import (
 )
 from powercontext.builtin.runtime.application import BuiltinRuntime, PromptApplication
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchPage
-from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
 from powercontext.builtin.runtime.skill_search import search_skill_library
 from powercontext.builtin.scope import (
     ScopeApplication,
@@ -3278,15 +3277,14 @@ async def list_memory_changes(
     return mapping.changes_response(result)
 
 
-def _atomic_execution_context(request: Request, operation: str) -> AtomicMemoryExecutionContext:
+def _atomic_execution_context(request: Request, operation: str) -> ArtifactSearchExecutionContext | None:
     application = _require_application(request)
     access = access_control_for_mode(request.app.state.access_control, mode=request.app.state.access_mode)
     if access is None:
-        atomic = getattr(application, "atomic_memory", None)
-        if atomic is None:
+        if getattr(application, "atomic_memory", None) is None:
             raise BaseOperationNotSupportedError("artifact_family", "atomic-memory", "runtime application")
-        return atomic.default_context
-    return AtomicMemoryExecutionContext(
+        return None
+    return ArtifactSearchExecutionContext(
         principal=_require_principal(), access=access, audit=_access_audit_context(operation)
     )
 
@@ -4510,6 +4508,8 @@ def _add_route(
 # Collection permission allows identity discovery, but content remains unavailable
 # until every committed identity has its immutable owner relation.
 _COLLECTION_CONTENT_OPERATIONS = frozenset({
+    "list_atomic_memories",
+    "search_atomic_memory",
     "search_artifacts",
     "search_memory",
     "list_memory_entries",
