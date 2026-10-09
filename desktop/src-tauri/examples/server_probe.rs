@@ -131,8 +131,15 @@ async fn main() {
         .compatibility_profiles
         .iter()
         .filter(|profile| profile.contract_sha256 == contract_sha256);
-    let compatibility = qualified.next().expect("qualified fixture contract").id.clone();
-    assert!(qualified.next().is_none(), "ambiguous fixture qualification");
+    let compatibility = qualified
+        .next()
+        .expect("qualified fixture contract")
+        .id
+        .clone();
+    assert!(
+        qualified.next().is_none(),
+        "ambiguous fixture qualification"
+    );
     let credential = raw["token"]
         .as_str()
         .map(|value| serde_json::json!({"secret":value,"storage":"session_only"}));

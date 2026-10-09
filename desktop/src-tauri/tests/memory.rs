@@ -158,8 +158,15 @@ async fn setup() -> Fixture {
         .compatibility_profiles
         .iter()
         .filter(|profile| profile.contract_sha256 == contract_sha256);
-    let compatibility = qualified.next().expect("qualified fixture contract").id.clone();
-    assert!(qualified.next().is_none(), "ambiguous fixture qualification");
+    let compatibility = qualified
+        .next()
+        .expect("qualified fixture contract")
+        .id
+        .clone();
+    assert!(
+        qualified.next().is_none(),
+        "ambiguous fixture qualification"
+    );
     let mut ids = vec![];
     for name in ["A", "B"] {
         let state = manager.save_profile(serde_json::from_value(serde_json::json!({"id":null,"revision":null,"name":name,"endpoint":endpoint,"authentication":"unauthenticated_loopback","caPem":null,"compatibility":compatibility,"keepCredential":false,"credential":null})).unwrap()).unwrap();
