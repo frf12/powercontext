@@ -53,11 +53,6 @@ async fn setup() -> Fixture {
     setup_response(serde_json::json!({"memory":{"family":"memory","artifact_id":"mem-a","revision":1},"entry":null})).await
 }
 async fn setup_response(response: serde_json::Value) -> Fixture {
-    let compatibility_id = if response.get("records").is_some() {
-        "sqlite-atomic-7bd5b85c-v1"
-    } else {
-        "sqlite-6e237568-v1"
-    };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let started = Arc::new(Notify::new());
@@ -157,14 +152,23 @@ async fn setup_response(response: serde_json::Value) -> Fixture {
     let manager = Arc::new(ConnectionManager::new(
         ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(WindowsVault)).unwrap(),
     ));
-    let compatibility = manager
-        .state()
-        .unwrap()
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../src/transport/operations.json")).unwrap();
+    let contract_sha256 = contract["contractSha256"].as_str().unwrap();
+    let state = manager.state().unwrap();
+    let mut qualified = state
         .compatibility_profiles
-        .into_iter()
-        .find(|profile| profile.id == compatibility_id)
-        .unwrap()
-        .id;
+        .iter()
+        .filter(|profile| profile.contract_sha256 == contract_sha256);
+    let compatibility = qualified
+        .next()
+        .expect("qualified fixture contract")
+        .id
+        .clone();
+    assert!(
+        qualified.next().is_none(),
+        "ambiguous fixture qualification"
+    );
     let mut ids = vec![];
     for name in ["A", "B"] {
         let state = manager.save_profile(serde_json::from_value(serde_json::json!({"id":null,"revision":null,"name":name,"endpoint":endpoint,"authentication":"unauthenticated_loopback","caPem":null,"compatibility":compatibility,"keepCredential":false,"credential":null})).unwrap()).unwrap();

@@ -35,6 +35,16 @@ import httpx
 from real_server import HarnessFailure, control_pipe
 
 
+def fixture_compatibility_profile() -> str:
+    desktop = Path(__file__).resolve().parents[1]
+    contract = json.loads((desktop / "src-tauri/src/transport/operations.json").read_text(encoding="utf-8"))
+    profiles = json.loads((desktop / "src-tauri/src/connections/compatibility.json").read_text(encoding="utf-8"))
+    matches = [profile["id"] for profile in profiles if profile["contractSha256"] == contract["contractSha256"]]
+    if len(matches) != 1:
+        raise HarnessFailure("installed_server_compatibility_profile")
+    return next(iter(matches))
+
+
 def memory_hit_reference(hit: dict[str, object]) -> dict[str, object]:
     """Keep the complete exact reference from either supported search protocol."""
     if "memory" in hit:

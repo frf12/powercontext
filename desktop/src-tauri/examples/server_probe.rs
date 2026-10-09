@@ -133,14 +133,23 @@ async fn main() {
         .unwrap(),
     );
     let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&args[1]).unwrap()).unwrap();
-    let compatibility = manager
-        .state()
-        .unwrap()
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../src/transport/operations.json")).unwrap();
+    let contract_sha256 = contract["contractSha256"].as_str().unwrap();
+    let state = manager.state().unwrap();
+    let mut qualified = state
         .compatibility_profiles
-        .into_iter()
-        .find(|profile| profile.id == "sqlite-atomic-7bd5b85c-v1")
-        .unwrap()
-        .id;
+        .iter()
+        .filter(|profile| profile.contract_sha256 == contract_sha256);
+    let compatibility = qualified
+        .next()
+        .expect("qualified fixture contract")
+        .id
+        .clone();
+    assert!(
+        qualified.next().is_none(),
+        "ambiguous fixture qualification"
+    );
     let credential = raw["token"]
         .as_str()
         .map(|value| serde_json::json!({"secret":value,"storage":"session_only"}));
