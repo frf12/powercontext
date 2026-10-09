@@ -261,6 +261,9 @@ def test_server_databases_share_source_to_memory_search_behavior(
             **_ACCESS_READINESS_CHECKS,
         }
         assert capabilities.source_types == ["content"]
+        assert ref.family == "atomic-memory"
+        assert ref.family in capabilities.artifact_families
+        assert "memory" in capabilities.artifact_families
         assert capabilities.memory_extraction is True
         assert capabilities.search_modes == ["auto", "fts"]
         assert capabilities.context_versions == ["powercontext.prepared-context.v1"]
@@ -519,6 +522,7 @@ def test_sdk_handoff_lifecycle_reaches_generation_and_persistence(tmp_path: Path
 
         assert capabilities.artifact_families == [
             "memory",
+            "atomic-memory",
             "topic-memory",
             "experience",
             "skill",
