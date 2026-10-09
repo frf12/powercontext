@@ -249,5 +249,5 @@ Source extraction enumerates the complete same-Scope threshold set owned by its 
 configured authorizer for Artifact read and write before comparing a memory. Denied candidates are skipped;
 authorization failures stop processing. The immutable Owner columns are only an extraction prefilter.
 
-Builtin authorization reads share the business transaction. Casbin and custom providers retain their configured
-decision repositories and read consistency contracts; their policy reads need not share the business snapshot.
+Scope checks using the same database with supported Builtin or Casbin providers share the business snapshot.
+Independent decision stores and custom providers retain their configured read consistency contracts.

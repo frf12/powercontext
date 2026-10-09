@@ -31,9 +31,15 @@ from powercontext.builtin.artifacts.atomic_memory.models import (
     AtomicMemoryWrite,
     PreparedAtomicMemory,
 )
+from powercontext.builtin.artifacts.atomic_memory.search import (
+    AtomicMemoryArtifactSearchOutcome,
+    AtomicMemoryArtifactSearchRequest,
+)
 
 __all__ = [
     "AtomicMemory",
+    "AtomicMemoryArtifactSearchOutcome",
+    "AtomicMemoryArtifactSearchRequest",
     "AtomicMemoryContent",
     "AtomicMemoryCreation",
     "AtomicMemoryDraft",

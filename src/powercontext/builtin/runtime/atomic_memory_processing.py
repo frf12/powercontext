@@ -128,17 +128,22 @@ class AtomicMemorySourceWindowProcessor:
         context: AtomicMemoryExecutionContext | None = None,
     ) -> MemoryFlushResult:
         selected_context = self.application.default_context if context is None else context
-        with self._stage("memory.flush", {"powercontext.memory.flush.source_count": 0}) as span:
-            if self.prompts is not None:
-                legacy = await self.prompts.read_configuration(scope_id, "memory.extract")
-                if legacy.mode == "custom":
-                    raise PromptError("legacy_memory_prompt_unsupported", during_inference=True)
-                async with (
-                    self.prompts.bind(scope_id, "atomic_memory.extract"),
-                    self.prompts.bind(scope_id, "atomic_memory.reconcile"),
-                ):
-                    return await self._retry_window(scope_id, limit, processing, selected_context, span)
-            return await self._retry_window(scope_id, limit, processing, selected_context, span)
+        # Scope checks may retain a separate configured audit connection. Flush its
+        # decision events after every business transaction in this operation closes.
+        async with (
+            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext()
+        ):
+            with self._stage("memory.flush", {"powercontext.memory.flush.source_count": 0}) as span:
+                if self.prompts is not None:
+                    legacy = await self.prompts.read_configuration(scope_id, "memory.extract")
+                    if legacy.mode == "custom":
+                        raise PromptError("legacy_memory_prompt_unsupported", during_inference=True)
+                    async with (
+                        self.prompts.bind(scope_id, "atomic_memory.extract"),
+                        self.prompts.bind(scope_id, "atomic_memory.reconcile"),
+                    ):
+                        return await self._retry_window(scope_id, limit, processing, selected_context, span)
+                return await self._retry_window(scope_id, limit, processing, selected_context, span)
 
     async def _retry_window(self, scope_id, limit, processing, context, span) -> MemoryFlushResult:
         for attempt in range(3):

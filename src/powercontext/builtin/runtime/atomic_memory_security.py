@@ -84,14 +84,16 @@ class AtomicMemorySecurity:
                 if owner is None or owner.owner != context.principal:
                     raise AccessDeniedError()
             return
-        access = context.access.with_connection(connection)
-        if ref is not None and ref.family in {"memory", "topic-memory", "prompt"} and action == "read":
-            # Operational Prompt, Topic Memory and frozen collection lineage use Scope read.
-            # Internal exact lineage validation follows; Prompt writes keep their own scope.admin boundary.
-            await access.require(
-                context.principal, AccessAction.SCOPE_READ, ResourceRef.scope(scope_id), context=context.audit
+        if action == "read" and (ref is None or ref.family in {"memory", "topic-memory", "prompt"}):
+            if ref is None and context.access.uses_static_preset(context.principal):
+                access = context.access.with_connection(connection)
+                await access.bootstrap_static_scope(context.principal, scope_id, context=context.audit)
+            # Use the shared Scope gate while retaining the configured decision repository.
+            await context.access.require_scope_read(
+                context.principal, scope_id, connection=connection, context=context.audit
             )
             return
+        access = context.access.with_connection(connection)
         if ref is None or action == "create":
             permission = AccessAction.SCOPE_READ if action == "read" else AccessAction.SCOPE_CONTRIBUTE
             resource = ResourceRef.scope(scope_id)
