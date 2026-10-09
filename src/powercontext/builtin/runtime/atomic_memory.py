@@ -231,12 +231,9 @@ class ScopedAtomicMemory:
         # after it closes so SQLite never upgrades an old read snapshot.
         # SAVEPOINT also pins trusted local reads and composes with an
         # existing in-memory write transaction without committing it.
-        async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
-            self.application.database.transaction(consistent_snapshot=True) as connection,
-        ):
+        async with self.application.security.read_transaction(selected_context) as (connection, read_context):
             return await self.application.service.get(
-                connection, self.scope_id, artifact_id, selected_context, revision=revision
+                connection, self.scope_id, artifact_id, read_context, revision=revision
             )
 
     async def list(  # noqa: C901
@@ -274,13 +271,8 @@ class ScopedAtomicMemory:
         has_more = False
         table = ATOMIC_MEMORY_STATES_TABLE
         head = ARTIFACT_HEADS_TABLE
-        async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
-            self.application.database.transaction(consistent_snapshot=True) as connection,
-        ):
-            await self.application.security.filters(
-                self.scope_id, selected_context, tags=tag_filter, connection=connection
-            )
+        async with self.application.security.read_transaction(selected_context) as (connection, read_context):
+            await self.application.security.filters(self.scope_id, read_context, tags=tag_filter, connection=connection)
             while len(items) <= limit:
                 statement = (
                     select(table.c.artifact_id)
@@ -312,7 +304,7 @@ class ScopedAtomicMemory:
                     try:
                         # Scope-wide reads remain authorized by the same formal policy.
                         record = await self.application.service.get(
-                            connection, self.scope_id, str(artifact_id), selected_context
+                            connection, self.scope_id, str(artifact_id), read_context
                         )
                     except AccessDeniedError:
                         last = str(artifact_id)
@@ -375,12 +367,9 @@ class ScopedAtomicMemory:
         profile = application.index.capabilities.embedding_profile if vector is not None else None
         # Inference finishes before authorization and retrieval share a read
         # snapshot; decision audit writes flush only after that snapshot closes.
-        async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
-            application.database.transaction(consistent_snapshot=True) as connection,
-        ):
+        async with application.security.read_transaction(selected_context) as (connection, read_context):
             filters = await application.security.filters(
-                self.scope_id, selected_context, tags=tag_filter, connection=connection
+                self.scope_id, read_context, tags=tag_filter, connection=connection
             )
             request = AtomicMemorySearchRequest(
                 query,
@@ -641,14 +630,11 @@ class ScopedAtomicMemory:
         application = self.application
         selected_context = self._context(context)
         available: list[AtomicMemorySearchHit] = []
-        async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
-            application.database.transaction(consistent_snapshot=True) as connection,
-        ):
+        async with application.security.read_transaction(selected_context) as (connection, read_context):
             for candidate in candidates:
                 try:
                     current = await application.service.get(
-                        connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, selected_context
+                        connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, read_context
                     )
                 except AccessDeniedError:
                     continue
@@ -777,12 +763,9 @@ class ScopedAtomicMemory:
     async def preview_restoration(self, artifact_id: str, *, operation="restore", revision=None, context=None):
         application = self.application
         context = self._context(context)
-        async with (
-            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
-            application.database.transaction(consistent_snapshot=True) as connection,
-        ):
+        async with application.security.read_transaction(context) as (connection, read_context):
             plan = await application.service.inspect_restore(
-                connection, self.scope_id, artifact_id, context, operation=operation, revision=revision
+                connection, self.scope_id, artifact_id, read_context, operation=operation, revision=revision
             )
         return application.service.restoration_preview(plan)
 

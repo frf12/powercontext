@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import math
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, NoReturn
 
@@ -241,7 +241,7 @@ class AtomicMemorySourceWindowProcessor:
     async def _inspect_decisions(self, scope_id, workset, context):
         application = self.application
         plans = []
-        async with self._read_transaction(context) as connection:
+        async with application.security.read_transaction(context) as (connection, read_context):
             for item in workset.changes():
                 lineage = ArtifactLineage(sources=item.sources, artifacts=item.artifacts)
                 if len(item.origins) >= 2:
@@ -251,7 +251,7 @@ class AtomicMemorySourceWindowProcessor:
                         application.id_factory("atomic-memory"),
                         item.origins,
                         item.content,
-                        context,
+                        read_context,
                         lineage=lineage,
                     )
                 else:
@@ -261,7 +261,7 @@ class AtomicMemorySourceWindowProcessor:
                         scope_id,
                         application.id_factory("atomic-memory") if original is None else original.ref.artifact_id,
                         item.content,
-                        context,
+                        read_context,
                         expected_revision=None if original is None else original.ref.revision,
                         expected_state_version=None if original is None else original.state_version,
                         lineage=lineage,
@@ -441,9 +441,11 @@ class AtomicMemorySourceWindowProcessor:
     async def _load_related_items(self, scope_id, hits, context, workset, historical, artifacts):
         recalled = []
         for hit in hits:
-            async with self._read_transaction(context) as connection:
-                record = await self.application.service.get(connection, scope_id, hit.artifact_ref.artifact_id, context)
-                await self.application.security.authorize(connection, scope_id, context, "write", record.ref)
+            async with self.application.security.read_transaction(context) as (connection, read_context):
+                record = await self.application.service.get(
+                    connection, scope_id, hit.artifact_ref.artifact_id, read_context
+                )
+                await self.application.security.authorize(connection, scope_id, read_context, "write", record.ref)
                 if (
                     record.ref != hit.artifact_ref
                     or record.state.state_version != hit.state_version
@@ -452,7 +454,7 @@ class AtomicMemorySourceWindowProcessor:
                     or record.artifact.content.text != hit.text
                 ):
                     _conflict("Related memory changed before comparison")
-                rows, refs = await self._supporting_sources(connection, scope_id, record.artifact, context)
+                rows, refs = await self._supporting_sources(connection, scope_id, record.artifact, read_context)
             supported = tuple([
                 await project_atomic_memory_evidence(
                     row,
@@ -560,10 +562,10 @@ class AtomicMemorySourceWindowProcessor:
     async def _authorize_model_input(
         self, scope_id, context, reads, source_refs, artifact_refs=(), *, generation_sources=()
     ):
-        async with self._read_transaction(context) as connection:
-            await self.application.security.authorize(connection, scope_id, context, "read")
-            await self.application.security.authorize(connection, scope_id, context, "create")
-            await self.application.security.authorize_sources(connection, scope_id, context, source_refs)
+        async with self.application.security.read_transaction(context) as (connection, read_context):
+            await self.application.security.authorize(connection, scope_id, read_context, "read")
+            await self.application.security.authorize(connection, scope_id, read_context, "create")
+            await self.application.security.authorize_sources(connection, scope_id, read_context, source_refs)
             current_sources = await self.sources.get_many(
                 connection, scope_id, tuple(item.ref for item in generation_sources)
             )
@@ -572,12 +574,12 @@ class AtomicMemorySourceWindowProcessor:
             ):
                 _conflict("Source generation basis changed before model inference")
             for read in reads:
-                current = await self.application.service.get(connection, scope_id, read.ref.artifact_id, context)
+                current = await self.application.service.get(connection, scope_id, read.ref.artifact_id, read_context)
                 if current.as_read() != read:
                     _conflict("Memory basis changed before model comparison")
-                await self.application.security.authorize(connection, scope_id, context, "write", read.ref)
+                await self.application.security.authorize(connection, scope_id, read_context, "write", read.ref)
             for ref in artifact_refs:
-                await self._authorize_artifact(connection, scope_id, context, ref)
+                await self._authorize_artifact(connection, scope_id, read_context, ref)
 
     async def _authorize_artifact(self, connection, scope_id, context, ref):
         # Frozen collection lineage is historical metadata, never per-entry authority.
@@ -586,16 +588,6 @@ class AtomicMemorySourceWindowProcessor:
         await self.application.security.authorize(
             connection, scope_id, context, "read", None if ref.family == "memory" else ref
         )
-
-    @asynccontextmanager
-    async def _read_transaction(self, context):
-        # Authorization sees the same snapshot as preparation. Its audit is
-        # written after that read closes, rather than upgrading SQLite's snapshot.
-        async with (
-            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
-            self.application.database.transaction(consistent_snapshot=True) as connection,
-        ):
-            yield connection
 
     def _stage(self, name, attributes):
         return nullcontext(None) if self.tracing is None else self.tracing.stage(name, attributes=attributes)

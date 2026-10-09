@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,11 +43,57 @@ class AtomicMemoryExecutionContext:
     access: Any = None
     audit: Any = None
     trusted_local: bool = False
+    read_connection: AsyncConnection | None = None
 
 
 class AtomicMemorySecurity:
     def __init__(self, database: AsyncDatabase) -> None:
         self.database = database
+
+    @asynccontextmanager
+    async def read_transaction(self, context: AtomicMemoryExecutionContext):
+        # The read-local binding shares the caller's audit deferral. Its original
+        # store receives decisions after the snapshot closes, including nested reads.
+        async with (
+            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
+            self.database.transaction(consistent_snapshot=True) as connection,
+        ):
+            if context.access is not None:
+                from powercontext.server.authz import AccessUnavailableError
+                from powercontext.server.authz.repository import RelationalAccessRepository
+                from powercontext.server.authz.service import AccessControlService, BuiltinAuthorizationProvider
+
+                access = context.access
+                provider = access.provider
+                canonical = type(provider) is BuiltinAuthorizationProvider
+                if not canonical and type(provider).__module__ == "powercontext.server.authz.casbin":
+                    from powercontext.server.authz.casbin import CasbinAuthorizationProvider
+
+                    canonical = type(provider) is CasbinAuthorizationProvider
+                if canonical and type(provider._repository) is RelationalAccessRepository:
+                    repository = provider._repository
+                    try:
+                        bound_repository = repository.with_connection(connection)
+                    except AccessUnavailableError as error:
+                        if error.code != "transactional_relationships_unavailable":
+                            raise
+                    else:
+                        bound = AccessControlService(
+                            provider.with_repository(bound_repository),
+                            relationships=bound_repository
+                            if access.relationships is repository
+                            else access.relationships,
+                            audit=access.audit,
+                            deployment_id=access.deployment_id,
+                            provider_capabilities=access.provider_capabilities,
+                            clock=access._clock,
+                            cursor_secret=access._cursor_secret,
+                            static_scope_principal=access._static_scope_principal,
+                        )
+                        bound._deferred_decisions = access._deferred_decisions
+                        access = bound
+                context = replace(context, access=access, read_connection=connection)
+            yield connection, context
 
     async def lock_transaction(self, connection: AsyncConnection, scope_id: str, context: Any) -> None:
         from powercontext.server.authz import AccessUnavailableError
@@ -85,7 +132,9 @@ class AtomicMemorySecurity:
                 if owner is None or owner.owner != context.principal:
                     raise AccessDeniedError()
             return
-        access = context.access.with_connection(connection)
+        access = context.access
+        if context.read_connection is not connection:
+            access = access.with_connection(connection)
         if ref is not None and ref.family in {"memory", "topic-memory", "prompt"} and action == "read":
             # Operational Prompt, Topic Memory and frozen collection lineage use Scope read.
             # Internal exact lineage validation follows; Prompt writes keep their own scope.admin boundary.
@@ -159,7 +208,9 @@ class AtomicMemorySecurity:
                 supported = type(provider) is CasbinAuthorizationProvider
             if not supported:
                 raise AccessUnavailableError("atomic_memory_projection_authorization_unavailable")
-            access = context.access if connection is None else context.access.with_connection(connection)
+            access = context.access
+            if connection is not None and context.read_connection is not connection:
+                access = access.with_connection(connection)
             decision = await access.check(
                 context.principal, AccessAction.SCOPE_READ, ResourceRef.scope(scope_id), context=context.audit
             )
