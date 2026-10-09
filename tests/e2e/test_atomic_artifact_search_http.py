@@ -17,11 +17,18 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
+import aiosqlite
 import httpx
+import pytest
 
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
+from powercontext.builtin.artifacts.search import AdmissionFloor
+from powercontext.builtin.inference import EmbeddingResult
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
 from powercontext.builtin.runtime.atomic_memory_security import AtomicMemorySecurity
 from powercontext.builtin.runtime.config import RuntimeConfig
 from powercontext.client import PowerContextClient
@@ -52,6 +59,93 @@ class Authentication:
 
     async def readiness(self) -> ProviderReadiness:
         return ProviderReadiness(ready=True)
+
+
+class _Embedding:
+    profile = EmbeddingProfile(profile_id="long-query", model="test", dimension=3, normalization="unit")
+
+    async def embed(self, texts, /):
+        return EmbeddingResult(vectors=((1.0, 0.0, 0.0),) * len(texts))
+
+
+@pytest.fixture
+def sqlite_expression_limit(monkeypatch):
+    # Some distributions compile SQLite with depth 10000. Exercise the usual
+    # supported depth 1000 on the real connection rather than hiding that gap.
+    connect = aiosqlite.Connection._connect
+
+    async def with_limit(connection):
+        result = await connect(connection)
+        await connection._execute(connection._conn.setlimit, sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 1000)
+        return result
+
+    monkeypatch.setattr(aiosqlite.Connection, "_connect", with_limit)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [" ".join(f"term{i}" for i in range(1000)), "".join(chr(0x4E00 + i) for i in range(600))],
+    ids=["ascii-1000", "cjk-600"],
+)
+@pytest.mark.parametrize("mode", ["text", "hybrid"])
+def test_supported_long_query_preserves_all_terms_in_both_http_searches(tmp_path, query, mode, sqlite_expression_limit):
+    async def scenario():
+        app = create_server_app(
+            settings=ServerSettings(
+                database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'long-query.db'}"),
+                runtime=RuntimeConfig(artifact_processing_families=()),
+                metrics=MetricsConfig(enabled=False),
+                mcp=McpConfig(enabled=False),
+            ),
+            scheduler_path=tmp_path / "scheduler.db",
+            embedding_model=_Embedding(),
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as transport,
+            PowerContextClient("http://testserver", http_client=transport, trust_transport_security=True) as client,
+        ):
+            scope_id = (await client.get_default_scope()).scope_id
+            original = (
+                await client.remember_memory(RememberMemoryRequest(scope_id=scope_id, kind="fact", text=query))
+            ).records[0]
+            for path, payload in (
+                (f"/v1/scopes/{scope_id}/artifacts/atomic-memory/search", {"query": query, "mode": mode}),
+                ("/v1/atomic-memory/search", {"scope_id": scope_id, "query": query, "mode": mode}),
+            ):
+                response = await transport.post(path, json=payload)
+                assert response.status_code == 200, response.text
+                if "results" in response.json():
+                    (result,) = response.json()["results"]
+                    assert result["artifact_id"] == original.artifact.artifact_id
+                    assert result["content"]["text"] == query
+                else:
+                    (result,) = response.json()["hits"]
+                    assert result["memory"]["artifact"]["artifact_id"] == original.artifact.artifact_id
+                    assert result["memory"]["text"] == query
+
+    asyncio.run(scenario())
+
+
+def test_long_query_recovery_probe_preserves_lexical_coverage(tmp_path, sqlite_expression_limit):
+    async def scenario():
+        terms = [f"term{i}" for i in range(1000)]
+        query = " ".join(terms)
+        async with open_builtin_contexts(
+            BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'recovery.db'}"))
+        ) as contexts:
+            await contexts.get("project")
+            await contexts.records.create_atomic_memories("project", ({"kind": "fact", "text": " ".join(terms[:500])},))
+            page = await contexts.atomic_memory.for_scope("project").search(
+                query,
+                mode="text",
+                admission=AdmissionFloor(lexical_min_matched_terms=1, lexical_coverage=0.8),
+                recovery_admission=AdmissionFloor(lexical_min_matched_terms=1, lexical_coverage=0.4),
+            )
+            assert page.hits == ()
+            assert page.recoverable is True
+
+    asyncio.run(scenario())
 
 
 def test_composed_atomic_search_returns_full_content_scores_and_trusted_local_identity(

@@ -892,7 +892,9 @@ class _ScopedRecordApplication(Protocol):
         /,
     ) -> RuntimeArtifactCreated: ...
 
-    async def get_artifact(self, family: str, artifact_id: str, /) -> RuntimeArtifactRecord: ...
+    async def get_artifact(
+        self, family: str, artifact_id: str, /, *, execution_context: Any = None
+    ) -> RuntimeArtifactRecord: ...
 
     async def get_artifact_revision(
         self,
@@ -900,6 +902,8 @@ class _ScopedRecordApplication(Protocol):
         artifact_id: str,
         revision: int,
         /,
+        *,
+        execution_context: Any = None,
     ) -> RuntimeArtifactRecord: ...
 
     async def logical_artifacts(self) -> tuple[LogicalArtifactRecord, ...]: ...
@@ -2747,6 +2751,7 @@ async def get_artifact(
     scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
     family: Annotated[ArtifactReadFamily, Path()],
     artifact_id: Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")],
+    http_request: Request,
     response: Response,
     application: Annotated[ServerApplication, Depends(_require_application)],
     if_none_match: Annotated[
@@ -2754,7 +2759,15 @@ async def get_artifact(
         Header(alias="If-None-Match", min_length=1),
     ] = None,
 ) -> ArtifactRevision | Response:
-    result = await application.records.for_scope(scope_id).get_artifact(family.value, artifact_id)
+    result = await application.records.for_scope(scope_id).get_artifact(
+        family.value,
+        artifact_id,
+        **(
+            {"execution_context": _atomic_execution_context(http_request, GET_ARTIFACT.operation_id)}
+            if family.value == "atomic-memory"
+            else {}
+        ),
+    )
     etag = _artifact_etag(result.revision)
     if _if_none_match_matches(if_none_match, etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
@@ -2801,12 +2814,18 @@ async def get_artifact_revision(
     family: Annotated[ArtifactReadFamily, Path()],
     artifact_id: Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")],
     revision: Annotated[int, Path(ge=1)],
+    http_request: Request,
     application: Annotated[ServerApplication, Depends(_require_application)],
 ) -> ArtifactRevision:
     result = await application.records.for_scope(scope_id).get_artifact_revision(
         family.value,
         artifact_id,
         revision,
+        **(
+            {"execution_context": _atomic_execution_context(http_request, GET_ARTIFACT_REVISION.operation_id)}
+            if family.value == "atomic-memory"
+            else {}
+        ),
     )
     return _artifact_revision_response(result)
 

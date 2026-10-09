@@ -34,6 +34,7 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemorySearchRequest,
     RelationalAtomicMemoryIndex,
     atomic_memory_channel_hits,
+    atomic_memory_coverage_sql,
     atomic_memory_filter_sql,
     atomic_memory_profile_fingerprint,
     atomic_memory_vector_sql,
@@ -212,7 +213,7 @@ class SQLiteAtomicMemoryIndex(RelationalAtomicMemoryIndex):
                             f"SELECT {_HIT_COLUMNS}, -bm25({_FTS_TABLE}) AS score, "  # noqa: S608
                             f"bm25({_FTS_TABLE}) AS raw_score, 'sqlite_bm25' AS score_metric FROM {_FTS_TABLE} "
                             "WHERE searchable_text MATCH :fts_query AND scope_id = :scope_id "
-                            f"AND ({eligibility}) AND ({' + '.join(coverage)}) >= :fts_required "
+                            f"AND ({eligibility}) AND ({atomic_memory_coverage_sql(coverage)}) >= :fts_required "
                             f"ORDER BY score DESC, artifact_id{limit_sql}"
                         ),
                         parameters,

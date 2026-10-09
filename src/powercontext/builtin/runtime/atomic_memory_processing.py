@@ -26,17 +26,15 @@ from sqlalchemy import update
 from powercontext.artifacts import ArtifactLineage, ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
+    AtomicMemoryEvidence,
     AtomicMemoryExtractionInput,
     project_atomic_memory_evidence,
     require_atomic_memory_pipeline,
 )
-from powercontext.builtin.artifacts.atomic_memory.models import (
-    AtomicMemory,
-    AtomicMemoryContent,
-    AtomicMemoryStateValue,
-)
+from powercontext.builtin.artifacts.atomic_memory.models import AtomicMemoryContent, AtomicMemoryStateValue
 from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
     ATOMIC_MEMORY_RECONCILIATION_INSTRUCTIONS,
+    AtomicMemoryArtifactEvidence,
     AtomicMemoryReconciliationOutput,
     AtomicMemoryWindowWorkset,
     AtomicMemoryWorkingItem,
@@ -51,11 +49,10 @@ from powercontext.builtin.inference import (
     embed_query,
 )
 from powercontext.builtin.persistence.atomic_memory_index import AtomicMemoryIndexError, AtomicMemoryRelatedRequest
-from powercontext.builtin.persistence.atomic_memory_legacy_evidence import read_imported_memory_evidence
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.errors import GenerationConflictError
 from powercontext.builtin.persistence.memory_windows import MemorySourceWindowRepository
-from powercontext.builtin.persistence.sources import SourceRepository, StoredSource
+from powercontext.builtin.persistence.sources import SourceRepository
 from powercontext.builtin.persistence.tables import SOURCE_JOURNAL_HEADS_TABLE
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryApplication
 from powercontext.builtin.runtime.atomic_memory_security import AtomicMemoryExecutionContext
@@ -191,9 +188,7 @@ class AtomicMemorySourceWindowProcessor:
             )
         pipeline = self.pipeline if eligible else None
         try:
-            workset, historical_sources, consulted_artifacts = await self._prepare(
-                scope_id, eligible, pipeline, context
-            )
+            workset, consulted_artifacts = await self._prepare(scope_id, eligible, pipeline, context)
             prepared = await self._inspect_decisions(scope_id, workset, context)
         except (InferenceTimeoutError, InvalidInferenceOutputError) as error:
             reducible = (isinstance(error, InferenceTimeoutError) and error.operation == "generate") or (
@@ -211,7 +206,6 @@ class AtomicMemorySourceWindowProcessor:
             action,
             window,
             eligible,
-            historical_sources,
             consulted_artifacts,
             workset,
             prepared,
@@ -280,7 +274,6 @@ class AtomicMemorySourceWindowProcessor:
         action,
         window,
         eligible,
-        historical_sources,
         consulted_artifacts,
         workset,
         prepared,
@@ -321,13 +314,8 @@ class AtomicMemorySourceWindowProcessor:
                     _conflict("Source window changed during preparation")
                 if tuple(item for item in current_window if is_generation_eligible(item.value)) != eligible:
                     _conflict("Source generation eligibility changed during preparation")
-                historical = await self.sources.get_many(
-                    connection, scope_id, tuple(item.ref for item in historical_sources)
-                )
-                if historical != historical_sources:
-                    _conflict("Supporting Source evidence changed during preparation")
                 await application.security.authorize_sources(
-                    connection, scope_id, context, tuple(item.ref for item in (*eligible, *historical))
+                    connection, scope_id, context, tuple(item.ref for item in eligible)
                 )
                 for ref in consulted_artifacts:
                     await self._authorize_artifact(connection, scope_id, context, ref)
@@ -347,10 +335,9 @@ class AtomicMemorySourceWindowProcessor:
 
     async def _prepare(self, scope_id, eligible, pipeline, context):
         workset = AtomicMemoryWindowWorkset()
-        historical: dict[tuple[str, str], StoredSource] = {}
         artifacts: dict[tuple[str, str, int], ArtifactRef] = {}
         if pipeline is None:
-            return workset, (), ()
+            return workset, ()
         evidence = tuple([
             await project_atomic_memory_evidence(item, self.sources, evidence_id=f"source:{item.journal_position}")
             for item in eligible
@@ -396,7 +383,7 @@ class AtomicMemorySourceWindowProcessor:
                 item.key for item in workset.items.values() if item.key != key and item.changed and item.retain
             )
             hits = await self._recall(scope_id, candidate.text, context)
-            recalled = await self._load_related_items(scope_id, hits, context, workset, historical, artifacts)
+            recalled = await self._load_related_items(scope_id, hits, context, workset, artifacts)
             pending = list(dict.fromkeys((*prior, *recalled)))
             compared = False
             while pending or not compared:
@@ -425,7 +412,7 @@ class AtomicMemorySourceWindowProcessor:
                     scope_id,
                     context,
                     dependencies,
-                    tuple(item.source_ref for item in value.evidence),
+                    tuple(item.source_ref for item in value.evidence if isinstance(item, AtomicMemoryEvidence)),
                     tuple(artifacts.values()),
                     generation_sources=eligible,
                 )
@@ -436,9 +423,9 @@ class AtomicMemorySourceWindowProcessor:
         for item in workset.changes():
             refs = {(ref.family, ref.artifact_id, ref.revision): ref for ref in (*item.artifacts, *prompt_refs)}
             workset.items[item.key] = replace(item, artifacts=tuple(refs.values()))
-        return workset, tuple(historical.values()), tuple(artifacts.values())
+        return workset, tuple(artifacts.values())
 
-    async def _load_related_items(self, scope_id, hits, context, workset, historical, artifacts):
+    async def _load_related_items(self, scope_id, hits, context, workset, artifacts):
         recalled = []
         for hit in hits:
             async with self.application.security.read_transaction(context) as (connection, read_context):
@@ -454,31 +441,20 @@ class AtomicMemorySourceWindowProcessor:
                     or record.artifact.content.text != hit.text
                 ):
                     _conflict("Related memory changed before comparison")
-                rows, refs = await self._supporting_sources(connection, scope_id, record.artifact, read_context)
-            supported = tuple([
-                await project_atomic_memory_evidence(
-                    row,
-                    self.sources,
-                    evidence_id=f"artifact:{record.artifact.artifact_id}@{record.artifact.revision}:source:{row.journal_position}",
-                    via_artifact=record.ref,
-                )
-                for row in rows
-            ])
-            for row in rows:
-                source_key = (row.ref.source_type, row.ref.source_id)
-                previous = historical.get(source_key)
-                if previous is not None and previous != row:
-                    _conflict("Supporting Source changed between recalls")
-                historical[source_key] = row
-            for ref in refs:
-                artifacts[(ref.family, ref.artifact_id, ref.revision)] = ref
+            content = AtomicMemoryContent(kind=hit.kind, text=hit.text)
+            supported = AtomicMemoryArtifactEvidence(
+                evidence_id=f"artifact:{record.ref.artifact_id}@{record.ref.revision}",
+                artifact_ref=record.ref,
+                content=content,
+            )
+            artifacts[(record.ref.family, record.ref.artifact_id, record.ref.revision)] = record.ref
             recalled.append(
                 workset.add(
                     AtomicMemoryWorkingItem(
                         key=f"memory:{hit.artifact_ref.artifact_id}",
-                        content=AtomicMemoryContent(kind=hit.kind, text=hit.text),
+                        content=content,
                         origins=(record.as_read(),),
-                        evidence=supported,
+                        evidence=(supported,),
                         artifacts=(record.ref,),
                     )
                 )
@@ -527,37 +503,6 @@ class AtomicMemorySourceWindowProcessor:
         if len(result.vectors) != 1:
             raise AtomicMemoryIndexError("embedding-result", "Related query requires one vector")
         return canonical_embedding(result.vectors[0], dimension=profile.dimension, normalization=profile.normalization)
-
-    async def _supporting_sources(self, connection, scope_id, artifact, context):
-        pending = [artifact]
-        refs: dict[tuple[str, str, int], ArtifactRef] = {}
-        visited: set[tuple[str, str, int]] = set()
-        source_refs = []
-        while pending:
-            current = pending.pop()
-            ref_key = (current.family, current.artifact_id, current.revision)
-            if ref_key in visited:
-                continue
-            visited.add(ref_key)
-            refs[ref_key] = current.as_ref()
-            lineage = current.lineage
-            if isinstance(current, AtomicMemory):
-                imported = await read_imported_memory_evidence(
-                    connection, self.application.artifacts, scope_id, current
-                )
-                if imported is not None:
-                    await self._authorize_artifact(connection, scope_id, context, imported.anchor)
-                    anchor = imported.anchor
-                    refs[(anchor.family, anchor.artifact_id, anchor.revision)] = anchor
-                    lineage = imported.lineage
-            source_refs.extend(lineage.sources)
-            for ref in lineage.artifacts:
-                if (ref.family, ref.artifact_id, ref.revision) not in visited:
-                    await self._authorize_artifact(connection, scope_id, context, ref)
-                    pending.append(await self.application.artifacts.get(connection, scope_id, ref))
-        rows = await self.sources.get_many(connection, scope_id, tuple(source_refs))
-        await self.application.security.authorize_sources(connection, scope_id, context, tuple(row.ref for row in rows))
-        return tuple(row for row in rows if is_generation_eligible(row.value)), tuple(refs.values())
 
     async def _authorize_model_input(
         self, scope_id, context, reads, source_refs, artifact_refs=(), *, generation_sources=()

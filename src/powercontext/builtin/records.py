@@ -295,7 +295,9 @@ class RecordService(Protocol):
         self, scope_id: str, contents: tuple[dict[str, JsonValue], ...], *, execution_context: Any = None
     ) -> tuple[ArtifactCreated, ...]: ...
 
-    async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord: ...
+    async def get_artifact(
+        self, scope_id: str, family: str, artifact_id: str, /, *, execution_context: Any = None
+    ) -> ArtifactRecord: ...
 
     async def get_artifact_revision(
         self,
@@ -304,6 +306,8 @@ class RecordService(Protocol):
         artifact_id: str,
         revision: int,
         /,
+        *,
+        execution_context: Any = None,
     ) -> ArtifactRecord: ...
 
     async def list_artifact_revisions(

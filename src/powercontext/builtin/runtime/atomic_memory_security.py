@@ -31,7 +31,7 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemoryReadGrant,
 )
 from powercontext.builtin.persistence.database import AsyncDatabase
-from powercontext.builtin.persistence.tables import ARTIFACT_TAGS_TABLE
+from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE, ARTIFACT_TAGS_TABLE
 from powercontext.builtin.tags import TagFilter
 
 
@@ -58,6 +58,11 @@ class AtomicMemorySecurity:
             context.access.defer_decision_audit() if context.access is not None else nullcontext(),
             self.database.transaction(consistent_snapshot=True) as connection,
         ):
+            if connection.dialect.name == "sqlite":
+                # SAVEPOINT alone does not pin SQLite's data snapshot. Read a
+                # persistent table before a policy provider on another database
+                # can allow a request while newer private content is committed.
+                await connection.execute(select(ARTIFACT_HEADS_TABLE.c.scope_id).limit(1))
             if context.access is not None:
                 from powercontext.server.authz import AccessUnavailableError
                 from powercontext.server.authz.repository import RelationalAccessRepository

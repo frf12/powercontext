@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -45,6 +45,21 @@ from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_M
 from powercontext.builtin.tags import TagFilter
 
 AtomicMemorySearchMode = Literal["fts", "vector", "hybrid"]
+
+
+def atomic_memory_coverage_sql(terms: Sequence[str]) -> str:
+    """Sum integer term matches with logarithmic expression depth.
+
+    Parentheses avoid SQLite's left-associated expression depth limit without
+    removing terms or changing lexical coverage and admission.
+    """
+    expressions = list(terms)
+    while len(expressions) > 1:
+        expressions = [
+            f"({expressions[index]} + {expressions[index + 1]})" if index + 1 < len(expressions) else expressions[index]
+            for index in range(0, len(expressions), 2)
+        ]
+    return expressions[0] if expressions else "0"
 
 
 class AtomicMemoryIndexError(RuntimeError):
@@ -680,7 +695,7 @@ class RelationalAtomicMemoryIndex:
                 )
                 coverage.append(f"CASE WHEN {matched} THEN 1 ELSE 0 END")
             if coverage:
-                lexical = " + ".join(coverage)
+                lexical = atomic_memory_coverage_sql(coverage)
                 parameters.update(probe_required=required, probe_lower_required=lower_required)
                 current.append(f"(({lexical}) >= :probe_required)")
                 recoverable.append(f"(({lexical}) >= :probe_lower_required)")
