@@ -1,5 +1,4 @@
 {
-  "openapi_sha256": "0807df984ba706b505d4fff0cb849d4566222f10572d91a5e03399b833d1fe4f",
   "api_version": "1.2.0",
   "operations": {
     "list_atomic_memories": {
