@@ -32,7 +32,10 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryExtractionOutput,
     AtomicMemoryGenerationPipeline,
 )
-from powercontext.builtin.artifacts.atomic_memory.reconciliation import AtomicMemoryReconciliationOutput
+from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
+    AtomicMemoryReconciliationContent,
+    AtomicMemoryReconciliationOutput,
+)
 from powercontext.builtin.artifacts.experience import ExperienceContent, ExperienceDraft
 from powercontext.builtin.artifacts.memory import MemoryService
 from powercontext.builtin.artifacts.memory.canonical import canonical_json, entry_content_hash, normalize_refs
@@ -557,7 +560,11 @@ class _CaptureReconciler:
                 action="create" if related is None else "noop",
                 compared_ids=tuple(item.item_id for item in request.related),
                 target_ids=() if related is None else (related.item_id,),
-                content=AtomicMemoryContent(kind="fact", text=request.proposal.text) if related is None else None,
+                content=(
+                    AtomicMemoryReconciliationContent(kind="fact", text=request.proposal.text)
+                    if related is None
+                    else None
+                ),
                 evidence_ids=request.proposal.evidence_ids if related is None else (),
                 reason="Retain the exact existing fact without altering its historical evidence.",
             )

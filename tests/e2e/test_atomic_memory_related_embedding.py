@@ -22,13 +22,15 @@ import json
 import httpx
 import pytest
 
-from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
     AtomicMemoryExtractionOutput,
     AtomicMemoryGenerationPipeline,
 )
-from powercontext.builtin.artifacts.atomic_memory.reconciliation import AtomicMemoryReconciliationOutput
+from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
+    AtomicMemoryReconciliationContent,
+    AtomicMemoryReconciliationOutput,
+)
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.inference import (
     EmbeddingResult,
@@ -84,7 +86,7 @@ class _Reconciler:
                 action="revise" if request.related else "create",
                 compared_ids=compared,
                 target_ids=(request.related[0].item_id,) if request.related else (),
-                content=AtomicMemoryContent(kind="fact", text=request.proposal.text),
+                content=AtomicMemoryReconciliationContent(kind="fact", text=request.proposal.text),
                 evidence_ids=request.proposal.evidence_ids,
                 reason="Retain the preference and its supplied Source evidence.",
             )

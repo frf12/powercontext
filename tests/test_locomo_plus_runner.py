@@ -30,7 +30,6 @@ from pydantic_ai.models.function import FunctionModel
 from benchmark.locomo.dataset import LoCoMoConversation, LoCoMoSession, LoCoMoTurn
 from benchmark.locomo_plus import runner
 from benchmark.locomo_plus.dataset import SMOKE_CASE_IDS, LoCoMoPlusCase, LoCoMoPlusDataset
-from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
     AtomicMemoryExtractionInput,
@@ -38,6 +37,7 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryGenerationPipeline,
 )
 from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
+    AtomicMemoryReconciliationContent,
     AtomicMemoryReconciliationInput,
     AtomicMemoryReconciliationOutput,
 )
@@ -310,7 +310,7 @@ def test_extraction_corrects_invalid_json_within_the_configured_request_budget(
         output = AtomicMemoryReconciliationOutput(
             action="create",
             compared_ids=tuple(item.item_id for item in request.related),
-            content=AtomicMemoryContent(kind=request.proposal.kind, text=request.proposal.text),
+            content=AtomicMemoryReconciliationContent(kind=request.proposal.kind, text=request.proposal.text),
             evidence_ids=request.proposal.evidence_ids,
             reason="Preserve each recorded dialogue with its exact Source evidence.",
         )

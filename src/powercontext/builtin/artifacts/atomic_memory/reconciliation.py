@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Literal, NoReturn
+from typing import Any, Literal, NoReturn
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
@@ -89,6 +89,26 @@ class AtomicMemoryReconciliationInput(BaseModel):
     evidence: tuple[AtomicMemoryReconciliationEvidence, ...]
 
 
+class AtomicMemoryReconciliationContent(BaseModel):
+    """Model-owned facts; publication metadata belongs to the merge service."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def ordinary_content(cls, value: Any) -> Any:
+        if isinstance(value, cls):
+            return value
+        # Stored demonstrations may include the old schema marker and creation:null.
+        # Validate that exact format before removing its inert metadata.
+        content = AtomicMemoryContent.model_validate(value)
+        if content.creation is not None:
+            raise ValueError("creation metadata is constructed only by the merge service")  # noqa: TRY003
+        return {"kind": content.kind, "text": content.text}
+
+
 class AtomicMemoryReconciliationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     action: Literal["create", "revise", "merge", "noop"]
@@ -99,7 +119,7 @@ class AtomicMemoryReconciliationOutput(BaseModel):
         default=(),
         description="Selected related[].item_id values only, excluding proposal.item_id. Empty when related is empty.",
     )
-    content: AtomicMemoryContent | None = None
+    content: AtomicMemoryReconciliationContent | None = None
     evidence_ids: tuple[str, ...] = ()
     reason: str = Field(min_length=1)
 
@@ -199,6 +219,7 @@ class AtomicMemoryWindowWorkset:
 
         if output.content is None:
             _invalid("write content is missing")
+        content = AtomicMemoryContent(kind=output.content.kind, text=output.content.text)
         inputs = (proposal, *targets)
         origins = tuple({read.ref.artifact_id: read for item in inputs for read in item.origins}.values())
         if output.action == "revise" and len(origins) != 1:
@@ -224,12 +245,12 @@ class AtomicMemoryWindowWorkset:
         artifacts = tuple({(ref.family, ref.artifact_id, ref.revision): ref for ref in supporting_refs}.values())
         updated = AtomicMemoryWorkingItem(
             key=key,
-            content=output.content,
+            content=content,
             origins=origins,
             evidence=selected,
             sources=sources,
             artifacts=artifacts,
-            changed=proposal.changed or bool(targets) or output.content != proposal.content,
+            changed=proposal.changed or bool(targets) or content != proposal.content,
         )
         for target in targets:
             del self.items[target.key]
@@ -262,7 +283,6 @@ def validate_reconciliation_output(
             _invalid("noop does not write content or evidence and has at most one target")
     elif (
         output.content is None
-        or output.content.creation is not None
         or not output.evidence_ids
         or not set(output.evidence_ids) <= {item.evidence_id for item in request.evidence}
     ):
