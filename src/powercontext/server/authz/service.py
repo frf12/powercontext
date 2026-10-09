@@ -602,7 +602,7 @@ class AccessControlService:
         )
 
     def with_connection(self, connection):
-        """Bind relationships, local authorization reads, and audit to a transaction."""
+        """Bind relationships, builtin authorization reads, and audit to a transaction."""
         from powercontext.server.authz.repository import RelationalAccessRepository
 
         if not isinstance(self.relationships, RelationalAccessRepository) or self.audit is not self.relationships:
@@ -611,14 +611,7 @@ class AccessControlService:
         provider = self.provider
         if isinstance(provider, BuiltinAuthorizationProvider):
             provider = provider.with_repository(repository)
-        elif type(provider).__module__ == "powercontext.server.authz.casbin":
-            # Casbin is an optional Server dependency; load it only for its
-            # fixed provider, which shares the built-in relationship policy.
-            from powercontext.server.authz.casbin import CasbinAuthorizationProvider
-
-            if type(provider) is CasbinAuthorizationProvider:
-                provider = provider.with_repository(repository)
-        bound = AccessControlService(
+        return AccessControlService(
             provider,
             relationships=repository,
             audit=repository,
@@ -627,8 +620,6 @@ class AccessControlService:
             clock=self._clock,
             static_scope_principal=self._static_scope_principal,
         )
-        bound._deferred_decisions = self._deferred_decisions
-        return bound
 
     async def require_scope_read(self, principal, scope_id: str, *, connection, context: AccessAuditContext):
         """Use a local policy snapshot when available, preserving external point decisions."""
