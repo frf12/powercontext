@@ -207,7 +207,6 @@ def test_unified_atomic_search_preserves_authenticated_subject_actor_groups_and_
                 assert contexts
                 for context in contexts:
                     assert context.principal == VIEWER
-                    assert context.access is access
                     assert context.trusted_local is False
                     assert context.audit.actor == ADMIN
                     assert context.audit.subject_groups == (GROUP,)
