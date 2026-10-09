@@ -50,7 +50,6 @@ def atomic_memory_current_table(embedding_type: TypeEngine[Any] | None = None, /
         Column("tag_keys", body_type, nullable=False),
         Column("owner_type", identity_string(16), nullable=False),
         Column("owner_id", identity_string(255), nullable=False),
-        Column("read_grants", body_type, nullable=False),
         Column("embedding", LargeBinary() if embedding_type is None else embedding_type),
         Column("profile_fingerprint", identity_string(64)),
         Column("embedding_input_hash", identity_string(64)),

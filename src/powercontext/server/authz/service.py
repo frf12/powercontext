@@ -611,13 +611,6 @@ class AccessControlService:
         provider = self.provider
         if isinstance(provider, BuiltinAuthorizationProvider):
             provider = provider.with_repository(repository)
-        elif type(provider).__module__ == "powercontext.server.authz.casbin":
-            # Casbin is an optional Server dependency; load it only for its
-            # fixed provider, which shares the built-in relationship policy.
-            from powercontext.server.authz.casbin import CasbinAuthorizationProvider
-
-            if type(provider) is CasbinAuthorizationProvider:
-                provider = provider.with_repository(repository)
         bound = AccessControlService(
             provider,
             relationships=repository,

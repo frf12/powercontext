@@ -28,6 +28,7 @@ from sqlalchemy import insert, select
 
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError, AtomicMemoryPreviewStaleError
 from powercontext.builtin.artifacts.atomic_memory.models import (
+    AtomicMemory,
     AtomicMemoryContent,
     AtomicMemoryRead,
     AtomicMemoryRecord,
@@ -163,17 +164,6 @@ class AtomicMemoryApplication:
     def for_scope(self, scope_id: str) -> ScopedAtomicMemory:
         return ScopedAtomicMemory(self, scope_id)
 
-    async def refresh_access(self, connection, resource) -> None:
-        security = await load_atomic_memory_security(connection, resource.scope_id, resource.artifact_id)
-        await self.index.refresh_access(
-            connection,
-            resource.scope_id,
-            resource.artifact_id,
-            security.owner_type,
-            security.owner_id,
-            security.read_grants,
-        )
-
     async def merge_tags(self, connection, scope_id: str, result_id: str, input_ids: tuple[str, ...]) -> None:
         from datetime import UTC, datetime
         from hashlib import sha256
@@ -221,10 +211,11 @@ class ScopedAtomicMemory:
 
     async def get(self, artifact_id: str, *, revision: int | None = None, context=None) -> AtomicMemoryRecord:
         selected_context = self._context(context)
-        # Reads keep authority in the same snapshot; audit writes are flushed
+        # Builtin authority shares the business snapshot. Configured external
+        # providers keep their own decision boundary. Audit writes are flushed
         # after it closes so SQLite never upgrades an old read snapshot.
-        # SAVEPOINT also pins trusted local reads and composes with an
-        # existing in-memory write transaction without committing it.
+        # SAVEPOINT contains the business reads and composes with an existing
+        # in-memory write transaction without committing it.
         async with (
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
             self.application.database.transaction(consistent_snapshot=True) as connection,
@@ -233,7 +224,7 @@ class ScopedAtomicMemory:
                 connection, self.scope_id, artifact_id, selected_context, revision=revision
             )
 
-    async def list(  # noqa: C901
+    async def list(
         self,
         *,
         states: tuple[str, ...] = ("active",),
@@ -243,8 +234,6 @@ class ScopedAtomicMemory:
         cursor: str | None = None,
         context=None,
     ) -> AtomicMemoryPage:
-        from powercontext.server.authz import AccessDeniedError
-
         selected_context = self._context(context)
         _validate_limit(limit)
         if not states or len(set(states)) != len(states):
@@ -272,6 +261,11 @@ class ScopedAtomicMemory:
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
             self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
+            await connection.execute(
+                select(ARTIFACT_HEADS_TABLE.c.artifact_id)
+                .where(ARTIFACT_HEADS_TABLE.c.scope_id == self.scope_id)
+                .limit(1)
+            )
             await self.application.security.filters(
                 self.scope_id, selected_context, tags=tag_filter, connection=connection
             )
@@ -303,14 +297,7 @@ class ScopedAtomicMemory:
                 if not rows:
                     break
                 for artifact_id in rows:
-                    try:
-                        # Scope-wide reads remain authorized by the same formal policy.
-                        record = await self.application.service.get(
-                            connection, self.scope_id, str(artifact_id), selected_context
-                        )
-                    except AccessDeniedError:
-                        last = str(artifact_id)
-                        continue
+                    record = await self._current_record(connection, str(artifact_id))
                     if kind is not None and record.artifact.content.kind != kind:
                         last = str(artifact_id)
                         continue
@@ -322,6 +309,23 @@ class ScopedAtomicMemory:
                 if has_more or len(rows) < 100:
                     break
         return AtomicMemoryPage(tuple(items), self.application.cursor.encode(bound, last) if has_more else None)
+
+    async def _current_record(self, connection, artifact_id: str) -> AtomicMemoryRecord:
+        """Load current authority after a Scope read boundary has been checked."""
+        from powercontext.server.authz import AccessUnavailableError, ResourceRef
+        from powercontext.server.authz.repository import RelationalAccessRepository
+
+        application = self.application
+        owner = await RelationalAccessRepository(application.database, connection=connection).get_artifact_owner(
+            ResourceRef.artifact(self.scope_id, family=AtomicMemory.family, artifact_id=artifact_id)
+        )
+        if owner is None:
+            raise AccessUnavailableError("artifact_owner_pending")
+        artifact = await application.artifacts.latest(connection, self.scope_id, AtomicMemory.family, artifact_id)
+        return AtomicMemoryRecord(
+            artifact=cast(AtomicMemory, artifact),
+            state=await application.service.states.get(connection, self.scope_id, artifact_id),
+        )
 
     async def search(
         self,
@@ -350,12 +354,20 @@ class ScopedAtomicMemory:
             query, mode, query_embedding, embedding_timeout_seconds, allow_embedding
         )
         profile = application.index.capabilities.embedding_profile if vector is not None else None
-        # Inference finishes before authorization and retrieval share a read
-        # snapshot; decision audit writes flush only after that snapshot closes.
+        # Inference finishes before the business snapshot opens. Builtin policy
+        # reads share it; configured providers retain their own read boundary.
+        # Decision audit writes flush only after the business snapshot closes.
         async with (
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
             application.database.transaction(consistent_snapshot=True) as connection,
         ):
+            # Pin SQLite's business read before a configured provider is consulted.
+            # Its decision repository may use a separate transaction.
+            await connection.execute(
+                select(ARTIFACT_HEADS_TABLE.c.artifact_id)
+                .where(ARTIFACT_HEADS_TABLE.c.scope_id == self.scope_id)
+                .limit(1)
+            )
             filters = await application.security.filters(
                 self.scope_id, selected_context, tags=tag_filter, connection=connection
             )
@@ -560,9 +572,7 @@ class ScopedAtomicMemory:
         *,
         context: AtomicMemoryExecutionContext | None = None,
     ) -> tuple[AtomicMemorySearchHit, ...]:
-        """Retain only exact, active candidates readable in one current authority snapshot."""
-        from powercontext.server.authz import AccessDeniedError
-
+        """Recheck Scope read and retain exact, active candidates from current authority."""
         if not candidates:
             return ()
         application = self.application
@@ -572,13 +582,9 @@ class ScopedAtomicMemory:
             selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
             application.database.transaction(consistent_snapshot=True) as connection,
         ):
+            await application.security.authorize(connection, self.scope_id, selected_context, "read")
             for candidate in candidates:
-                try:
-                    current = await application.service.get(
-                        connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, selected_context
-                    )
-                except AccessDeniedError:
-                    continue
+                current = await self._current_record(connection, candidate.hit.artifact_ref.artifact_id)
                 if (
                     current.ref == candidate.hit.artifact_ref
                     and current.state.state_version == candidate.hit.state_version

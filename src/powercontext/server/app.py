@@ -807,7 +807,6 @@ from powercontext.server.authz.models import (
     HandoffReceiptIdentity,
 )
 from powercontext.server.authz.profiles import ARTIFACT_FAMILY_PROFILES, artifact_family_profile
-from powercontext.server.authz.repository import RelationalAccessRepository
 from powercontext.server.context import (
     bind_request_id,
     current_authentication,
@@ -3267,8 +3266,6 @@ def _bind_evidence_access(
 ) -> None:
     if mode == "enforced" and isinstance(access, AccessControlService) and isinstance(application, BuiltinRuntime):
         DreamAccess(access).bind(application)
-        if application.atomic_memory is not None and isinstance(access.relationships, RelationalAccessRepository):
-            access.relationships.set_atomic_memory_projection_hook(application.atomic_memory.refresh_access)
 
 
 def _dream_principal(request: Request) -> str:

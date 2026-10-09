@@ -2517,7 +2517,6 @@ class AtomicMemoryRuntimeApplication:
         self._runtime = runtime
         self._application = application
         self.default_context = application.default_context
-        self.refresh_access = application.refresh_access
 
     def for_scope(self, scope_id: str, /) -> ScopedAtomicMemoryApplication:
         return ScopedAtomicMemoryApplication(self._runtime, self._application, scope_id)

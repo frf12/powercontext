@@ -169,10 +169,6 @@ async def _projection_differences(
     differing = [name for name, value in expected.items() if row[name] != value]
     if tuple(json.loads(row["tag_keys"])) != await load_atomic_memory_tags(connection, scope_id, artifact_id):
         differing.append("tag_keys")
-    if sorted(json.loads(row["read_grants"]), key=lambda grant: grant["binding_id"]) != [
-        grant.as_json() for grant in security.read_grants
-    ]:
-        differing.append("read_grants")
     if (row["embedding"] is None) != (profile is None):
         differing.append("embedding")
     elif profile is not None and connection.dialect.name == "sqlite" and len(row["embedding"]) != profile.dimension * 4:
@@ -231,6 +227,16 @@ async def verify_atomic_memory_current(
 
 async def _initialize_rebuild(connection: AsyncConnection, index: AtomicMemoryIndex) -> None:
     await _require_authority(connection)
+    if await connection.run_sync(lambda sync: inspect(sync).has_table(index.table.name)):
+        columns = await connection.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns(index.table.name)}
+        )
+        if "read_grants" in columns:
+            # Only this unreleased, rebuildable development projection changes.
+            # Authority, retained history and formal grants stay in their tables.
+            await connection.run_sync(lambda sync: index.table.drop(sync))
+            if connection.dialect.name == "sqlite":
+                await connection.exec_driver_sql("DROP TABLE IF EXISTS pc_atomic_memory_current_fts")
     try:
         await index.initialize(connection)
     except AtomicMemoryIndexError as error:

@@ -990,7 +990,10 @@ def test_memory_capacity_contract_and_compact_change_are_public():
     assert GET_MEMORY_CAPACITY.path == "/v1/memory/capacity"
     assert GET_MEMORY_CAPACITY.request_type is GetMemoryCapacityRequest
     assert GET_MEMORY_CAPACITY.response_type is MemoryCapacity
-    assert GET_MEMORY_CAPACITY.access == LIST_MEMORY_ENTRIES.access
+    assert GET_MEMORY_CAPACITY.access is not None
+    assert LIST_MEMORY_ENTRIES.access is not None
+    assert GET_MEMORY_CAPACITY.access.resolver == "atomic_memory_domain_access"
+    assert LIST_MEMORY_ENTRIES.access.action == "scope.read"
     assert EntryChangeOperation.COMPACT.value == "compact"
     with pytest.raises(ValidationError):
         GetMemoryCapacityRequest.model_validate({"scope_id": "scope", "budget": {}})

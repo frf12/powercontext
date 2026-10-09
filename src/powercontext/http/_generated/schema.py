@@ -37,7 +37,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
                 "x-powercontext-scope-mode": "current",
-                "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/atomic-memory/search": {
@@ -67,7 +70,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
                 "x-powercontext-scope-mode": "current",
-                "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/atomic-memory/merges": {
@@ -1842,12 +1848,12 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "post": {
                 "tags": ["memory"],
                 "summary": "Search active Atomic Memory through the legacy query input",
-                "description": "Search current active Atomic Memory with "
-                "permission filtering before limits. "
-                "Returns true Atomic ArtifactRefs and "
-                "state versions, never synthetic old "
-                "collection citations. Empty results are "
-                "valid.",
+                "description": "Require Scope read and search current "
+                "active Atomic Memory with content "
+                "filters before limits. Returns true "
+                "Atomic ArtifactRefs and state versions, "
+                "never synthetic old collection "
+                "citations. Empty results are valid.",
                 "operationId": "search_memory",
                 "requestBody": {
                     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SearchMemoryRequest"}}},
@@ -1868,7 +1874,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
                 "x-powercontext-scope-mode": "current",
             }
         },
@@ -1935,7 +1944,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"resolver": "atomic_memory_domain_access"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
                 "x-powercontext-scope-mode": "current",
             }
         },

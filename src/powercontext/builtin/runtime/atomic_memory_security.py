@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Trusted identities and transaction-bound authorization for Atomic Memory."""
+"""Trusted identities and configured authorization for Atomic Memory."""
 
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemoryIndexFilter,
     AtomicMemoryProjectionSecurity,
-    AtomicMemoryReadGrant,
 )
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.tables import ARTIFACT_TAGS_TABLE
@@ -143,39 +142,14 @@ class AtomicMemorySecurity:
         writable: bool = False,
         connection: AsyncConnection | None = None,
     ) -> AtomicMemoryIndexFilter:
-        scope_read = context.trusted_local and context.access is None
-        groups: tuple[str, ...] = ()
-        if context.access is not None:
-            from powercontext.server.authz import AccessAction, AccessUnavailableError, ResourceRef
-            from powercontext.server.authz.service import BuiltinAuthorizationProvider
-
-            provider = context.access.provider
-            supported = type(provider) is BuiltinAuthorizationProvider
-            if not supported and type(provider).__module__ == "powercontext.server.authz.casbin":
-                from powercontext.server.authz.casbin import CasbinAuthorizationProvider
-
-                # The repository's fixed Casbin policy shares the exact
-                # relationship rules represented by this projection.
-                supported = type(provider) is CasbinAuthorizationProvider
-            if not supported:
-                raise AccessUnavailableError("atomic_memory_projection_authorization_unavailable")
-            access = context.access if connection is None else context.access.with_connection(connection)
-            decision = await access.check(
-                context.principal, AccessAction.SCOPE_READ, ResourceRef.scope(scope_id), context=context.audit
-            )
-            scope_read = decision.allowed
-            groups = tuple(group.id for group in context.audit.subject_groups)
-        elif not context.trusted_local:
-            from powercontext.server.authz import AccessIdentityRequiredError
-
-            raise AccessIdentityRequiredError
+        if connection is None:
+            async with self.database.transaction() as connection:
+                return await self.filters(scope_id, context, tags=tags, writable=writable, connection=connection)
+        await self.authorize(connection, scope_id, context, "read")
         return AtomicMemoryIndexFilter(
             tag_filter=tags,
-            principal_type=context.principal.type,
-            principal_id=context.principal.id,
-            scope_read=scope_read,
-            writable=writable,
-            group_ids=groups,
+            owner_type=context.principal.type if writable else None,
+            owner_id=context.principal.id if writable else None,
         )
 
 
@@ -201,7 +175,7 @@ async def load_atomic_memory_security(
     connection: AsyncConnection, scope_id: str, artifact_id: str, _context: Any = None
 ) -> AtomicMemoryProjectionSecurity:
     from powercontext.server.authz import AccessUnavailableError
-    from powercontext.server.authz.repository import ACCESS_BINDINGS_TABLE, ACCESS_OWNERS_TABLE
+    from powercontext.server.authz.repository import ACCESS_OWNERS_TABLE
 
     owner = (
         await connection.execute(
@@ -218,31 +192,4 @@ async def load_atomic_memory_security(
     ).one_or_none()
     if owner is None:
         raise AccessUnavailableError("artifact_owner_pending")
-    from powercontext.server.authz import AccessRole
-
-    bindings = (
-        await connection.execute(
-            select(ACCESS_BINDINGS_TABLE)
-            .where(
-                ACCESS_BINDINGS_TABLE.c.resource_type == "artifact",
-                ACCESS_BINDINGS_TABLE.c.scope_id == scope_id,
-                ACCESS_BINDINGS_TABLE.c.family == "atomic-memory",
-                ACCESS_BINDINGS_TABLE.c.artifact_id == artifact_id,
-                ACCESS_BINDINGS_TABLE.c.selector_type.is_(None),
-                ACCESS_BINDINGS_TABLE.c.state == "active",
-                ACCESS_BINDINGS_TABLE.c.role.in_((AccessRole.ARTIFACT_VIEWER.value, AccessRole.ARTIFACT_OWNER.value)),
-            )
-            .order_by(ACCESS_BINDINGS_TABLE.c.binding_id)
-            .with_for_update()
-        )
-    ).mappings()
-    grants = tuple(
-        AtomicMemoryReadGrant(
-            str(row["binding_id"]),
-            str(row["subject_type"]),
-            str(row["subject_id"]),
-            None if row["expires_at"] is None else datetime.fromisoformat(str(row["expires_at"])),
-        )
-        for row in bindings
-    )
-    return AtomicMemoryProjectionSecurity(str(owner.owner_type), str(owner.owner_id), grants)
+    return AtomicMemoryProjectionSecurity(str(owner.owner_type), str(owner.owner_id))

@@ -243,7 +243,7 @@ LIST_ATOMIC_MEMORIES = Operation[ListAtomicMemoryRequest, ListAtomicMemoryRespon
         500: {"$ref": "#/components/responses/InternalError"},
         503: {"$ref": "#/components/responses/Unavailable"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 SEARCH_ATOMIC_MEMORY = Operation[SearchAtomicMemoryRequest, SearchAtomicMemoryResponse](
@@ -268,7 +268,7 @@ SEARCH_ATOMIC_MEMORY = Operation[SearchAtomicMemoryRequest, SearchAtomicMemoryRe
         500: {"$ref": "#/components/responses/InternalError"},
         503: {"$ref": "#/components/responses/Unavailable"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 MERGE_ATOMIC_MEMORIES = Operation[MergeAtomicMemoryRequest, AtomicMemoryMutationResponse](
@@ -1481,7 +1481,7 @@ SEARCH_MEMORY = Operation[SearchMemoryRequest, SearchMemoryResponse](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 GET_MEMORY_CAPACITY = Operation[GetMemoryCapacityRequest, MemoryCapacity](
@@ -1535,7 +1535,7 @@ LIST_MEMORY_ENTRIES = Operation[ListMemoryEntriesRequest, ListMemoryEntriesRespo
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 GET_MEMORY_ENTRY = Operation[GetMemoryEntryRequest, GetMemoryEntryResponse](

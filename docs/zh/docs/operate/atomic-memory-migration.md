@@ -118,7 +118,7 @@ powercontext server atomic-memory-rebuild-projection --env-file .env --maintenan
 保持原身份和原值。它不能修复或绕过缺失的旧历史导入。
 
 每条 active 正文在写事务外准备向量。提交前锁定并重新核对精确 revision、state_version 和部署
-profile，再在同一个事务中读取最新正式标签、Owner 和直接读取授权。关闭向量时保留正文与全文检索，
+profile，再在同一个事务中读取最新正式标签和不可变的 Owner。关闭向量时保留正文与全文检索，
 清除 embedding、profile 和输入摘要。SQLite 的全文辅助索引使用稳定的 Scope/Artifact 身份 token，
 不依赖 `VACUUM` 可能改变的 rowid。
 
@@ -147,3 +147,6 @@ active 行，不使用进度表续跑。`--batch-size` 控制每批读取的身�
 计划及启动就绪检查读取保留的全部旧历史和 Source/任务快照，首版将这些记录保存在进程内。
 这会随历史规模增加读取量和内存消耗。应在备份副本上记录读量、内存峰值、embedding 调用量和总停服
 时长，再安排正式维护窗口；这里不声称已经验证生产规模成本。
+
+旧开发版本中包含读取授权副本的 current 表会在初始化时被明确拒绝。停服后执行上述投影重建命令，
+它只重建这张派生表，并从正式记录恢复活跃记忆，保留精确 Artifact 的所有权和分享授权。

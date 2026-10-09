@@ -791,6 +791,99 @@ def test_enforced_access_rechecks_background_actor_and_attests_candidate(databas
     asyncio.run(scenario())
 
 
+def test_dream_candidate_attestation_preserves_configured_casbin_denial(tmp_path: Path) -> None:
+    from powercontext.server.authz import AccessAction, AccessControlService, AccessRole, PrincipalRef, ResourceRef
+    from powercontext.server.authz.composition import open_builtin_access_control, open_casbin_access_control
+    from powercontext.server.authz.service import AccessAuditContext, CreateBinding
+    from powercontext.server.dream_access import DreamAccess, principal_identity
+
+    database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'dream.db'}")
+    decision_database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'decisions.db'}")
+    admin = PrincipalRef(type="service", id="dream-admin")
+    author = PrincipalRef(type="user", id="dream-author")
+    context = AccessAuditContext(transport="background", operation="test_dream")
+
+    async def scenario() -> None:
+        async with (
+            open_builtin_access_control(database, bootstrap_administrators=(admin,)) as relationships,
+            open_casbin_access_control(decision_database, bootstrap_administrators=(admin,)) as decisions,
+        ):
+            access = AccessControlService(
+                decisions.provider, relationships=relationships.relationships, audit=relationships.audit
+            )
+            adapter = DreamAccess(access)
+            attempted_candidate_id: str | None = None
+
+            async def attest_candidate(connection, record, candidate_id, family):
+                nonlocal attempted_candidate_id
+                attempted_candidate_id = candidate_id
+                # The configured decision authority revokes contribution while
+                # the relationship store still contains the contributor grant.
+                await decisions.revoke_binding(
+                    admin,
+                    contributor.binding_id,
+                    expected_version=contributor.version,
+                    idempotency_key="revoke-decision-contributor",
+                    context=context,
+                )
+                await adapter.attest_candidate(connection, record, candidate_id, family)
+
+            async with open_builtin_runtime(
+                config(database),
+                candidate_pipeline=atomic_memory_pipeline(MemoryPipeline()),
+                dream_generator=Generator(),
+                dream_authorizer=adapter.authorize,
+                dream_authorization_context=access.defer_decision_audit,
+                dream_candidate_attester=attest_candidate,
+            ) as runtime:
+                scope, _, citation = await seed(runtime)
+                resource = ResourceRef.scope(scope)
+                contribution = CreateBinding(
+                    subject=author,
+                    resource=resource,
+                    role=AccessRole.SCOPE_CONTRIBUTOR,
+                    idempotency_key="dream-contributor",
+                )
+                await relationships.create_binding(admin, contribution, context=context)
+                contributor = await decisions.create_binding(admin, contribution, context=context)
+                await decisions.create_binding(
+                    admin,
+                    CreateBinding(
+                        subject=author,
+                        resource=resource,
+                        role=AccessRole.SCOPE_VIEWER,
+                        idempotency_key="dream-viewer",
+                    ),
+                    context=context,
+                )
+                memory = ResourceRef.artifact(scope, family=citation.family, artifact_id=citation.artifact_id)
+                ownership = await relationships.artifact_owner(memory)
+                assert ownership is not None
+                await decisions.establish_artifact_owner(
+                    memory, ownership.owner, idempotency_key="dream-memory-owner", context=context
+                )
+                dream = runtime.dream.for_scope(scope, principal_id=principal_identity(author))
+                accepted = await dream.create(
+                    CreateDreamRunRequest(
+                        operation="refine_experience", artifacts=(citation,), idempotency_key="decision-revoked"
+                    )
+                )
+                await process_pending(runtime)
+                run = await dream.get(GetDreamRunRequest(run_id=accepted.run_id))
+                assert (run.status, run.error, run.candidate) == ("failed", "access_revoked", None)
+                assert attempted_candidate_id is not None
+                assert await access.candidate_owner(scope, attempted_candidate_id) is None
+                assert (await runtime.review.for_scope(scope).list(ListArtifactCandidatesRequest())).candidates == ()
+                assert (
+                    await relationships.check(author, AccessAction.SCOPE_CONTRIBUTE, resource, context=context)
+                ).allowed
+                assert not (
+                    await access.check(author, AccessAction.SCOPE_CONTRIBUTE, resource, context=context)
+                ).allowed
+
+    asyncio.run(scenario())
+
+
 def test_restart_recovers_expired_run_with_its_pinned_input(database: DatabaseConfig) -> None:
     async def scenario() -> None:
         settings = BuiltinConfig(

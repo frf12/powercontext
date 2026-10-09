@@ -231,3 +231,12 @@ unsupported 通过 `ServerResponseError.status_code`、`.code`、`.details` 检�
 新入口包括 `get_atomic_memory_state`、`list_atomic_memories`、`search_atomic_memory`、
 `merge_atomic_memories`、`change_atomic_memory_lifecycle`、`preview_atomic_memory_restoration` 和 `restore_atomic_memory`；
 创建、修订与精确历史读取使用通用 Artifact Client 方法。
+
+搜索和列表沿用 Memory、Topic Memory 的 Scope 边界，要求 `scope.read`。单条 Artifact 分享允许
+精确读取和历史读取，不授予整个 Scope 的列表或搜索权限。重排或上下文组装前若 Scope 读取权限已被
+撤销，请求返回 `403`，即使单条分享仍有效。Source 提取会完整枚举同 Scope 中满足阈值、
+属于当前主体的记忆，再由实际配置的授权服务检查 Artifact 读取和写入权限后交给模型比较。明确拒绝的
+候选会被跳过；授权服务故障会终止处理。不可变的 Owner 列只用于提取时的所有者预筛选。
+
+Builtin 授权读取与业务事务共享快照。Casbin 和自定义服务保留配置的决策存储与读取一致性契约，
+其策略读取不承诺与业务数据共享快照。

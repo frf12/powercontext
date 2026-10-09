@@ -241,3 +241,13 @@ errors through `ServerResponseError.status_code`, `.code` and `.details`.
 New methods include `get_atomic_memory_state`, `list_atomic_memories`, `search_atomic_memory`, `merge_atomic_memories`,
 `change_atomic_memory_lifecycle`, `preview_atomic_memory_restoration` and `restore_atomic_memory`. Use generic Artifact
 Client methods for creation, replacement and exact historical reads.
+
+Search and list require `scope.read`, following the Memory and Topic Memory Scope boundary. An individual
+Artifact share permits its exact get and history reads; it does not grant a Scope inventory or search.
+If Scope read is revoked before reranking or context assembly, the request returns `403` even when an individual share remains.
+Source extraction enumerates the complete same-Scope threshold set owned by its principal, then checks the
+configured authorizer for Artifact read and write before comparing a memory. Denied candidates are skipped;
+authorization failures stop processing. The immutable Owner columns are only an extraction prefilter.
+
+Builtin authorization reads share the business transaction. Casbin and custom providers retain their configured
+decision repositories and read consistency contracts; their policy reads need not share the business snapshot.

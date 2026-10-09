@@ -38,7 +38,6 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     atomic_memory_profile_fingerprint,
     atomic_memory_vector_sql,
     combine_atomic_memory_channels,
-    freeze_atomic_memory_query_time,
 )
 from powercontext.builtin.persistence.atomic_memory_index_schema import (
     ATOMIC_MEMORY_PROJECTION_FORMAT,
@@ -60,7 +59,6 @@ _FTS_COLUMNS = (
     "tag_keys",
     "owner_type",
     "owner_id",
-    "read_grants",
     "identity_token",
 )
 _HIT_COLUMNS = "artifact_id, revision, state_version, kind, text"
@@ -99,6 +97,7 @@ class SQLiteAtomicMemoryIndex(RelationalAtomicMemoryIndex):
             # their trigger replacement and backfill in the caller's transaction.
             await connection.exec_driver_sql("BEGIN")
         await create_tables(connection, self.tables)
+        await self.require_current_schema(connection)
         if self.profile is not None:
             try:
                 await connection.exec_driver_sql("SELECT vec_version()")
@@ -188,7 +187,6 @@ class SQLiteAtomicMemoryIndex(RelationalAtomicMemoryIndex):
     ) -> AtomicMemorySearchChannels:
         if connection.dialect.name != "sqlite":
             raise AtomicMemoryIndexError("sqlite", "SQLite Atomic Memory index requires SQLite")
-        request = freeze_atomic_memory_query_time(request)
         eligibility, parameters = atomic_memory_filter_sql(request.filters, "sqlite")
         parameters["scope_id"] = scope_id
         limit_sql = "" if limit is None else " LIMIT :result_limit"

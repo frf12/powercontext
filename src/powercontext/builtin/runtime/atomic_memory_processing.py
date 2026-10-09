@@ -426,19 +426,26 @@ class AtomicMemorySourceWindowProcessor:
         return workset, tuple(artifacts.values())
 
     async def _load_related_items(self, scope_id, hits, context, workset, artifacts):
+        from powercontext.server.authz import AccessDeniedError
+
         recalled = []
         for hit in hits:
-            async with self._read_transaction(context) as connection:
-                record = await self.application.service.get(connection, scope_id, hit.artifact_ref.artifact_id, context)
-                await self.application.security.authorize(connection, scope_id, context, "write", record.ref)
-                if (
-                    record.ref != hit.artifact_ref
-                    or record.state.state_version != hit.state_version
-                    or record.state.state is not AtomicMemoryStateValue.ACTIVE
-                    or record.artifact.content.kind != hit.kind
-                    or record.artifact.content.text != hit.text
-                ):
-                    _conflict("Related memory changed before comparison")
+            try:
+                async with self._read_transaction(context) as connection:
+                    record = await self.application.service.get(
+                        connection, scope_id, hit.artifact_ref.artifact_id, context
+                    )
+                    await self.application.security.authorize(connection, scope_id, context, "write", record.ref)
+                    if (
+                        record.ref != hit.artifact_ref
+                        or record.state.state_version != hit.state_version
+                        or record.state.state is not AtomicMemoryStateValue.ACTIVE
+                        or record.artifact.content.kind != hit.kind
+                        or record.artifact.content.text != hit.text
+                    ):
+                        _conflict("Related memory changed before comparison")
+            except AccessDeniedError:
+                continue
             content = AtomicMemoryContent(kind=hit.kind, text=hit.text)
             supported = AtomicMemoryArtifactEvidence(
                 evidence_id=f"artifact:{record.ref.artifact_id}@{record.ref.revision}",
@@ -534,8 +541,8 @@ class AtomicMemorySourceWindowProcessor:
 
     @asynccontextmanager
     async def _read_transaction(self, context):
-        # Authorization sees the same snapshot as preparation. Its audit is
-        # written after that read closes, rather than upgrading SQLite's snapshot.
+        # Builtin authority shares the preparation snapshot; configured providers
+        # retain their own decision boundary. Audit writes flush after this read.
         async with (
             context.access.defer_decision_audit() if context.access is not None else nullcontext(),
             self.application.database.transaction(consistent_snapshot=True) as connection,

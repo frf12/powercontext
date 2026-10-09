@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Search authorization and content share a snapshot after external inference."""
+"""Search uses current Scope authority and a business snapshot after inference."""
 
 from __future__ import annotations
 
@@ -183,8 +183,8 @@ async def _revoke_and_create(admin: PowerContextClient, scope_id: str, binding):
 
 
 async def _assert_current_access_revoked(viewer: PowerContextClient, scope_id: str, created) -> None:
-    current = await viewer.search_atomic_memory(SearchAtomicMemoryRequest(scope_id=scope_id, query="alpha"))
-    assert current.hits == []
+    with pytest.raises(ForbiddenResponseError):
+        await viewer.search_atomic_memory(SearchAtomicMemoryRequest(scope_id=scope_id, query="alpha"))
     with pytest.raises(ForbiddenResponseError):
         await viewer.get_artifact(scope_id, "atomic-memory", created.artifact.artifact_id)
 
@@ -212,8 +212,8 @@ def test_search_rechecks_access_after_query_embedding(backend: str, provider: st
                 created = await asyncio.wait_for(_revoke_and_create(admin, scope_id, binding), timeout=20)
             finally:
                 embedding.resume_query.set()
-                result = await asyncio.wait_for(pending, timeout=20)
-            assert result.hits == []
+                with pytest.raises(ForbiddenResponseError):
+                    await asyncio.wait_for(pending, timeout=20)
             await _assert_current_access_revoked(viewer, scope_id, created)
 
     asyncio.run(scenario())

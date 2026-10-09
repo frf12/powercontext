@@ -51,7 +51,6 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemoryIndex,
     AtomicMemoryProjectionPublisher,
     AtomicMemoryProjectionSecurity,
-    AtomicMemoryReadGrant,
     PreparedAtomicMemoryProjection,
     atomic_memory_embedding_input_hash,
     atomic_memory_profile_fingerprint,
@@ -1210,13 +1209,6 @@ async def _load_tags(connection: AsyncConnection, scope_id: str, artifact_id: st
     return tuple(sorted({row["tag_key"] for row in rows}))
 
 
-def _timestamp(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-
 async def _load_security(
     connection: AsyncConnection, scope_id: str, artifact_id: str, _context: Any
 ) -> AtomicMemoryProjectionSecurity:
@@ -1230,26 +1222,7 @@ async def _load_security(
     )
     if len(owners) != 1:
         raise AtomicMemoryMigrationError((f"{scope_id}/{artifact_id}: formal Owner is absent or ambiguous",))
-    grants = await _rows(
-        connection,
-        "pc_access_relationships",
-        _BINDING_COLUMNS,
-        "WHERE resource_key_hash = :key AND state = 'active' AND role IN ('artifact.viewer', 'artifact.owner')",
-        key=key,
-    )
-    return AtomicMemoryProjectionSecurity(
-        owner_type=owners[0]["owner_type"],
-        owner_id=owners[0]["owner_id"],
-        read_grants=tuple(
-            AtomicMemoryReadGrant(
-                binding_id=row["binding_id"],
-                subject_type=row["subject_type"],
-                subject_id=row["subject_id"],
-                expires_at=_timestamp(row["expires_at"]),
-            )
-            for row in sorted(grants, key=lambda item: item["binding_id"])
-        ),
-    )
+    return AtomicMemoryProjectionSecurity(owner_type=owners[0]["owner_type"], owner_id=owners[0]["owner_id"])
 
 
 async def apply_atomic_memory_migration(
@@ -1445,7 +1418,7 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                     await connection.execute(
                         text(
                             "SELECT revision, state_version, content_hash, projection_format, kind, text, searchable_text, tag_keys, "
-                            "owner_type, owner_id, read_grants, embedding, profile_fingerprint, embedding_input_hash "
+                            "owner_type, owner_id, embedding, profile_fingerprint, embedding_input_hash "
                             "FROM pc_atomic_memory_current WHERE scope_id = :scope AND artifact_id = :id"
                         ),
                         {"scope": entry.scope_id, "id": entry.artifact_id},
@@ -1496,11 +1469,6 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                 _require(
                     (projection["owner_type"], projection["owner_id"]) == (security.owner_type, security.owner_id),
                     "projection Owner differs",
-                )
-                _require(
-                    sorted(_decode(projection["read_grants"]), key=lambda item: item["binding_id"])
-                    == [grant.as_json() for grant in security.read_grants],
-                    "projection grants differ from current bindings",
                 )
                 if index is not None:
                     profile = index.capabilities.embedding_profile

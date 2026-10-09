@@ -265,11 +265,6 @@ class _VectorMemoryIndex:
     async def refresh_tags(self, connection: AsyncConnection, scope_id: str, artifact_id: str, tag_keys, /):
         pass
 
-    async def refresh_access(
-        self, connection: AsyncConnection, scope_id: str, artifact_id: str, owner_type, owner_id, read_grants, /
-    ):
-        pass
-
 
 def test_observability_signals_correlate_without_counting_the_mcp_bridge(caplog, tmp_path) -> None:
     exporter = InMemorySpanExporter()

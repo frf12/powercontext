@@ -134,7 +134,7 @@ values. It cannot repair or bypass missing legacy history imports.
 
 Each active body's embedding is prepared outside the write transaction. Before publishing, the command
 locks and rechecks its exact revision, state version and deployment profile, then loads the latest formal
-tags, Owner and direct read grants in that transaction. With vectors disabled, it retains body/full-text
+tags and immutable Owner in that transaction. With vectors disabled, it retains body/full-text
 data and clears embedding, profile and input hashes. SQLite refreshes its derived FTS helper using stable
 Scope/Artifact identity tokens, independent of rowids changed by `VACUUM`.
 
@@ -167,3 +167,7 @@ Planning and startup verification read retained history and Source/task snapshot
 records in memory. Read cost and peak memory grow with history. Record read volume, peak memory, embedding
 calls and downtime on a backup copy before scheduling production maintenance. Production scale costs have
 not been established by this implementation.
+
+An obsolete development current table containing copied read grants is rejected at initialization. With writers
+stopped, run the projection rebuild command above. It recreates only that derived table, rebuilds active rows
+from retained authority, and preserves exact Artifact ownership and sharing grants.
