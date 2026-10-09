@@ -36,6 +36,19 @@ This qualification used macOS 26.2 ARM64, Rust 1.95.0 and Python 3.12.7. An exte
 
 The Atomic qualification run used macOS 26.2 ARM64, Rust 1.95.0 and Python 3.12.7. An external launcher routed native process creation through system Python 3.9.6 because the same signed native executable exited with SIGKILL when launched by the Conda Python parent before its first request. The wheel, native client, harness fixtures and business assertions were unchanged by that launcher. This establishes the stated SQLite compatibility; Windows IPC, vault, process containment and installed-package acceptance require their actual Windows CI checks. No legacy remote deployment was tested in the Atomic qualification run.
 
+## CI fixture 的独立资格
+
+CI fixture 使用独立资格记录，不会修改历史生产资格。原生 HTTP 测试显式注入 synthetic profile；真实 Server 和安装验收使用 `fixture_qualification.py` 从当前合同、Server 提交和构建 wheel 生成的 `.artifacts/ci-compatibility.json`，读取时重新核对合同、操作集合和 wheel 哈希。
+
+只有显式启用 `ci-fixtures` 的测试安装包会包含这个 profile。普通构建仍只使用历史资格记录，并保留合同不匹配时的 fail-closed 行为。CI fixture 和其安装包不能作为生产发布资格证据。
+
+```sh
+uv build --wheel --out-dir desktop/.artifacts/server-wheel
+DESKTOP_FIXTURE_COMMIT=$(git rev-parse HEAD)
+uv run python desktop/tests/fixture_qualification.py --server-commit "$DESKTOP_FIXTURE_COMMIT"
+pnpm --dir desktop tauri build --bundles nsis --ci --features ci-fixtures -- --locked
+```
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.
