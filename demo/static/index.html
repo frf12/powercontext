@@ -100,6 +100,7 @@
              padding: 2px 0 2px 8px; margin-bottom: 6px; }
   .logitem b { color: var(--text); font-weight: 600; }
   .logitem .new { color: var(--ok); }
+  .logitem.error { color: var(--bad); border-left-color: var(--bad); }
   .empty { color: var(--dim); font-size: 12px; }
   .footnote { color: var(--dim); font-size: 12px; margin-top: 18px; padding-top: 12px;
               border-top: 1px dashed var(--line); line-height: 1.7; }
@@ -273,7 +274,7 @@ function renderRecall(hits) {
 function logRecallError(message) {
   const log = $("recallLog");
   log.querySelector(".empty")?.remove();
-  log.prepend(el("div", "logitem", "⚠️ 召回失败：" + String(message || "").slice(0, 80)));
+  log.prepend(el("div", "logitem error", "⚠️ 召回失败：" + String(message || "").slice(0, 80)));
 }
 
 async function refreshEntries() {
@@ -426,7 +427,7 @@ async function send() {
         } else if (event.type === "write_error") {
           const log = $("writeLog");
           log.querySelector(".empty")?.remove();
-          log.prepend(el("div", "logitem", "⚠️ 本回合写入失败：" + String(event.message || "").slice(0, 80)));
+          log.prepend(el("div", "logitem error", "⚠️ 本回合写入失败：" + String(event.message || "").slice(0, 80)));
         } else if (event.type === "done") {
           terminated = true;
           state.messages.push({ role: "assistant", content: event.reply });
