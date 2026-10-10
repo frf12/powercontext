@@ -23,10 +23,12 @@ re-admits, which is exactly the behaviour the gate exists to drive.
 from __future__ import annotations
 
 import asyncio
+import math
 import sqlite3
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -59,7 +61,11 @@ from powercontext.builtin.runtime.application import (
     ScopedContextApplication,
     _RecallRoundOutcome,
 )
-from powercontext.builtin.runtime.prepared_context import PreparedContextBuild
+from powercontext.builtin.runtime.prepared_context import (
+    PreparedContextBuild,
+    PreparedContextBuilder,
+    PreparedMemoryCandidates,
+)
 from powercontext.builtin.runtime.recall_sufficiency import (
     MEMORY_FAMILY,
     REASON_AT_MAX_ROUNDS,
@@ -77,6 +83,14 @@ from powercontext.builtin.scope import ScopeDraft
 # once the query has more than two Analyzer terms (``fts_query_requirements`` clamps a short
 # query to a single required match).
 _QUERY = "alpha beta gamma"
+
+
+def _embedded_body(text: str) -> str:
+    """Atomic Memory embeds ``kind`` and body on separate lines; tests key vectors by body."""
+
+    return text.split("\n", 1)[-1]
+
+
 _MEMORY_ONLY = {"sections": [{"family": "memory", "limit": 8}]}
 _TOPIC_MEMORY_ONLY = {"sections": [{"family": "topic-memory", "limit": 8}]}
 
@@ -140,13 +154,19 @@ class _RecallRoundLog:
 
 @asynccontextmanager
 async def _runtime(
-    database: Path, runtime: RuntimeConfig | None = None, *, in_memory: bool = False
+    database: Path,
+    runtime: RuntimeConfig | None = None,
+    *,
+    in_memory: bool = False,
+    embedding_model: Any = None,
 ) -> AsyncIterator[BuiltinRuntime]:
     config = BuiltinConfig(
         database=SQLiteConfig() if in_memory else SQLiteConfig(url=f"sqlite+aiosqlite:///{database}"),
         runtime=runtime if runtime is not None else RuntimeConfig(),
     )
-    async with open_builtin_runtime(config, scheduler_path=database.with_suffix(".scheduler.db")) as opened:
+    async with open_builtin_runtime(
+        config, scheduler_path=database.with_suffix(".scheduler.db"), embedding_model=embedding_model
+    ) as opened:
         yield opened
 
 
@@ -156,7 +176,7 @@ def _entry(text: str) -> AtomicMemoryContent:
 
 async def _seed(runtime: BuiltinRuntime, scope_id: str, texts: list[str]) -> None:
     assert runtime.atomic_memory is not None
-    await runtime.atomic_memory.for_scope(scope_id).create(tuple(_entry(text) for text in texts))
+    await runtime.atomic_memory.for_scope(scope_id).create(tuple(_entry(text) for text in map(_embedded_body, texts)))
 
 
 async def _seed_topic_memories(runtime: BuiltinRuntime, scope_id: str, count: int) -> None:
@@ -177,10 +197,15 @@ async def _seed_topic_memories(runtime: BuiltinRuntime, scope_id: str, count: in
             )
 
 
-async def _create_scope(runtime: BuiltinRuntime, key: str) -> str:
+async def _create_scope(runtime: BuiltinRuntime, key: str, *, references: tuple[str, ...] = ()) -> str:
     assert runtime.scopes is not None
     created = await runtime.scopes.create(
-        ScopeDraft(title="Gate", summary="Recall gate acceptance", idempotency_key=key)
+        ScopeDraft(
+            title="Gate",
+            summary="Recall gate acceptance",
+            idempotency_key=key,
+            context_references=references,
+        )
     )
     return created.scope_id
 
@@ -249,6 +274,222 @@ def test_default_off_matches_a_sufficient_round_zero_byte_for_byte(tmp_path, mon
         assert enabled_build.context.content == disabled_build.context.content
         assert enabled_build.context.content_bytes == disabled_build.context.content_bytes
         assert enabled_build.origins == disabled_build.origins
+
+    asyncio.run(scenario())
+
+
+def test_sqlite_vector_prepare_reports_cosine_and_expands_past_a_weak_top(tmp_path, monkeypatch) -> None:
+    embedding_profile = EmbeddingProfile(
+        profile_id="recall-gate-vector", model="deterministic", dimension=2, distance="l2", normalization="unit"
+    )
+
+    class DeterministicEmbedding:
+        profile = embedding_profile
+
+        async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+            similarities = tuple(
+                1.0 if text == _QUERY else 0.2 if text == "unrelated vector evidence" else 0.31
+                for text in map(_embedded_body, texts)
+            )
+            return EmbeddingResult(
+                vectors=tuple((similarity, math.sqrt(1.0 - similarity**2)) for similarity in similarities)
+            )
+
+    log = _RecallRoundLog()
+    log.install(monkeypatch)
+
+    async def scenario() -> None:
+        database = tmp_path / "vector-gate.db"
+        async with _runtime(
+            database,
+            RuntimeConfig(recall_gate_enabled=True, recall_gate_min_candidates=1),
+            embedding_model=DeterministicEmbedding(),
+        ) as runtime:
+            scope_id = await _create_scope(runtime, "vector-gate")
+            await _seed(runtime, scope_id, ["alpha beta gamma vector evidence", "unrelated vector evidence"])
+            build, effort = await _prepare_build(runtime, scope_id, _memory_request())
+
+        # weak-top-1 is not terminal: the recoverable below-floor hit is re-admitted by one
+        # expansion round, and the reason stays weak-top-1 once nothing remains recoverable.
+        assert effort is not None
+        assert effort.assessment == "weak-top-1"
+        assert effort.rounds == 2
+        assert effort.signals is not None
+        assert effort.signals.top_score == pytest.approx(0.31, abs=0.005)
+        assert len(log.calls) == 2
+        assert "unrelated vector evidence" in (build.context.content or "")
+        # Atomic Memory reports recoverability as an existence probe, not pre-admission counts.
+        assert all(count.family != MEMORY_FAMILY for count in effort.admission_by_family)
+
+    asyncio.run(scenario())
+
+
+def test_strong_vector_hit_is_delivered_beside_a_window_of_weak_dual_channel_hits(tmp_path, monkeypatch) -> None:
+    """Atomic Memory qualifies and limits each channel before fusion, so a strong vector-only
+    hit competes in the fused window with weak dual-channel hits; the gate scores its cosine
+    relevance rather than its fused rank, and the committed candidates deliver it."""
+    embedding_profile = EmbeddingProfile(
+        profile_id="recall-gate-hidden", model="deterministic", dimension=2, distance="l2", normalization="unit"
+    )
+    # One fewer weak hit than the window, so a fused-rank tie cannot cut the strong hit.
+    weak_texts = tuple(f"alpha beta gamma weak {index:02d}" for index in range(15))
+    strong_text = "alpha window hidden"
+    cosines = {_QUERY: 1.0, strong_text: 0.90}
+    cosines.update({text: 0.31 + index * 0.001 for index, text in enumerate(weak_texts)})
+
+    class DeterministicEmbedding:
+        profile = embedding_profile
+
+        async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+            return EmbeddingResult(
+                vectors=tuple(
+                    (cosine := cosines.get(text, 0.0), math.sqrt(1.0 - cosine * cosine))
+                    for text in map(_embedded_body, texts)
+                )
+            )
+
+    log = _RecallRoundLog()
+    log.install(monkeypatch)
+
+    # Capture the committed candidates handed to the Builder: the verdict's evidence must
+    # be inside the delivery cap, not trailing the round-zero prefix. The section render
+    # limit (<= 8 items) is a separate request-level display cap and may still clip it.
+    delivered: list[PreparedMemoryCandidates] = []
+    original_build = PreparedContextBuilder.build_scopes_result
+
+    def spying_build(self: PreparedContextBuilder, **kwargs: Any) -> PreparedContextBuild:
+        delivered.extend(kwargs["memory_candidates"])
+        return original_build(self, **kwargs)
+
+    monkeypatch.setattr(PreparedContextBuilder, "build_scopes_result", spying_build)
+
+    async def scenario() -> None:
+        database = tmp_path / "hidden-hit.db"
+        async with _runtime(
+            database,
+            RuntimeConfig(recall_gate_enabled=True),
+            embedding_model=DeterministicEmbedding(),
+        ) as runtime:
+            scope_id = await _create_scope(runtime, "hidden-hit")
+            await _seed(runtime, scope_id, [*weak_texts, strong_text])
+            _, effort = await _prepare_build(runtime, scope_id, _memory_request())
+
+        # The fused rank of the vector-only hit trails every dual-channel weak hit, but the
+        # gate reads its 0.90 cosine relevance, so round zero is already sufficient.
+        assert effort is not None
+        assert effort.assessment == REASON_SUFFICIENT
+        assert effort.rounds == 1
+        assert effort.candidates_by_round == (16,)
+        assert effort.signals is not None
+        assert effort.signals.top_score == pytest.approx(0.90, abs=0.005)
+        assert len(log.calls) == 1
+        assert any(strong_text in hit.text for group in delivered for hit in group.hits)
+
+    asyncio.run(scenario())
+
+
+def test_expansion_fts_only_hit_preserves_round_zero_scored_family(tmp_path, monkeypatch) -> None:
+    embedding_profile = EmbeddingProfile(
+        profile_id="recall-gate-first-hit", model="deterministic", dimension=2, distance="l2", normalization="unit"
+    )
+
+    class DeterministicEmbedding:
+        profile = embedding_profile
+
+        async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+            vectors = {_QUERY: (1.0, 0.0), "alpha beta gamma evidence": (0.5, math.sqrt(0.75))}
+            return EmbeddingResult(vectors=tuple(vectors.get(text, (0.0, 1.0)) for text in map(_embedded_body, texts)))
+
+    original = ScopedContextApplication._recall_round
+    expansion_first_relevance = []
+
+    async def fts_first_expansion(*args: Any, **kwargs: Any) -> _RecallRoundOutcome:
+        result = await original(*args, **kwargs)
+        if kwargs["admission"] is None:
+            return result
+        # Put the new FTS-only hit first in the returned round. Accumulation must still append it
+        # after round zero's vector-backed first hit rather than replace the family's first hit.
+        memory = tuple(replace(group, hits=tuple(reversed(group.hits))) for group in result.memory)
+        expansion_first_relevance.extend(group.hits[0].relevance for group in memory if group.hits)
+        return replace(result, memory=memory)
+
+    monkeypatch.setattr(ScopedContextApplication, "_recall_round", fts_first_expansion)
+
+    async def scenario() -> None:
+        database = tmp_path / "first-hit.db"
+        request = _memory_request()
+        async with _runtime(
+            database,
+            RuntimeConfig(recall_gate_enabled=True, recall_gate_max_rounds=0),
+            embedding_model=DeterministicEmbedding(),
+        ) as runtime:
+            scope_id = await _create_scope(runtime, "first-hit")
+            await _seed(runtime, scope_id, ["alpha beta gamma evidence", "alpha solo evidence"])
+            _before_build, before_effort = await _prepare_build(runtime, scope_id, request)
+
+        async with _runtime(
+            database,
+            RuntimeConfig(recall_gate_enabled=True),
+            embedding_model=DeterministicEmbedding(),
+        ) as runtime:
+            after_build, after_effort = await _prepare_build(runtime, scope_id, request)
+
+        assert before_effort is not None
+        assert before_effort.candidates_by_round == (1,)
+        assert before_effort.signals is not None
+        assert before_effort.signals.top_score == pytest.approx(0.5, abs=0.005)
+        assert expansion_first_relevance == [None]
+        assert after_effort is not None
+        assert after_effort.rounds == 2
+        assert after_effort.candidates_by_round == (1, 2)
+        assert after_effort.signals is not None
+        assert after_effort.signals.top_score == before_effort.signals.top_score
+        assert after_effort.assessment == REASON_SUFFICIENT
+        assert "alpha solo evidence" in (after_build.context.content or "")
+
+    asyncio.run(scenario())
+
+
+def test_scoped_first_hit_rule_applies_per_scope_through_the_runtime(tmp_path) -> None:
+    embedding_profile = EmbeddingProfile(
+        profile_id="recall-gate-scopes", model="deterministic", dimension=2, distance="l2", normalization="unit"
+    )
+
+    class DeterministicEmbedding:
+        profile = embedding_profile
+
+        async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+            vectors = {_QUERY: (1.0, 0.0), "alpha beta gamma vector evidence": (0.31, math.sqrt(1 - 0.31**2))}
+            return EmbeddingResult(vectors=tuple(vectors.get(text, (0.0, 1.0)) for text in map(_embedded_body, texts)))
+
+    async def scenario() -> None:
+        database = tmp_path / "scoped-first-hit.db"
+        async with _runtime(
+            database,
+            RuntimeConfig(recall_gate_enabled=True, recall_gate_min_candidates=1),
+            embedding_model=DeterministicEmbedding(),
+        ) as runtime:
+            referenced = await _create_scope(runtime, "referenced")
+            await _seed(runtime, referenced, ["alpha beta gamma vector evidence"])
+            # The primary Scope's fused top is FTS-only; the referenced Scope's fused top
+            # carries cosine 0.31. Each Scope's first hit must be judged on its own fusion
+            # run, so the verdict is weak-top-1 on the referenced evidence rather than the
+            # whole family going unscored. weak-top-1 is not terminal: the lowered floor
+            # still re-admits the primary Scope's floor-dropped "alpha solo" entry.
+            primary = await _create_scope(runtime, "primary", references=(referenced,))
+            await _seed(runtime, primary, ["alpha beta gamma fts evidence", "alpha solo fts evidence"])
+            build, effort = await _prepare_build(runtime, primary, _memory_request())
+
+        assert effort is not None
+        assert effort.assessment == "weak-top-1"
+        # After round one re-admits "alpha solo", the recoverability probe finds no row the
+        # lower round-two floor would add, so expansion stops; the weak-top-1 reason is kept.
+        assert effort.rounds == 2
+        assert effort.candidates_by_round == (2, 3)
+        assert effort.signals is not None
+        assert effort.signals.scored_families == 1
+        assert effort.signals.top_score == pytest.approx(0.31, abs=0.005)
+        assert "alpha solo fts evidence" in (build.context.content or "")
 
     asyncio.run(scenario())
 
@@ -692,7 +933,8 @@ def test_later_rounds_never_remove_an_accumulated_candidate(tmp_path, monkeypatc
     asyncio.run(scenario())
 
 
-def test_later_round_failure_preserves_committed_expansion_trace(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("failure_phase", ["search", "assessment"])
+def test_later_round_failure_preserves_committed_expansion(tmp_path, monkeypatch, failure_phase) -> None:
     async def scenario() -> None:
         database = tmp_path / "later-failure.db"
         request = _memory_request()
@@ -701,6 +943,15 @@ def test_later_round_failure_preserves_committed_expansion_trace(tmp_path, monke
             scope_id = await _create_scope(disabled, "later-failure")
             await _seed(disabled, scope_id, ["alpha beta gamma evidence", "alpha solo marker", "beta gamma marker"])
             baseline, _baseline_effort = await _prepare_build(disabled, scope_id, request)
+
+        async with _runtime(
+            database,
+            RuntimeConfig(recall_gate_enabled=True, recall_gate_min_candidates=100, recall_gate_max_rounds=1),
+        ) as runtime:
+            committed, committed_effort = await _prepare_build(runtime, scope_id, request)
+        assert committed_effort is not None
+        assert committed_effort.candidates_by_round == (2, 3)
+        assert committed.context.content != baseline.context.content
 
         original = ScopedContextApplication._recall_round
         calls = 0
@@ -718,7 +969,7 @@ def test_later_round_failure_preserves_committed_expansion_trace(tmp_path, monke
         ) -> Any:
             nonlocal calls
             calls += 1
-            if calls == 3:
+            if calls == 3 and failure_phase == "search":
                 raise RuntimeError("later expansion failed")  # noqa: TRY003
             result = await original(
                 application,
@@ -749,6 +1000,14 @@ def test_later_round_failure_preserves_committed_expansion_trace(tmp_path, monke
             return result
 
         monkeypatch.setattr(ScopedContextApplication, "_recall_round", fails_on_second_expansion)
+        original_assess = RecallSufficiencyGate.assess
+
+        def fails_on_second_assessment(*args: Any, **kwargs: Any) -> Any:
+            if calls == 3 and failure_phase == "assessment":
+                raise RuntimeError("later assessment failed")  # noqa: TRY003
+            return original_assess(*args, **kwargs)
+
+        monkeypatch.setattr(RecallSufficiencyGate, "assess", fails_on_second_assessment)
         async with _runtime(
             database,
             RuntimeConfig(recall_gate_enabled=True, recall_gate_min_candidates=100),
@@ -760,9 +1019,12 @@ def test_later_round_failure_preserves_committed_expansion_trace(tmp_path, monke
         assert effort.rounds == 2
         assert effort.expansion_actions == ("admission",)
         assert len(effort.candidates_by_round) == 2
+        assert effort.signals is not None
+        assert effort.signals.candidate_count == effort.candidates_by_round[-1]
+        assert effort.signals == committed_effort.signals
         assert calls == 3
-        assert build.context.content == baseline.context.content
-        assert build.origins == baseline.origins
+        assert build.context.content == committed.context.content
+        assert build.origins == committed.origins
 
     asyncio.run(scenario())
 
