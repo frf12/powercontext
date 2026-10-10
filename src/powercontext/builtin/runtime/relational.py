@@ -310,6 +310,7 @@ class _ScopedServices:
     generation_receipts: HandoffGenerationReceipts
     model_usage: _ModelUsageRecorder
     atomic_memory_processor: AtomicMemorySourceWindowProcessor
+    statistics_write_timeout_seconds: float
 
     def generation_sources(self) -> GenerationSourceAccess:
         return GenerationSourceAccess(self.repositories.sources)
@@ -423,6 +424,7 @@ class _ScopedServices:
             artifacts=self.repositories.artifacts,
             token_estimator=None if self.token_estimator is None else self.token_estimator.profile,
             model_usage=self.model_usage,
+            write_timeout_seconds=self.statistics_write_timeout_seconds,
         )
 
     def recall_tokens(self) -> RelationalRecallTokenEstimator | None:
@@ -566,6 +568,7 @@ class RelationalContexts:
             write_timeout_seconds=model_usage_write_timeout_seconds,
             flush_timeout_seconds=model_usage_flush_timeout_seconds,
         )
+        self._statistics_write_timeout_seconds = model_usage_write_timeout_seconds
         self._id_factory = _scoped_id_factory(id_factory)
         self.prompt_registry = prompt_registry or PromptRegistry(
             builtin_prompt_definitions(),
@@ -1462,6 +1465,7 @@ class RelationalContexts:
             source_registry=self.source_registry,
             model_usage=self._model_usage,
             atomic_memory_processor=self.atomic_memory_processor,
+            statistics_write_timeout_seconds=self._statistics_write_timeout_seconds,
         )
 
 
