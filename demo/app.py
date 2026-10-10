@@ -24,9 +24,11 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from powercontext.client import PowerContextClient
 from pydantic import BaseModel, Field
 
 from .config import DemoConfig
+from .server import EmbeddedPowerContext
 
 _NICK_CLEAN = re.compile(r"[^0-9a-zA-Z一-鿿]+")
 
@@ -90,13 +92,29 @@ def require_session(request: Request) -> str:
         raise HTTPException(status_code=401, detail="会话无效，请重新进入") from None
 
 
-# --- 临时生命周期 (Task 3 替换为启动内嵌 PowerContext 的完整版) ---
+# --- 生命周期: 进程内启动真实 PowerContext ---
 
 
 async def startup(app: FastAPI) -> None:
+    if getattr(app.state, "pc", None) is not None:
+        return
     app.state.tokens = set()
+    # app.state.http 是外部 LLM 客户端, 保留 trust_env 默认值
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+    pc = EmbeddedPowerContext(app.state.cfg.data_dir)
+    pc.start()
+    app.state.pc = pc
+    # loopback 客户端显式 trust_env=False, 避免本机代理劫持 127.0.0.1 请求;
+    # 注入的 httpx 客户端不归 PowerContextClient 所有, 单独存引用以便关闭
+    app.state.pc_http = httpx.AsyncClient(trust_env=False, timeout=180)
+    app.state.client = PowerContextClient(pc.base_url, timeout=180, http_client=app.state.pc_http)
 
 
 async def shutdown(app: FastAPI) -> None:
+    if getattr(app.state, "pc", None) is None:
+        return
+    await app.state.client.aclose()
+    await app.state.pc_http.aclose()
     await app.state.http.aclose()
+    app.state.pc.stop()
+    app.state.pc = None
