@@ -328,8 +328,12 @@ impl ConnectionManager {
                 && identity
                     .as_ref()
                     .is_err_and(|e| e.code == SafeError::RuntimeNotReady);
+            let contract: serde_json::Value =
+                serde_json::from_str(include_str!("../transport/operations.json"))
+                    .map_err(|_| SafeError::InvalidResponse)?;
             let compatible = self.compatibility.iter().find(|c| {
                 profile.compatibility.as_ref() == Some(&c.id)
+                    && contract["contractSha256"].as_str() == Some(&c.contract_sha256)
                     && !identity
                         .as_ref()
                         .is_err_and(|e| e.code == SafeError::InvalidResponse)
