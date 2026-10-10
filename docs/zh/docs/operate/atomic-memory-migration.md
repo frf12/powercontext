@@ -94,10 +94,10 @@ apply 按以下顺序执行，每一步都可以在中断后重复：
    归档 `incoming_references`，再从在线 lineage、Candidate `artifact_refs`、Task Outcome
    `produced_artifacts`，以及 Handoff 正文和 Work claim/check 中以 `kind: artifact` 引用整个集合的
    citation 中移除。Handoff 回执的 `unavailable_evidence` 记录当时不可用的证据，不表达支持关系：
-   其中的集合引用按原值移入回执的 `historical_data`（格式 `powercontext.handoff-receipt-history.v1`），
-   只作为历史展示，不再解析。
+   其中的集合地址在原字段中保留原值，只描述历史上不可用的对象。读取回执不查归档，
+   这些地址不能作为新请求的有效依据；精确 entry citation 仍转换为对应的 Atomic 引用。
 5. 已结束的 Dream 运行改为历史格式：原请求、输入清单和请求摘要移入 `historical_data`，
-   不再作为可执行请求读取。未结束的运行从请求和输入清单中删除空的旧 entry 引用字段。请求摘要按当前请求
+   不再作为可执行请求读取。没有旧格式快照的未结束运行从请求中删除空的旧 entry 引用字段。请求摘要按当前请求
    格式重算，用同一幂等键重试相同请求仍会重放原运行。引用过旧 entry 的请求无法再次提交，其运行保留原摘要，
    复用该幂等键会冲突。
 6. 解除保留的旧 entry 表到公共 Artifact 表的外键，然后在旧集合仍在公共表时完整验收：导入历史、
@@ -116,7 +116,11 @@ apply 按以下顺序执行，每一步都可以在中断后重复：
 Handoff 陈述或 verified 的 Work claim/check 移除集合引用后不再有证据；
 某个 Candidate 版本删除集合引用后没有任何 Source 或 Artifact 依据。
 
-最后一种情况需要操作者通过 `--decisions` 提供决策文件，为每个被阻断的 Candidate 版本指定替代依据：
+已经保存旧格式输入清单的未结束 Dream，需要先运行完成再迁移，即使它只选择了没有 Memory 引用的
+Experience。旧 Artifact 摘要包含空的旧 lineage 字段，删除该字段也会使快照失效。尚未保存输入清单的
+排队任务，在所选输入不受影响时可以迁移；已经使用当前格式保存的快照，在输入不变时仍可继续使用。
+
+如果 Candidate 失去了全部依据，操作者需要通过 `--decisions` 提供决策文件，为每个被阻断的版本指定替代依据：
 
 ```json
 {

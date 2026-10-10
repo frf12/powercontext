@@ -105,11 +105,11 @@ Apply runs these steps in order; each can be repeated after an interruption:
    from online lineage, Candidate `artifact_refs`, Task Outcome `produced_artifacts`, and `kind: artifact`
    citations of a whole collection in Handoff content and Work claims or checks. A Handoff receipt's
    `unavailable_evidence` records evidence that was unavailable rather than support: its collection references
-   move unchanged into the receipt's `historical_data` (format `powercontext.handoff-receipt-history.v1`), which
-   is shown as history and never resolved.
+   remain unchanged in that field as historical unavailable addresses. Reading the receipt does not query
+   the archive, and these addresses cannot support new requests. Exact entry citations still become Atomic references.
 5. Finished Dream runs move to a historical format: the original request, input manifest and request digest
-   move to `historical_data` and are no longer read as an executable request. Unfinished runs drop the empty
-   legacy entry citation fields from their request and input manifest. Request digests are recomputed in the
+   move to `historical_data` and are no longer read as an executable request. Unfinished runs without legacy
+   snapshots drop the empty entry citation field from their request. Request digests are recomputed in the
    current request format, so retrying the same request with the same idempotency key still replays the run.
    A request that cited legacy entries cannot be sent again; its run keeps the accepted digest, so reusing its
    key conflicts.
@@ -134,7 +134,12 @@ reference that does not resolve to an exact imported Atomic revision; a Handoff 
 claim or check left without evidence once collection citations are removed; and a Candidate version left
 without any Source or Artifact evidence once its collection references are removed.
 
-The last case requires a decision file, passed with `--decisions`, that names replacement evidence for each
+Finish unfinished Dream runs that have saved an input manifest in the legacy format before migration,
+even if they selected only Experiences without Memory citations. Their Artifact digests include the empty
+legacy lineage field, so removing it invalidates those snapshots. Queued runs without a saved manifest can
+migrate when their selected inputs are unaffected; current-format snapshots remain usable when their inputs are unchanged.
+
+Candidates left without evidence require a decision file, passed with `--decisions`, that names replacement evidence for each
 blocked Candidate version:
 
 ```json

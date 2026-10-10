@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import insert, inspect, select, text, tuple_
+from sqlalchemy import Engine, event, insert, inspect, select, text, tuple_
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
@@ -51,7 +53,7 @@ from powercontext.builtin.artifacts.handoff.models import (
 )
 from powercontext.builtin.artifacts.memory.canonical import canonical_json, entry_content_hash, normalize_refs
 from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamError, DreamRecord, DreamRun
-from powercontext.builtin.evidence.models import EvidenceManifest, EvidenceNode, content_digest
+from powercontext.builtin.evidence.models import EvidenceManifest, EvidenceNode, EvidenceResolutionError, content_digest
 from powercontext.builtin.evidence.resolver import EvidenceResolver, evidence_id
 from powercontext.builtin.evidence.selection import select_evidence
 from powercontext.builtin.inference import GenerationResult, character_token_estimator
@@ -60,7 +62,6 @@ from powercontext.builtin.persistence.dream import DreamRepository
 from powercontext.builtin.persistence.migrations.atomic_memory_archive import ARCHIVE_TABLE
 from powercontext.builtin.persistence.migrations.atomic_memory_references import (
     DECISIONS_FORMAT,
-    RECEIPT_HISTORY_FORMAT,
     load_decisions,
 )
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
@@ -103,6 +104,28 @@ INTERNAL = SourceRef(source_type="content", source_id="legacy-entry-write")
 INTERNAL_TEXT = "This legacy write receipt is provenance, not task evidence."
 EA = ArtifactRef(family="experience", artifact_id="task-a-experience", revision=1)
 EB = ArtifactRef(family="experience", artifact_id="task-b-experience", revision=1)
+
+
+@pytest.fixture(autouse=True)
+def sqlite_like_does_not_match_blobs() -> Iterator[None]:
+    """Exercise SQLITE_LIKE_DOESNT_MATCH_BLOBS even on builds that coerce blobs to text."""
+
+    native = sqlite3.connect(":memory:", check_same_thread=False)
+
+    def like(pattern, value):
+        if isinstance(pattern, bytes) or isinstance(value, bytes):
+            return 0
+        return native.execute("SELECT ? LIKE ?", (value, pattern)).fetchone()[0]
+
+    def configure(connection, _record):
+        connection.create_function("like", 2, like)
+
+    event.listen(Engine, "connect", configure)
+    try:
+        yield
+    finally:
+        event.remove(Engine, "connect", configure)
+        native.close()
 
 
 def _collection(revision: int) -> dict[str, Any]:
@@ -927,32 +950,8 @@ async def _legacy_references(contexts, connection) -> None:
     await _legacy_dream(connection, "cited-dream", "succeeded", _legacy_request("cited-dream", [ALPHA_2]))
     plain_request = {**_legacy_request("plain-dream", []), "artifacts": [EA.model_dump(mode="json")]}
     await _legacy_dream(connection, "plain-dream", "failed", plain_request)
-    pending_manifest = {
-        "transform_version": "powercontext.dream.evidence.v1",
-        "artifacts": [EA.model_dump(mode="json")],
-        "memory_citations": [],
-        "sources": [],
-        "nodes": [
-            {
-                "evidence_id": "ea",
-                "kind": "experience",
-                "digest": "0" * 64,
-                "source": None,
-                "artifact": EA.model_dump(mode="json"),
-                "memory_citations": [],
-                "role": "root",
-                "historical": False,
-                "current_entry_version_id": None,
-            }
-        ],
-        "edges": [],
-        "root_groups": [],
-        "projection_digest": "0" * 64,
-        "projection_bytes": 0,
-        "incomplete": False,
-    }
     pending_request = {**_legacy_request("pending-dream", []), "artifacts": [EA.model_dump(mode="json")]}
-    await _legacy_dream(connection, "pending-dream", "running", pending_request, pending_manifest)
+    await _legacy_dream(connection, "pending-dream", "queued", pending_request)
 
 
 def _new_request(idempotency_key: str, *artifacts: ArtifactRef) -> CreateDreamRunRequest:
@@ -1019,11 +1018,10 @@ def test_migration_converts_exact_citations_and_archives_collection_relationship
             receipt_source = (await contexts.repositories.sources.get(connection, SCOPE, RECEIPT)).value
             assert isinstance(receipt_source, ContentSource)
             receipt = HandoffReceipt.model_validate_json(receipt_source.content)
-            assert receipt.unavailable_evidence == (HandoffArtifactCitation(artifact_ref=alpha),)
-            assert receipt.historical_data == {
-                "format": RECEIPT_HISTORY_FORMAT,
-                "unavailable_evidence": [{"kind": "artifact", "artifact_ref": _collection(7)}],
-            }
+            assert receipt.model_dump(mode="json")["unavailable_evidence"] == [
+                {"kind": "artifact", "artifact_ref": alpha.model_dump(mode="json")},
+                {"kind": "artifact", "artifact_ref": _collection(7)},
+            ]
 
             repository = DreamRepository()
             cited_dream = await repository.get(connection, SCOPE, "cited-dream")
@@ -1037,8 +1035,7 @@ def test_migration_converts_exact_citations_and_archives_collection_relationship
             assert replay is not None and replay.run.run_id == "plain-dream" and replay.request is None
             pending = await repository.find_request(connection, SCOPE, OWNER, _new_request("pending-dream", EA))
             assert pending is not None and pending.request == _new_request("pending-dream", EA)
-            assert pending.run.input_manifest is not None
-            assert pending.run.input_manifest.nodes[0].artifact == EA
+            assert pending.run.input_manifest is None
 
     asyncio.run(scenario())
 
@@ -1219,6 +1216,67 @@ def test_unfinished_dream_pinning_a_rewritten_source_blocks_migration(tmp_path: 
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("legacy_snapshot", [True, False])
+def test_unfinished_dream_requires_current_artifact_snapshot_format(tmp_path: Path, legacy_snapshot: bool) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'dream-snapshot.db'}")
+
+    async def pinned(contexts, connection) -> None:
+        await _scope_row(connection)
+        resolved = await _resolver(contexts).resolve(connection, artifacts=(EA,))
+        manifest = resolved.manifest.model_dump(mode="json")
+        request = _new_request("pending-dream", EA).model_dump(mode="json")
+        if legacy_snapshot:
+            artifact = await contexts.repositories.artifacts.get(connection, SCOPE, EA)
+            old_value = artifact.model_dump(mode="json")
+            old_value["lineage"] = {
+                "sources": old_value["lineage"]["sources"],
+                "artifacts": old_value["lineage"]["artifacts"],
+                "memory_citations": [],
+                "publication_source": None,
+                "publication_digest": None,
+            }
+            old_digest = content_digest(_compact(old_value))
+            old_nodes = tuple(
+                node.model_copy(update={"digest": old_digest}) if node.artifact == EA else node
+                for node in resolved.manifest.nodes
+            )
+            # Released snapshots hashed the full Artifact, including its empty legacy lineage field.
+            with pytest.raises(EvidenceResolutionError, match="evidence_unavailable"):
+                await _resolver(contexts).resolve(
+                    connection, artifacts=(EA,), pinned=resolved.manifest.model_copy(update={"nodes": old_nodes})
+                )
+            request = {**_legacy_request("pending-dream", []), "artifacts": [EA.model_dump(mode="json")]}
+            manifest["memory_citations"] = []
+            for node in manifest["nodes"]:
+                node["memory_citations"] = []
+                node["current_entry_version_id"] = None
+                if node["artifact"] == EA.model_dump(mode="json"):
+                    node["digest"] = old_digest
+        await _legacy_dream(connection, "pending-dream", "running", request, manifest)
+
+    async def scenario() -> None:
+        await _seed(config, pinned)
+        report = await _migrate(config)
+        if legacy_snapshot:
+            assert not report.ready
+            assert any("pending-dream" in error and "finish" in error for error in report.errors), report.errors
+            async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+                assert await _public_collection_rows(connection) == [1, 2]
+        else:
+            assert report.ready, report.errors
+            async with (
+                open_builtin_contexts(BuiltinConfig(database=config)) as contexts,
+                contexts.database.transaction() as connection,
+            ):
+                record = await DreamRepository().get(connection, SCOPE, "pending-dream")
+                restored = await _resolver(contexts).resolve(
+                    connection, artifacts=(EA,), pinned=record.run.input_manifest
+                )
+                assert restored.manifest == record.run.input_manifest
+
+    asyncio.run(scenario())
+
+
 def test_runtime_start_does_not_read_the_archive_or_legacy_entry_tables(migrated) -> None:
     config, _internal = migrated
 
@@ -1229,6 +1287,50 @@ def test_runtime_start_does_not_read_the_archive_or_legacy_entry_tables(migrated
         async with open_builtin_contexts(BuiltinConfig(database=config)) as contexts:
             record = await contexts.atomic_memory.for_scope(SCOPE).get(_atomic("alpha", 2).artifact_id)
             assert record.artifact.as_ref() == _atomic("alpha", 2)
+
+    asyncio.run(scenario())
+
+
+def test_unfinished_dream_receipt_address_stays_readable_without_rewriting_its_source(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'receipt-address.db'}")
+    receipt = _legacy_receipt({"kind": "artifact", "artifact_ref": _collection(7)})
+    original_content = json.dumps(receipt, ensure_ascii=False, indent=2)
+
+    async def pinned(contexts, connection) -> None:
+        await _scope_row(connection)
+        await _work_source(contexts, connection, RECEIPT, "handoff-receipt", "powercontext.handoff-receipt.v1", receipt)
+        await DreamRepository().create(
+            connection,
+            DreamRecord(
+                run=DreamRun(
+                    scope_id=SCOPE,
+                    run_id="receipt-dream",
+                    operation="refine_experience",
+                    status="queued",
+                    accepted_at=datetime(2026, 1, 2, tzinfo=UTC),
+                ),
+                request=CreateDreamRunRequest(
+                    operation="refine_experience", artifacts=(EA,), sources=(RECEIPT,), idempotency_key="receipt-dream"
+                ),
+                principal_id=OWNER,
+            ),
+        )
+
+    async def scenario() -> None:
+        await _seed_and_migrate(config, pinned)
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            await connection.execute(text(f"DROP TABLE {ARCHIVE_TABLE.name}"))
+            await connection.execute(text(f"DROP TABLE {MEMORY_ENTRY_VERSIONS_TABLE.name}"))
+        async with (
+            open_builtin_contexts(BuiltinConfig(database=config)) as contexts,
+            contexts.database.transaction() as connection,
+        ):
+            stored = (await contexts.repositories.sources.get(connection, SCOPE, RECEIPT)).value
+            assert isinstance(stored, ContentSource) and stored.content == original_content
+            decoded = HandoffReceipt.model_validate_json(stored.content)
+            assert decoded.model_dump(mode="json")["unavailable_evidence"] == receipt["unavailable_evidence"]
+            run = await DreamRepository().get(connection, SCOPE, "receipt-dream")
+            assert run.run.status == "queued" and run.request is not None
 
     asyncio.run(scenario())
 
@@ -1297,11 +1399,8 @@ def test_rerun_completes_a_database_left_by_an_earlier_reference_conversion(migr
             stored = (await contexts.repositories.sources.get(connection, SCOPE, RECEIPT)).value
             assert isinstance(stored, ContentSource)
             receipt = HandoffReceipt.model_validate_json(stored.content)
-            assert receipt.evidence_status == "unavailable" and receipt.unavailable_evidence == ()
-            assert receipt.historical_data == {
-                "format": RECEIPT_HISTORY_FORMAT,
-                "unavailable_evidence": left["unavailable_evidence"],
-            }
+            assert receipt.evidence_status == "unavailable"
+            assert receipt.model_dump(mode="json")["unavailable_evidence"] == left["unavailable_evidence"]
             converted = await receipt_payload(connection)
             report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
             assert report.ready, report.errors
