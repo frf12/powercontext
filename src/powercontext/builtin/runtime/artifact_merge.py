@@ -27,7 +27,8 @@ from pydantic import BaseModel
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from powercontext.artifacts import ArtifactLineage
+from powercontext.artifacts import ArtifactLineage, ArtifactRef
+from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.merge import ArtifactMergeService
 from powercontext.builtin.artifacts.merge_models import (
     ArtifactMergeMutationResult,
@@ -44,14 +45,74 @@ from powercontext.builtin.sources.content import ArtifactRestorationOutcome
 from powercontext.builtin.tags import normalize_tags
 
 
+class ArtifactMergeAccess:
+    """Apply the shared access service; a missing context means access control is disabled."""
+
+    def __init__(self, family: str) -> None:
+        self.family = family
+
+    @staticmethod
+    def subject(context: ArtifactSearchExecutionContext | None) -> str:
+        principal = None if context is None else context.principal
+        return "" if principal is None else f"{principal.type}:{principal.id}"
+
+    async def authorize(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        context: ArtifactSearchExecutionContext | None,
+        action: str,
+        ref: ArtifactRef | None = None,
+    ) -> None:
+        from powercontext.server.authz import AccessAction, AccessDeniedError, ResourceRef
+
+        if context is None:
+            return
+        if context.access is None:
+            if not context.trusted_local:
+                raise AccessDeniedError
+            return
+        # Prompt and Topic Memory are Scope-owned and have no Artifact owner.
+        if action == "read" and (ref is None or ref.family in {"prompt", "topic-memory"}):
+            await context.access.require_scope_read(
+                context.principal, scope_id, connection=connection, context=context.audit
+            )
+            return
+        access = context.access.with_connection(connection)
+        if ref is None or action == "create":
+            permission = AccessAction.SCOPE_READ if action == "read" else AccessAction.SCOPE_CONTRIBUTE
+            resource = ResourceRef.scope(scope_id)
+            await access.bootstrap_static_scope(context.principal, scope_id, context=context.audit)
+        else:
+            permission = AccessAction.ARTIFACT_READ if action == "read" else AccessAction.ARTIFACT_WRITE
+            resource = ResourceRef.artifact(scope_id, family=ref.family, artifact_id=ref.artifact_id)
+        await access.require(context.principal, permission, resource, context=context.audit)
+
+    async def authorize_sources(self, connection: AsyncConnection, scope_id: str, context, sources) -> None:
+        if sources:
+            await self.authorize(connection, scope_id, context, "read")
+
+    async def establish_owner(self, connection: AsyncConnection, scope_id: str, artifact_id: str, context) -> None:
+        if context is None or context.access is None:
+            return
+        from powercontext.server.authz import ResourceRef
+
+        await context.access.with_connection(connection).establish_artifact_owner(
+            ResourceRef.artifact(scope_id, family=self.family, artifact_id=artifact_id),
+            context.principal,
+            idempotency_key=f"{self.family}-owner:{scope_id}:{artifact_id}",
+            context=context.audit,
+        )
+
+
 class ArtifactMergeApplication:
     """Register Family services without choosing inputs or generating merge content.
 
     Each service supplies its own content, projection and permission adapter.
     Authenticated hosts pass their execution context explicitly; the default
     context belongs to the composed local application.
-    Existing inputs must already have an owner established by their host.
-    Merge never takes ownership of unowned or somebody else's inputs.
+    When access control is enabled, the shared policy requires write authority
+    over existing inputs. Creation establishes the new result's owner.
     """
 
     def __init__(

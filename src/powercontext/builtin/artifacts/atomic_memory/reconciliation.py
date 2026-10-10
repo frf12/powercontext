@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Literal, NoReturn
+from typing import Any, Literal, NoReturn
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
@@ -37,6 +37,11 @@ compared_ids and target_ids may contain only related[].item_id, never proposal.i
 arrays must be empty.
 Items are in-memory working content; original_refs are the exact published inputs. Do not invent any item, ref or
 evidence ID. Only supplied items may be consumed. No persistent ID or revision may be allocated.
+Source evidence is the new Source window. Artifact evidence contains the exact current published kind/text of
+its artifact_ref, without expanding historical lineage. Item kind/text is working content that may already
+combine that published evidence with new Sources. Cite the evidence that supports the final facts and preserve
+their effective/event dates and conditions. Artifact publication time does not date facts.
+Citing Artifact evidence does not by itself consume that published identity.
 Choose create to retain an independent proposal without consuming related items; it continues to later batches.
 Choose revise to absorb the proposal into one related identity, returning full final kind/text and evidence_ids.
 Choose merge to combine the proposal and one or more related items, returning full final kind/text and evidence_ids.
@@ -65,11 +70,43 @@ class AtomicMemoryComparisonItem(BaseModel):
     evidence_ids: tuple[str, ...]
 
 
+class AtomicMemoryArtifactEvidence(BaseModel):
+    """Fixed current published facts, distinct from evolving in-window working content."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    evidence_id: str
+    artifact_ref: ArtifactRef
+    content: AtomicMemoryContent
+
+
+AtomicMemoryReconciliationEvidence = AtomicMemoryEvidence | AtomicMemoryArtifactEvidence
+
+
 class AtomicMemoryReconciliationInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     proposal: AtomicMemoryComparisonItem
     related: tuple[AtomicMemoryComparisonItem, ...]
-    evidence: tuple[AtomicMemoryEvidence, ...]
+    evidence: tuple[AtomicMemoryReconciliationEvidence, ...]
+
+
+class AtomicMemoryReconciliationContent(BaseModel):
+    """Model-owned facts; publication metadata belongs to the merge service."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def ordinary_content(cls, value: Any) -> Any:
+        if isinstance(value, cls):
+            return value
+        # Stored demonstrations may include the old schema marker and creation:null.
+        # Validate that exact format before removing its inert metadata.
+        content = AtomicMemoryContent.model_validate(value)
+        if content.creation is not None:
+            raise ValueError("creation metadata is constructed only by the merge service")  # noqa: TRY003
+        return {"kind": content.kind, "text": content.text}
 
 
 class AtomicMemoryReconciliationOutput(BaseModel):
@@ -82,7 +119,7 @@ class AtomicMemoryReconciliationOutput(BaseModel):
         default=(),
         description="Selected related[].item_id values only, excluding proposal.item_id. Empty when related is empty.",
     )
-    content: AtomicMemoryContent | None = None
+    content: AtomicMemoryReconciliationContent | None = None
     evidence_ids: tuple[str, ...] = ()
     reason: str = Field(min_length=1)
 
@@ -94,7 +131,7 @@ class AtomicMemoryWorkingItem:
     key: str
     content: AtomicMemoryContent
     origins: tuple[AtomicMemoryRead, ...] = ()
-    evidence: tuple[AtomicMemoryEvidence, ...] = ()
+    evidence: tuple[AtomicMemoryReconciliationEvidence, ...] = ()
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
     changed: bool = False
@@ -182,6 +219,7 @@ class AtomicMemoryWindowWorkset:
 
         if output.content is None:
             _invalid("write content is missing")
+        content = AtomicMemoryContent(kind=output.content.kind, text=output.content.text)
         inputs = (proposal, *targets)
         origins = tuple({read.ref.artifact_id: read for item in inputs for read in item.origins}.values())
         if output.action == "revise" and len(origins) != 1:
@@ -192,22 +230,27 @@ class AtomicMemoryWindowWorkset:
             {
                 (item.source_ref.source_type, item.source_ref.source_id): item.source_ref
                 for item in selected
-                if item.via_artifact is None
+                if isinstance(item, AtomicMemoryEvidence) and item.via_artifact is None
             }.values()
         )
         supporting_refs = (
             *(read.ref for read in origins),
-            *(item.via_artifact for item in selected if item.via_artifact is not None),
+            *(
+                item.via_artifact
+                for item in selected
+                if isinstance(item, AtomicMemoryEvidence) and item.via_artifact is not None
+            ),
+            *(item.artifact_ref for item in selected if isinstance(item, AtomicMemoryArtifactEvidence)),
         )
         artifacts = tuple({(ref.family, ref.artifact_id, ref.revision): ref for ref in supporting_refs}.values())
         updated = AtomicMemoryWorkingItem(
             key=key,
-            content=output.content,
+            content=content,
             origins=origins,
             evidence=selected,
             sources=sources,
             artifacts=artifacts,
-            changed=proposal.changed or bool(targets) or output.content != proposal.content,
+            changed=proposal.changed or bool(targets) or content != proposal.content,
         )
         for target in targets:
             del self.items[target.key]
@@ -240,15 +283,16 @@ def validate_reconciliation_output(
             _invalid("noop does not write content or evidence and has at most one target")
     elif (
         output.content is None
-        or output.content.creation is not None
         or not output.evidence_ids
         or not set(output.evidence_ids) <= {item.evidence_id for item in request.evidence}
     ):
         _invalid("write must have supported content and only supplied evidence")
 
 
-def unique_evidence(items: Iterable[AtomicMemoryEvidence]) -> tuple[AtomicMemoryEvidence, ...]:
-    by_id: dict[str, AtomicMemoryEvidence] = {}
+def unique_evidence(
+    items: Iterable[AtomicMemoryReconciliationEvidence],
+) -> tuple[AtomicMemoryReconciliationEvidence, ...]:
+    by_id: dict[str, AtomicMemoryReconciliationEvidence] = {}
     for item in items:
         if item.evidence_id in by_id and by_id[item.evidence_id] != item:
             _invalid("evidence identity has inconsistent content")

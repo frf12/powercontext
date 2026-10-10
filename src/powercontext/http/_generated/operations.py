@@ -165,6 +165,8 @@ from powercontext.http._generated.models import (
     ScopeDescriptor,
     ScopedStats,
     ScopePage,
+    SearchArtifactsRequest,
+    SearchArtifactsResponse,
     SearchAtomicMemoryRequest,
     SearchAtomicMemoryResponse,
     SearchMemoryRequest,
@@ -243,7 +245,7 @@ LIST_ATOMIC_MEMORIES = Operation[ListAtomicMemoryRequest, ListAtomicMemoryRespon
         500: {"$ref": "#/components/responses/InternalError"},
         503: {"$ref": "#/components/responses/Unavailable"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 SEARCH_ATOMIC_MEMORY = Operation[SearchAtomicMemoryRequest, SearchAtomicMemoryResponse](
@@ -268,7 +270,7 @@ SEARCH_ATOMIC_MEMORY = Operation[SearchAtomicMemoryRequest, SearchAtomicMemoryRe
         500: {"$ref": "#/components/responses/InternalError"},
         503: {"$ref": "#/components/responses/Unavailable"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 MERGE_ATOMIC_MEMORIES = Operation[MergeAtomicMemoryRequest, AtomicMemoryMutationResponse](
@@ -728,6 +730,7 @@ GET_DEFAULT_SCOPE = Operation[None, ScopeDescriptor](
     responses={
         200: {"description": "The ordinary Scope selected by the host default pointer."},
         404: {"$ref": "#/components/responses/NotFound"},
+        409: {"$ref": "#/components/responses/Conflict"},
         401: {"$ref": "#/components/responses/Unauthorized"},
         403: {"$ref": "#/components/responses/Forbidden"},
         503: {"$ref": "#/components/responses/Unavailable"},
@@ -795,6 +798,7 @@ RESOLVE_SCOPE_BINDING = Operation[ResolveScopeBindingRequest, ScopeDescriptor](
     responses={
         200: {"description": "The resolved Scope descriptor."},
         404: {"$ref": "#/components/responses/NotFound"},
+        409: {"$ref": "#/components/responses/Conflict"},
         401: {"$ref": "#/components/responses/Unauthorized"},
         403: {"$ref": "#/components/responses/Forbidden"},
         503: {"$ref": "#/components/responses/Unavailable"},
@@ -1347,6 +1351,30 @@ FLUSH_TOPIC_MEMORY = Operation[FlushTopicMemoryRequest, FlushTopicMemoryResponse
     ),
 )
 
+SEARCH_ARTIFACTS = Operation[SearchArtifactsRequest, SearchArtifactsResponse](
+    method="POST",
+    path="/v1/scopes/{scope_id}/artifacts/{family}/search",
+    operation_id="search_artifacts",
+    request_type=SearchArtifactsRequest,
+    request_location="body",
+    path_parameters=("scope_id", "family"),
+    response_type=SearchArtifactsResponse,
+    success_status=200,
+    summary="Search one Artifact Family in a Scope",
+    tags=("artifacts",),
+    scope_mode="none",
+    responses={
+        200: {"description": "Complete matching Artifact revisions in retrieval order."},
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
+)
+
 SEARCH_TOPIC_MEMORY = Operation[SearchTopicMemoryRequest, SearchTopicMemoryResponse](
     method="POST",
     path="/v1/topic-memory/search",
@@ -1481,7 +1509,7 @@ SEARCH_MEMORY = Operation[SearchMemoryRequest, SearchMemoryResponse](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 GET_MEMORY_CAPACITY = Operation[GetMemoryCapacityRequest, MemoryCapacity](
@@ -1535,7 +1563,7 @@ LIST_MEMORY_ENTRIES = Operation[ListMemoryEntriesRequest, ListMemoryEntriesRespo
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="atomic_memory_domain_access"),
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 GET_MEMORY_ENTRY = Operation[GetMemoryEntryRequest, GetMemoryEntryResponse](
@@ -1547,7 +1575,7 @@ GET_MEMORY_ENTRY = Operation[GetMemoryEntryRequest, GetMemoryEntryResponse](
     path_parameters=(),
     response_type=GetMemoryEntryResponse,
     success_status=200,
-    summary="Read exact legacy history or mapped current Atomic Memory",
+    summary="Read the current Atomic Memory mapped from a legacy target",
     tags=("memory",),
     scope_mode="current",
     responses={

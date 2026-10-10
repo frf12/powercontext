@@ -51,13 +51,17 @@ class _FailingExperienceIndex:
     async def replace(self, _connection, _scope_id, _experience, /) -> None:
         raise _IndexUnavailableError
 
-    async def search(self, _connection, _scope_id, _query, _limit, /, *, admission=None):
+    async def search(
+        self, _connection, _scope_id, _query, _limit, /, *, admission=None, min_score=None, require_scores=False
+    ):
         return ExperienceSearchOutcome()
 
     async def replace_skill(self, _connection, _scope_id, _skill, _package, /) -> None:
         pass
 
-    async def search_skills(self, _connection, _scope_id, _query, _limit, /):
+    async def search_skills(
+        self, _connection, _scope_id, _query, _limit, /, *, admission=None, min_score=None, require_scores=False
+    ):
         return ()
 
 
@@ -322,8 +326,9 @@ def test_profile_publication_is_rejected_without_changing_target(target_has_prof
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("family", ["memory", "atomic-memory"])
-def test_memory_publication_is_rejected_without_target_state(family: str) -> None:
+def test_memory_publication_is_rejected_without_target_state() -> None:
+    family = "atomic-memory"
+
     async def scenario() -> None:
         async with open_builtin_contexts(BuiltinConfig(database=SQLiteConfig())) as contexts:
             source_scope = await contexts.scopes.create(
@@ -332,24 +337,13 @@ def test_memory_publication_is_rejected_without_target_state(family: str) -> Non
             target_scope = await contexts.scopes.create(
                 ScopeDraft(title="Target", summary="Accepted result", idempotency_key="target")
             )
-            if family == "atomic-memory":
-                created = await contexts.records.create_artifact(
-                    source_scope.scope_id,
-                    family,
-                    ArtifactWrite(content={"kind": "decision", "text": "Keep publication state complete."}),
-                )
-                memory = await contexts.atomic_memory.for_scope(source_scope.scope_id).get(created.artifact_id)
-                ref = memory.ref
-            else:
-                # Publication still rejects retained collection snapshots, without reopening their writer.
-                async with contexts.database.transaction() as connection:
-                    frozen = await contexts.repositories.artifacts.create(
-                        connection,
-                        source_scope.scope_id,
-                        "frozen-memory",
-                        contexts.repositories.artifacts.draft("memory", {"manifest": {"entries": []}}),
-                    )
-                ref = frozen.as_ref()
+            created = await contexts.records.create_artifact(
+                source_scope.scope_id,
+                family,
+                ArtifactWrite(content={"kind": "decision", "text": "Keep publication state complete."}),
+            )
+            memory = await contexts.atomic_memory.for_scope(source_scope.scope_id).get(created.artifact_id)
+            ref = memory.ref
             publications = ArtifactPublicationApplication(
                 contexts.database,
                 contexts.repositories.artifacts,

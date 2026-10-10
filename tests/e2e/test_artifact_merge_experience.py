@@ -28,7 +28,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy.engine import make_url
 
-from powercontext.artifacts import ArtifactLineage, ArtifactRef, MemoryCitation
+from powercontext.artifacts import ArtifactAddress, ArtifactLineage, ArtifactRef, ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.experience import ExperienceContent, FailureRecord
 from powercontext.builtin.artifacts.merge_models import ArtifactMergeRelationError
@@ -40,7 +40,6 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.records import ArtifactWrite, BaseOperationNotSupportedError
 from powercontext.builtin.runtime import (
     ApproveArtifactCandidateRequest,
-    AtomicMemoryExecutionContext,
     BuiltinConfig,
     GetArtifactCandidateRequest,
     ProposeExperienceRequest,
@@ -50,9 +49,35 @@ from powercontext.builtin.runtime import (
 from powercontext.builtin.runtime.relational import RelationalContexts
 from powercontext.builtin.scope import ScopeDraft
 from powercontext.builtin.tags import ArtifactTagTarget
-from powercontext.server.authz import AccessDeniedError, ArtifactOwnerRelation, PrincipalRef, ResourceRef
+from powercontext.server.authz import (
+    AccessAuditContext,
+    AccessBinding,
+    AccessBindingState,
+    AccessControlService,
+    AccessDeniedError,
+    AccessRole,
+    BuiltinAuthorizationProvider,
+    PrincipalRef,
+    ResourceRef,
+)
 from powercontext.server.authz.repository import RelationalAccessRepository
 from powercontext.sources import SourceRef
+
+OWNER = PrincipalRef(type="service", id="experience-owner")
+
+
+def _execution_context(runtime, principal: PrincipalRef = OWNER) -> ArtifactSearchExecutionContext:
+    contexts = cast(RelationalContexts, runtime._provider)
+    repository = RelationalAccessRepository(contexts.database)
+    access = AccessControlService(
+        BuiltinAuthorizationProvider(repository),
+        relationships=repository,
+        audit=repository,
+        static_scope_principal=OWNER,
+    )
+    return ArtifactSearchExecutionContext(
+        principal=principal, access=access, audit=AccessAuditContext(transport="test", operation="experience-merge")
+    )
 
 
 @pytest.fixture(params=("sqlite", "oceanbase"))
@@ -109,16 +134,11 @@ async def _create(runtime, scope: str, name: str):
     )
     contexts = cast(RelationalContexts, runtime._provider)
     resource = ResourceRef.artifact(scope, family="experience", artifact_id=created.artifact_id)
+    context = _execution_context(runtime)
     # Ordinary local management writes leave ownership to their host's authorization boundary.
     async with contexts.database.transaction() as connection:
-        await RelationalAccessRepository(contexts.database, connection=connection).establish_artifact_owner(
-            ArtifactOwnerRelation(
-                resource,
-                contexts.atomic_memory.default_context.principal,
-                datetime.now(UTC),
-                "0",
-                "test-owner:" + created.artifact_id,
-            )
+        await context.access.with_connection(connection).establish_artifact_owner(
+            resource, OWNER, idempotency_key="test-owner:" + created.artifact_id, context=context.audit
         )
     return await runtime.artifact_merge.for_scope(scope, "experience").get(created.artifact_id)
 
@@ -140,6 +160,7 @@ def test_experience_management_merge_freezes_inputs_preserves_history_and_candid
             records = runtime.records.for_scope(scope)
             merge = runtime.artifact_merge.for_scope(scope, "experience")
             contexts = cast(RelationalContexts, runtime._provider)
+            context = _execution_context(runtime)
             a, b = await _create(runtime, scope, "canary"), await _create(runtime, scope, "pause")
             await records.replace_artifact(
                 "experience",
@@ -172,7 +193,7 @@ def test_experience_management_merge_freezes_inputs_preserves_history_and_candid
                     "verification": {"condition": "Rollout check passed", "check_subject": "rollout-check"},
                 }),
             )
-            result = await merge.merge((a.as_read(), b.as_read()), merged_content)
+            result = await merge.merge((a.as_read(), b.as_read()), merged_content, context=context)
             merged = result.primary
             assert merged.ref.revision == 1
             assert merged.artifact.content == merged_content
@@ -184,7 +205,7 @@ def test_experience_management_merge_freezes_inputs_preserves_history_and_candid
                 owner = await access.get_artifact_owner(
                     ResourceRef.artifact(scope, family="experience", artifact_id=merged.ref.artifact_id)
                 )
-                assert owner is not None and owner.owner == contexts.atomic_memory.default_context.principal
+                assert owner is not None and owner.owner == OWNER
                 assert (
                     await access.get_artifact_owner(
                         ResourceRef.artifact(scope, family="atomic-memory", artifact_id=merged.ref.artifact_id)
@@ -396,9 +417,26 @@ def test_experience_merge_preserves_explicit_caller_identity_and_denies_foreign_
             assert runtime.artifact_merge is not None
             merge = runtime.artifact_merge.for_scope(scope, "experience")
             a, b = await _create(runtime, scope, "canary"), await _create(runtime, scope, "pause")
-            foreign = AtomicMemoryExecutionContext(
-                principal=PrincipalRef(type="user", id="foreign"), trusted_local=True
-            )
+            foreign = _execution_context(runtime, PrincipalRef(type="user", id="foreign"))
+            contexts = cast(RelationalContexts, runtime._provider)
+            async with contexts.database.transaction() as connection:
+                await RelationalAccessRepository(contexts.database, connection=connection).create_binding(
+                    AccessBinding(
+                        binding_id="foreign-contributor",
+                        subject=foreign.principal,
+                        resource=ResourceRef.scope(scope),
+                        role=AccessRole.SCOPE_CONTRIBUTOR,
+                        granted_by=OWNER,
+                        reason=None,
+                        created_at=datetime.now(UTC),
+                        expires_at=None,
+                        state=AccessBindingState.ACTIVE,
+                        version=1,
+                        policy_revision="pending",
+                        idempotency_key="foreign-contributor",
+                    )
+                )
+            assert await merge.get(a.ref.artifact_id, context=foreign) == a
             with pytest.raises(AccessDeniedError):
                 await merge.merge(
                     (a.as_read(), b.as_read()), _content("combined"), artifact_id="denied-result", context=foreign
@@ -411,31 +449,33 @@ def test_experience_merge_preserves_explicit_caller_identity_and_denies_foreign_
                 len((await runtime.records.for_scope(scope).query_artifacts("experience", limit=20, cursor=None)).items)
                 == 2
             )
+            owner_context = _execution_context(runtime)
+            merged = (
+                await merge.merge((a.as_read(), b.as_read()), _content("combined"), context=owner_context)
+            ).primary
+            owner = await owner_context.access.artifact_owner(
+                ResourceRef.artifact(scope, family="experience", artifact_id=merged.ref.artifact_id)
+            )
+            assert owner is not None and owner.owner == OWNER
 
     asyncio.run(scenario())
 
 
 def test_restoration_outcome_survives_reopen_and_requires_group_read_access(database, tmp_path) -> None:
     async def scenario() -> None:
-        from powercontext.server.authz import (
-            AccessAuditContext,
-            AccessBinding,
-            AccessBindingState,
-            AccessControlService,
-            AccessRole,
-            BuiltinAuthorizationProvider,
-        )
-
         config = BuiltinConfig(database=database)
         scheduler_path = tmp_path / "scheduler.db"
         async with open_builtin_runtime(config, scheduler_path=scheduler_path) as runtime:
             scope = await _scope(runtime)
             assert runtime.artifact_merge is not None
             merge = runtime.artifact_merge.for_scope(scope, "experience")
+            owner_context = _execution_context(runtime)
             a, b = await _create(runtime, scope, "canary"), await _create(runtime, scope, "pause")
-            merged = (await merge.merge((a.as_read(), b.as_read()), _content("combined"))).primary
+            merged = (
+                await merge.merge((a.as_read(), b.as_read()), _content("combined"), context=owner_context)
+            ).primary
             assert await merge.restoration_outcome(a.ref.artifact_id, revision=1) is None
-            restored = await merge.restore(a.ref.artifact_id)
+            restored = await merge.restore(a.ref.artifact_id, context=owner_context)
             outcome = await merge.restoration_outcome(a.ref.artifact_id, revision=2)
             assert outcome is not None
             assert outcome.operation == "restore" and outcome.target == a.ref
@@ -455,6 +495,7 @@ def test_restoration_outcome_survives_reopen_and_requires_group_read_access(data
             again = await merge.merge(
                 ((await merge.get(a.ref.artifact_id)).as_read(), (await merge.get(b.ref.artifact_id)).as_read()),
                 _content("again"),
+                context=owner_context,
             )
             reader = PrincipalRef(type="user", id="artifact-only-reader")
             contexts = cast(RelationalContexts, runtime._provider)
@@ -465,7 +506,7 @@ def test_restoration_outcome_survives_reopen_and_requires_group_read_access(data
                         subject=reader,
                         resource=ResourceRef.artifact(scope, family="experience", artifact_id=a.ref.artifact_id),
                         role=AccessRole.ARTIFACT_VIEWER,
-                        granted_by=contexts.atomic_memory.default_context.principal,
+                        granted_by=OWNER,
                         reason=None,
                         created_at=datetime.now(UTC),
                         expires_at=None,
@@ -475,13 +516,7 @@ def test_restoration_outcome_survives_reopen_and_requires_group_read_access(data
                         idempotency_key="primary-only",
                     )
                 )
-            repository = RelationalAccessRepository(contexts.database)
-            access = AccessControlService(
-                BuiltinAuthorizationProvider(repository), relationships=repository, audit=repository
-            )
-            context = AtomicMemoryExecutionContext(
-                principal=reader, access=access, audit=AccessAuditContext(transport="test", operation="restore-outcome")
-            )
+            context = _execution_context(runtime, reader)
             assert (await merge.get(a.ref.artifact_id, revision=2, context=context)).ref == restored.primary.ref
             with pytest.raises(AccessDeniedError):
                 await merge.restoration_outcome(a.ref.artifact_id, revision=2, context=context)
@@ -573,16 +608,15 @@ def test_experience_merge_rejects_unsupported_lineage_before_writing(database, t
             assert runtime.artifact_merge is not None
             merge = runtime.artifact_merge.for_scope(scope, "experience")
             a, b = await _create(runtime, scope, "canary"), await _create(runtime, scope, "pause")
-            citation = MemoryCitation(
-                memory_ref=ArtifactRef(family="memory", artifact_id="legacy", revision=1),
-                entry_id="entry",
-                entry_version_id="version",
-            )
             with pytest.raises(ArtifactMergeRelationError, match="direct Sources and exact in-Scope Artifacts"):
                 await merge.merge(
                     (a.as_read(), b.as_read()),
                     _content("combined"),
-                    lineage=ArtifactLineage(artifacts=(a.ref, b.ref), memory_citations=(citation,)),
+                    lineage=ArtifactLineage(
+                        artifacts=(a.ref, b.ref),
+                        publication_source=ArtifactAddress(scope_id=scope, artifact=a.ref),
+                        publication_digest="a" * 64,
+                    ),
                 )
             assert await merge.get(a.ref.artifact_id) == a
             assert await merge.get(b.ref.artifact_id) == b

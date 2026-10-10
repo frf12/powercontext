@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
-from powercontext.builtin.artifacts.memory import MemoryCitation, MemoryEntryVersion, MemoryService
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
 from powercontext.builtin.persistence.database import AsyncDatabase
@@ -44,7 +43,6 @@ from powercontext.builtin.persistence.family_management import (
     FamilyManagementWriterRegistry,
     PreparingFamilyManagementWriter,
 )
-from powercontext.builtin.persistence.memory import RelationalMemoryBackend
 from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
 from powercontext.builtin.persistence.sources import SourceRepository, StoredSource
 from powercontext.builtin.persistence.tables import (
@@ -349,10 +347,6 @@ class RelationalRecordService:
         )
         try:
             async with self._database.transaction() as connection:
-                if isinstance(writer, AtomicMemoryManagementWriter):
-                    await writer.application.security.lock_transaction(
-                        connection, scope_id, cast(AtomicMemoryManagementPrepared, prepared).execution_context
-                    )
                 stored = await self._sources.add(connection, scope_id, source)
                 artifact = await writer.create(connection, scope_id, artifact_id, prepared, stored.ref)
         except (StoredPayloadConflictError, RevisionConflictError) as error:
@@ -376,7 +370,6 @@ class RelationalRecordService:
             prepared.append((artifact_id, command, value))
         created = []
         async with self._database.transaction() as connection:
-            await writer.application.security.lock_transaction(connection, scope_id, prepared[0][2].execution_context)
             for artifact_id, command, value in prepared:
                 payload = cast(dict[str, JsonValue], command.model_dump(mode="json", by_alias=True, exclude_none=True))
                 source = ContentSource(
@@ -403,8 +396,6 @@ class RelationalRecordService:
 
     async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord:
         self._require_family(family)
-        if family == "memory":
-            raise BaseOperationNotSupportedError("artifact_family", family, "latest collection read")
         async with self._database.transaction() as connection:
             try:
                 artifact = await self._artifacts.latest(connection, scope_id, family, artifact_id)
@@ -499,20 +490,8 @@ class RelationalRecordService:
         )
         return ArtifactRevisionPage(items=items, next_cursor=next_cursor)
 
-    async def current_memory_entry(self, scope_id: str, artifact_id: str, entry_id: str, /) -> MemoryEntryVersion:
-        """Resolve only one entry body, including entries in base-API Memory artifacts."""
-        backend = RelationalMemoryBackend(database=self._database, scope_id=scope_id, artifacts=self._artifacts)
-        memory = await backend.latest(artifact_id)
-        entry = next((value for value in memory.content.manifest.entries if value.entry_id == entry_id), None)
-        if entry is None:
-            raise BaseValueNotFoundError("artifact", (scope_id, artifact_id, entry_id))
-        citation = MemoryCitation(
-            memory_ref=memory.as_ref(), entry_id=entry_id, entry_version_id=entry.entry_version_id
-        )
-        return await MemoryService(backend=backend).validate_citation(citation)
-
     async def logical_artifacts(self, scope_id: str, /) -> tuple[LogicalArtifactRecord, ...]:
-        """Catalog current logical identities; legacy collections remain exact-history only."""
+        """Catalog current logical identities."""
         async with self._database.transaction() as connection:
             artifacts = (
                 await connection.execute(
@@ -537,8 +516,6 @@ class RelationalRecordService:
         tag_filter: TagFilter | None = None,
     ) -> ArtifactRecordPage:
         self._require_family(family)
-        if family == "memory":
-            raise BaseOperationNotSupportedError("artifact_family", family, "collection list")
         _require_limit(limit)
         reader = self._topic_memory_list_reader
         if reader is not None and family == reader.family:
@@ -644,9 +621,6 @@ class RelationalRecordService:
         try:
             async with self._database.transaction() as connection:
                 if isinstance(writer, AtomicMemoryManagementWriter):
-                    await writer.application.security.lock_transaction(
-                        connection, scope_id, cast(AtomicMemoryManagementPrepared, prepared).execution_context
-                    )
                     current = cast(AtomicMemoryManagementPrepared, prepared).prepared.plan.writes[0].current.artifact
                 else:
                     try:
@@ -721,6 +695,8 @@ class RelationalRecordService:
             raise InvalidBaseAccessRequestError("source_type", "must be content")
 
     def _require_family(self, family: str) -> None:
+        if family == "memory":
+            raise BaseOperationNotSupportedError("artifact_family", family, "legacy Memory collection read")
         if family not in self._artifacts.families:
             raise InvalidBaseAccessRequestError("family", "must be a registered Artifact family")
 
@@ -804,7 +780,6 @@ def _artifact_record(
         content=content,
         sources=artifact.lineage.sources,
         artifacts=artifact.lineage.artifacts,
-        memory_citations=artifact.lineage.memory_citations,
         content_digest=_content_digest(content),
     )
 

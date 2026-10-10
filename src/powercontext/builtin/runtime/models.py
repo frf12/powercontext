@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
@@ -24,13 +25,9 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.experience import ExperienceContent
 from powercontext.builtin.artifacts.memory.models import (
-    MemoryCitation,
     MemoryEntryInput,
-    MemoryEntryState,
-    MemoryEntryVersion,
     MemoryHit,
     MemoryRerankTrace,
-    MemoryRevisionChanges,
     MemorySearchMode,
     MemoryUsedSearchMode,
 )
@@ -51,7 +48,7 @@ from powercontext.builtin.review import (
 )
 from powercontext.builtin.review.generation import SkillGenerationOrigin
 from powercontext.builtin.sources import ExternalSkillImportMode
-from powercontext.builtin.tags import MemoryEntryTagTarget, TagFilter
+from powercontext.builtin.tags import TagFilter
 from powercontext.sources import ConnectorBinding, SourceObservation, SourceRef
 
 PreparedContextSchema: TypeAlias = Literal["powercontext.prepared-context.v1"]
@@ -100,6 +97,42 @@ class CommitConnectorCheckpoint(BaseModel):
     binding: ConnectorBinding
     expected: JsonValue | None
     checkpoint: JsonValue | None
+
+
+class ExtractionBackground(BaseModel):
+    """Placement, leadership, and lifecycle of the Memory Supervisor."""
+
+    location: Literal["local", "external", "none"]
+    role: Literal["leader", "standby"] | None = None
+    state: Literal["running", "degraded", "stopped", "unknown"]
+    automatic_processing_enabled: bool | None = None
+
+
+class ExtractionFailure(BaseModel):
+    """A historical failure observation, not an unresolved incident."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    stage: Literal["inference", "flush", "worker", "supervisor", "lease_renewal", "scope_discovery"]
+    occurred_at: datetime
+
+
+class ExtractionObservation(BaseModel):
+    """Independent success and failure evidence within this Runtime's lifetime."""
+
+    status: Literal["unverified", "observed"]
+    since: datetime
+    last_success_at: datetime | None = None
+    last_failure: ExtractionFailure | None = None
+
+
+class ExtractionStatus(BaseModel):
+    """Read-only facts about Memory extraction, without an overall health verdict."""
+
+    configuration: Literal["configured", "unconfigured", "unknown"]
+    background: ExtractionBackground
+    observation: ExtractionObservation
 
 
 class RuntimeCapabilities(BaseModel):
@@ -272,72 +305,12 @@ class PreparedContext(_PreparedContextModel):
         return self
 
 
-class MemoryEntryRecord(BaseModel):
-    """An exact entry version together with its state in one Revision."""
-
-    memory_ref: ArtifactRef
-    state: MemoryEntryState
-    entry: MemoryEntryVersion
-
-    @property
-    def citation(self) -> MemoryCitation:
-        return MemoryCitation(
-            memory_ref=self.memory_ref,
-            entry_id=self.entry.entry_id,
-            entry_version_id=self.entry.entry_version_id,
-        )
-
-
-class MemoryEntriesPage(BaseModel):
-    """Selected current-head entries for one scope, or an absent Memory."""
-
-    memory_ref: ArtifactRef | None
-    entries: tuple[MemoryEntryRecord, ...] = ()
-
-
-class GetMemoryEntryRequest(BaseModel):
-    """Read either an exact legacy citation or its mapped current logical target."""
-
-    citation: MemoryCitation | None = None
-    target: MemoryEntryTagTarget | None = None
-
-    @model_validator(mode="after")
-    def exclusive_address(self) -> GetMemoryEntryRequest:
-        if (self.citation is None) == (self.target is None):
-            raise ValueError("exactly one of citation and target is required")  # noqa: TRY003
-        return self
-
-
-class ReviseMemoryEntryRequest(BaseModel):
-    citation: MemoryCitation
-    kind: str
-    text: str
-    reason: str | None = None
-
-
-class RetireMemoryEntryRequest(BaseModel):
-    citation: MemoryCitation
-    reason: str | None = None
-
-
-class MemoryMutationResult(BaseModel):
-    previous_revision: int | None
-    memory_ref: ArtifactRef
-    entry: MemoryEntryRecord | None = None
-
-
-class MemoryChangesPage(BaseModel):
-    memory_ref: ArtifactRef | None
-    revisions: tuple[MemoryRevisionChanges, ...] = ()
-
-
 class ProposeExperienceRequest(BaseModel):
     """Submit a complete Experience proposal with exact evidence."""
 
     proposal: ExperienceContent
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
-    memory_citations: tuple[MemoryCitation, ...] = ()
     target: ArtifactRef | None = None
     reason: str | None = None
 
@@ -445,7 +418,6 @@ class ReviseArtifactCandidateRequest(ApproveArtifactCandidateRequest):
     proposal: ExperienceContent | SkillContent | ProfileWriteContent
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
-    memory_citations: tuple[MemoryCitation, ...] | None = None
     target: ArtifactRef | None = None
     reason: str | None = None
 

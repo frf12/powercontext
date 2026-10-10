@@ -71,7 +71,7 @@ def test_atomic_cascade_restore_appends_revisions_and_preserves_preview_contract
                 signer.validate(
                     preview.preview_token,
                     scope_id="project",
-                    subject=application.security.subject(application.default_context),
+                    subject=application.security.subject(None),
                     operation=kwargs.get("operation", "restore"),
                     artifact_id=identity,
                     revision=kwargs.get("revision"),
@@ -173,7 +173,7 @@ def test_atomic_merge_commit_rejects_changed_input_without_partial_result(change
                     "new-result",
                     tuple(record.as_read() for record in originals),
                     AtomicMemoryContent(kind="rule", text="Keep both rules."),
-                    application.default_context,
+                    None,
                 )
             prepared = await application.service.prepare_merge(plan)
             if change == "revision":
@@ -188,7 +188,7 @@ def test_atomic_merge_commit_rejects_changed_input_without_partial_result(change
                 await memory.forget(originals[0].ref.artifact_id, expected_revision=1, expected_state_version=0)
             with pytest.raises(AtomicMemoryConflictError):
                 async with contexts.database.transaction() as connection:
-                    await application.service.commit(connection, prepared, application.default_context)
+                    await application.service.commit(connection, prepared, None)
             current = (await memory.list(states=("active", "forgotten", "merged", "retired"))).items
             assert {record.ref.artifact_id for record in current} == {record.ref.artifact_id for record in originals}
             assert all(record.state.merged_into_id is None for record in current)

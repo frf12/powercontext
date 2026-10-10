@@ -57,8 +57,6 @@ class ArtifactMergeSecurity(Protocol):
 
     def subject(self, context: Any) -> str: ...
 
-    async def lock_transaction(self, connection: AsyncConnection, scope_id: str, context: Any) -> None: ...
-
     async def authorize(
         self,
         connection: AsyncConnection,
@@ -467,7 +465,6 @@ class ArtifactMergeService:
     ) -> None:
         """Allow no-op processing plans to protect their actual decision dependencies."""
 
-        await self.security.lock_transaction(connection, scope_id, context)
         await self.artifacts.lock_heads(connection, scope_id, tuple(read.ref for read in reads))
         await self._check_dependencies(connection, scope_id, reads, context, for_update=True)
 
@@ -504,7 +501,6 @@ class ArtifactMergeService:
             for _, projection in item.projections:
                 self.projections.validate_prepared(projection)
         reads = self._unique_reads((*read_set, *(read for plan in plans for read in plan.reads)))
-        await self.security.lock_transaction(connection, scope_id, context)
         await self.artifacts.lock_heads(connection, scope_id, tuple(read.ref for read in reads))
         for plan in plans:
             await self._validate_preview(connection, plan, context)

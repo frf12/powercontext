@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, text
+from sqlalchemy import literal, select, text
 from sqlalchemy.dialects.mysql import match
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -91,6 +91,8 @@ class OceanBaseExperienceFTSIndex:
         /,
         *,
         admission: AdmissionFloor | None = None,
+        min_score: float | None = None,
+        require_scores: bool = False,
     ) -> ExperienceSearchOutcome:
         analyzed = analyze_fts_query(query)
         if not analyzed:
@@ -102,6 +104,8 @@ class OceanBaseExperienceFTSIndex:
                     ARTIFACT_HEADS_TABLE.c.artifact_id,
                     ARTIFACT_HEADS_TABLE.c.revision,
                     ARTIFACTS_TABLE.c.content,
+                    score.label("raw_score"),
+                    literal("oceanbase_match").label("score_metric"),
                 )
                 .join(
                     ARTIFACTS_TABLE,
@@ -120,7 +124,9 @@ class OceanBaseExperienceFTSIndex:
                 .limit(limit * 4)
             )
         ).mappings()
-        return experience_search_hits(rows, query, limit, scope_id, admission=admission)
+        return experience_search_hits(
+            rows, query, limit, scope_id, admission=admission, min_score=min_score, require_scores=require_scores
+        )
 
     async def replace_skill(
         self,
@@ -139,6 +145,10 @@ class OceanBaseExperienceFTSIndex:
         query: str,
         limit: int,
         /,
+        *,
+        admission: AdmissionFloor | None = None,
+        min_score: float | None = None,
+        require_scores: bool = False,
     ) -> tuple[SkillSearchHit, ...]:
         analyzed = analyze_fts_query(query)
         if not analyzed:
@@ -151,6 +161,8 @@ class OceanBaseExperienceFTSIndex:
                     ARTIFACT_HEADS_TABLE.c.revision,
                     ARTIFACT_HEADS_TABLE.c.searchable_text,
                     ARTIFACTS_TABLE.c.content,
+                    score.label("raw_score"),
+                    literal("oceanbase_match").label("score_metric"),
                 )
                 .join(
                     ARTIFACTS_TABLE,
@@ -169,7 +181,9 @@ class OceanBaseExperienceFTSIndex:
                 .limit(limit * 4)
             )
         ).mappings()
-        return skill_search_hits(rows, query, limit)
+        return skill_search_hits(
+            rows, query, limit, admission=admission, min_score=min_score, require_scores=require_scores
+        )
 
 
 __all__ = ["OceanBaseExperienceFTSIndex"]

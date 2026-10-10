@@ -138,7 +138,7 @@ class SearchPlan:
     """Describes the next round.
 
     It never names a family and never sets ``limit``, ``mode`` or a rerank candidate bound.
-    The last point is deliberate and load-bearing: ``MemoryService`` uses
+    The last point is deliberate and load-bearing: Atomic Memory search uses
     ``memory_rerank_candidate_limit`` to *size the backend request*
     (``coarse_limit`` → ``candidate_limit = max(coarse_limit * 4, 32)``), so raising it from
     30 to 100 would grow the backend pool from 120 to 400 candidates and break the same-pool

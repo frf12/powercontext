@@ -48,7 +48,7 @@ class ExperienceMergeAdapter:
         merge_inputs: tuple[ArtifactRef, ...] = (),
         historical: bool = False,
     ) -> ExperienceDraft:
-        if lineage.memory_citations or lineage.publication_source is not None:
+        if lineage.publication_source is not None:
             raise ArtifactMergeRelationError("Experience accepts direct Sources and exact in-Scope Artifacts")  # noqa: TRY003
         return ExperienceDraft(
             content=ExperienceContent.model_validate(content), sources=lineage.sources, artifacts=lineage.artifacts

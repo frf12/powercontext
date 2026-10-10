@@ -30,10 +30,8 @@ from powercontext.artifacts import (
     ArtifactDraft,
     ArtifactLineage,
     ArtifactRef,
-    MemoryCitation,
 )
 from powercontext.builtin.persistence.artifact_governance import ArtifactGovernance, InvalidArtifactLifecycleError
-from powercontext.builtin.persistence.citation_codec import dump_memory_citations, load_memory_citations
 from powercontext.builtin.persistence.codec import dump_model, load_model, stored_bytes, validate_json_model
 from powercontext.builtin.persistence.errors import (
     IdentityMismatchError,
@@ -67,7 +65,6 @@ class RepositoryArtifactDraft(BaseModel):
     content: BaseModel
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
-    memory_citations: tuple[MemoryCitation, ...] = ()
 
 
 class ArtifactRepository:
@@ -126,9 +123,7 @@ class ArtifactRepository:
                 artifact_type,
                 ref,
                 draft.content,
-                ArtifactLineage(
-                    sources=draft.sources, artifacts=draft.artifacts, memory_citations=draft.memory_citations
-                ),
+                ArtifactLineage(sources=draft.sources, artifacts=draft.artifacts),
             )
             await connection.execute(
                 insert(ARTIFACT_HEADS_TABLE).values(
@@ -346,7 +341,7 @@ class ArtifactRepository:
             artifact_type,
             ref,
             draft.content,
-            ArtifactLineage(sources=draft.sources, artifacts=draft.artifacts, memory_citations=draft.memory_citations),
+            ArtifactLineage(sources=draft.sources, artifacts=draft.artifacts),
         )
         advanced = await connection.execute(
             update(ARTIFACT_HEADS_TABLE)
@@ -586,7 +581,6 @@ class ArtifactRepository:
                 artifact_id=ref.artifact_id,
                 revision=ref.revision,
                 content=payload,
-                memory_citations=dump_memory_citations(lineage.memory_citations),
             )
         )
         if lineage.sources:
@@ -653,7 +647,6 @@ class ArtifactRepository:
     ) -> Artifact[Any]:
         family = str(row["family"])
         artifact_type = self._artifact_type(family)
-        lineage = lineage.model_copy(update={"memory_citations": load_memory_citations(row.get("memory_citations"))})
         content = load_model(
             self._content_types[family],
             stored_bytes(row["content"], column="payload"),

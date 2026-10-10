@@ -208,6 +208,92 @@ def test_valid_demonstrations_preserve_their_original_json(key: str) -> None:
     assert content.model_dump_json() == original
 
 
+def _atomic_artifact_case() -> dict[str, Any]:
+    case = _case("atomic_memory.reconcile")
+    ref = {"family": "atomic-memory", "artifact_id": "memory-language", "revision": 2}
+    evidence = {
+        "evidence_id": "artifact:memory-language@2",
+        "artifact_ref": dict(ref),
+        "content": {"kind": "preference", "text": "Prefers English."},
+    }
+    case["input"]["evidence"].append(evidence)
+    case["input"]["related"] = [
+        {
+            "item_id": "memory:language",
+            **evidence["content"],
+            "original_refs": [{"ref": dict(ref), "state": "active", "state_version": 0}],
+            "evidence_ids": [evidence["evidence_id"]],
+        }
+    ]
+    case["expected_output"].update({
+        "action": "revise",
+        "compared_ids": ["memory:language"],
+        "target_ids": ["memory:language"],
+        "evidence_ids": [item["evidence_id"] for item in case["input"]["evidence"]],
+    })
+    return case
+
+
+def test_atomic_reconciliation_demonstration_accepts_current_published_artifact_evidence() -> None:
+    content = _content(_atomic_artifact_case())
+    PromptRegistry(builtin_prompt_definitions()).get("atomic_memory.reconcile").validate(content)
+
+
+@pytest.mark.parametrize("schema_field", ["schema", "schema_"])
+def test_atomic_reconciliation_preserves_legacy_demonstration_metadata(schema_field: str) -> None:
+    case = _atomic_artifact_case()
+    case["expected_output"]["content"].update({schema_field: "powercontext.atomic-memory.v1", "creation": None})
+    content = _content(case)
+    original = content.model_dump_json()
+    definition = PromptRegistry(builtin_prompt_definitions()).get("atomic_memory.reconcile")
+    definition.validate(content)
+    resolved = definition.resolve("scope-a", Prompt(artifact_id="atomic_memory.reconcile", revision=1, content=content))
+    assert content.model_dump_json() == original
+    assert resolved.demonstrations == content.demonstrations
+    assert resolved.demonstrations[0].expected_output == case["expected_output"]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"creation": {"type": "merge", "input_artifact_ids": ["memory-a", "memory-b"]}},
+        {"schema": "unsupported"},
+        {"schema_": "unsupported"},
+        {"revision": 1},
+    ],
+)
+def test_atomic_reconciliation_demonstrations_reject_invalid_metadata(metadata: dict[str, Any]) -> None:
+    case = _atomic_artifact_case()
+    case["expected_output"]["content"].update(metadata)
+    with pytest.raises(PromptError) as caught:
+        PromptRegistry(builtin_prompt_definitions()).get("atomic_memory.reconcile").validate(_content(case))
+    assert caught.value.code == "prompt_definition_incompatible"
+
+
+def test_atomic_reconciliation_demonstration_allows_artifact_support_without_consuming_identity() -> None:
+    case = _atomic_artifact_case()
+    case["input"]["related"] = []
+    case["input"]["proposal"]["evidence_ids"] = case["expected_output"]["evidence_ids"]
+    case["expected_output"].update({"action": "create", "compared_ids": [], "target_ids": []})
+    PromptRegistry(builtin_prompt_definitions()).get("atomic_memory.reconcile").validate(_content(case))
+
+
+def test_atomic_reconciliation_demonstration_rejects_unavailable_artifact_evidence() -> None:
+    case = _atomic_artifact_case()
+    case["expected_output"]["evidence_ids"] = ["source:content/turn-1", "artifact:unavailable-memory@2"]
+    with pytest.raises(PromptError) as caught:
+        PromptRegistry(builtin_prompt_definitions()).get("atomic_memory.reconcile").validate(_content(case))
+    assert caught.value.code == "prompt_definition_incompatible"
+
+
+def test_atomic_extraction_demonstration_rejects_published_artifact_evidence() -> None:
+    case = _case("atomic_memory.extract")
+    case["input"]["evidence"].append(_atomic_artifact_case()["input"]["evidence"][-1])
+    with pytest.raises(PromptError) as caught:
+        PromptRegistry(builtin_prompt_definitions()).get("atomic_memory.extract").validate(_content(case))
+    assert caught.value.code == "prompt_definition_incompatible"
+
+
 @pytest.mark.parametrize(
     ("key", "path", "invalid"),
     [

@@ -25,9 +25,12 @@ from typing import cast
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncConnection
 
+from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError, AtomicMemoryPreviewStaleError
 from powercontext.builtin.artifacts.atomic_memory.models import (
+    AtomicMemory,
     AtomicMemoryContent,
     AtomicMemoryRead,
     AtomicMemoryRecord,
@@ -51,6 +54,7 @@ from powercontext.builtin.persistence.atomic_memory import AtomicMemoryStateRepo
 from powercontext.builtin.persistence.atomic_memory_index import (
     AtomicMemoryIndex,
     AtomicMemoryIndexError,
+    AtomicMemoryIndexFilter,
     AtomicMemoryIndexHit,
     AtomicMemoryProjectionPublisher,
     AtomicMemorySearchMode,
@@ -65,14 +69,27 @@ from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE
 from powercontext.builtin.persistence.tags import tag_predicate
 from powercontext.builtin.records import BaseOperationNotSupportedError, InvalidBaseAccessRequestError
-from powercontext.builtin.runtime.artifact_merge import merge_artifact_tags
-from powercontext.builtin.runtime.atomic_memory_security import (
-    AtomicMemoryExecutionContext,
-    AtomicMemorySecurity,
-    load_atomic_memory_security,
-    load_atomic_memory_tags,
-)
+from powercontext.builtin.runtime.artifact_merge import ArtifactMergeAccess, merge_artifact_tags
 from powercontext.builtin.tags import TagFilter
+
+
+class AtomicMemoryAccess(ArtifactMergeAccess):
+    def __init__(self) -> None:
+        super().__init__("atomic-memory")
+
+    async def filters(
+        self, connection: AsyncConnection, scope_id: str, context, *, tags: TagFilter | None = None
+    ) -> AtomicMemoryIndexFilter:
+        await self.authorize(connection, scope_id, context, "read")
+        return AtomicMemoryIndexFilter(tag_filter=tags)
+
+
+def deferred_decision_audit(context: ArtifactSearchExecutionContext | None):
+    """Flush decision audit only after the business snapshot closes."""
+
+    if context is None or context.access is None:
+        return nullcontext()
+    return context.access.defer_decision_audit()
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +138,6 @@ class AtomicMemoryApplication:
         artifacts: ArtifactRepository,
         index: AtomicMemoryIndex,
         *,
-        default_context: AtomicMemoryExecutionContext,
         embedding_model=None,
         cursor_secret: bytes | None = None,
         id_factory=None,
@@ -139,8 +155,7 @@ class AtomicMemoryApplication:
         self.database = database
         self.artifacts = artifacts
         self.index = index
-        self.security = AtomicMemorySecurity(database)
-        self.default_context = default_context
+        self.security = AtomicMemoryAccess()
         self.embedding_model = embedding_model
         self.restore_retry_budget = restore_retry_budget
         self.id_factory = id_factory or (lambda _kind: f"art_{uuid4().hex}")
@@ -148,8 +163,6 @@ class AtomicMemoryApplication:
         self.publisher = AtomicMemoryProjectionPublisher(
             index,
             embedding_model=embedding_model,
-            load_tags=load_atomic_memory_tags,
-            load_security=load_atomic_memory_security,
         )
         self.service = AtomicMemoryService(
             artifacts=artifacts,
@@ -163,17 +176,6 @@ class AtomicMemoryApplication:
     def for_scope(self, scope_id: str) -> ScopedAtomicMemory:
         return ScopedAtomicMemory(self, scope_id)
 
-    async def refresh_access(self, connection, resource) -> None:
-        security = await load_atomic_memory_security(connection, resource.scope_id, resource.artifact_id)
-        await self.index.refresh_access(
-            connection,
-            resource.scope_id,
-            resource.artifact_id,
-            security.owner_type,
-            security.owner_id,
-            security.read_grants,
-        )
-
     async def merge_tags(self, connection, scope_id: str, result_id: str, input_ids: tuple[str, ...]) -> None:
         await merge_artifact_tags(connection, scope_id, result_id, input_ids, family=self.security.family)
 
@@ -183,24 +185,21 @@ class ScopedAtomicMemory:
         self.application = application
         self.scope_id = scope_id
 
-    def _context(self, context):
-        return self.application.default_context if context is None else context
-
     async def get(self, artifact_id: str, *, revision: int | None = None, context=None) -> AtomicMemoryRecord:
-        selected_context = self._context(context)
-        # Reads keep authority in the same snapshot; audit writes are flushed
+        # Builtin authority shares the business snapshot. Configured external
+        # providers keep their own decision boundary. Audit writes are flushed
         # after it closes so SQLite never upgrades an old read snapshot.
-        # SAVEPOINT also pins trusted local reads and composes with an
-        # existing in-memory write transaction without committing it.
+        # SAVEPOINT contains the business reads and composes with an existing
+        # in-memory write transaction without committing it.
         async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            deferred_decision_audit(context),
             self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
             return await self.application.service.get(
-                connection, self.scope_id, artifact_id, selected_context, revision=revision
+                connection, self.scope_id, artifact_id, context, revision=revision
             )
 
-    async def list(  # noqa: C901
+    async def list(
         self,
         *,
         states: tuple[str, ...] = ("active",),
@@ -210,9 +209,6 @@ class ScopedAtomicMemory:
         cursor: str | None = None,
         context=None,
     ) -> AtomicMemoryPage:
-        from powercontext.server.authz import AccessDeniedError
-
-        selected_context = self._context(context)
         _validate_limit(limit)
         if not states or len(set(states)) != len(states):
             raise InvalidBaseAccessRequestError("states", "must contain distinct lifecycle values")
@@ -223,7 +219,7 @@ class ScopedAtomicMemory:
             "endpoint": "atomic_memory_list",
             "version": 1,
             "scope_id": self.scope_id,
-            "subject": self.application.security.subject(selected_context),
+            "subject": self.application.security.subject(context),
             "states": sorted(states),
             "kind": kind,
             "tags": None if tag_filter is None else list(tag_filter.keys),
@@ -235,12 +231,15 @@ class ScopedAtomicMemory:
         has_more = False
         table = ARTIFACT_HEADS_TABLE
         async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            deferred_decision_audit(context),
             self.application.database.transaction(consistent_snapshot=True) as connection,
         ):
-            await self.application.security.filters(
-                self.scope_id, selected_context, tags=tag_filter, connection=connection
+            await connection.execute(
+                select(ARTIFACT_HEADS_TABLE.c.artifact_id)
+                .where(ARTIFACT_HEADS_TABLE.c.scope_id == self.scope_id)
+                .limit(1)
             )
+            await self.application.security.filters(connection, self.scope_id, context, tags=tag_filter)
             while len(items) <= limit:
                 statement = (
                     select(table.c.artifact_id)
@@ -268,14 +267,7 @@ class ScopedAtomicMemory:
                 if not rows:
                     break
                 for artifact_id in rows:
-                    try:
-                        # Scope-wide reads remain authorized by the same formal policy.
-                        record = await self.application.service.get(
-                            connection, self.scope_id, str(artifact_id), selected_context
-                        )
-                    except AccessDeniedError:
-                        last = str(artifact_id)
-                        continue
+                    record = await self._current_record(connection, str(artifact_id))
                     if kind is not None and record.artifact.content.kind != kind:
                         last = str(artifact_id)
                         continue
@@ -287,6 +279,15 @@ class ScopedAtomicMemory:
                 if has_more or len(rows) < 100:
                     break
         return AtomicMemoryPage(tuple(items), self.application.cursor.encode(bound, last) if has_more else None)
+
+    async def _current_record(self, connection, artifact_id: str) -> AtomicMemoryRecord:
+        """Load current authority after a Scope read boundary has been checked."""
+        application = self.application
+        artifact = await application.artifacts.latest(connection, self.scope_id, AtomicMemory.family, artifact_id)
+        return AtomicMemoryRecord(
+            artifact=cast(AtomicMemory, artifact),
+            state=await application.service.states.get(connection, self.scope_id, artifact_id),
+        )
 
     async def search(
         self,
@@ -310,20 +311,25 @@ class ScopedAtomicMemory:
             raise InvalidBaseAccessRequestError("mode", "must be auto, text, vector, or hybrid")
         if kind is not None:
             AtomicMemoryContent(kind=kind, text="validation")
-        selected_context = self._context(context)
         mode, vector, query_embedding, embedding_calls = await self._resolve_query_embedding(
             query, mode, query_embedding, embedding_timeout_seconds, allow_embedding
         )
         profile = application.index.capabilities.embedding_profile if vector is not None else None
-        # Inference finishes before authorization and retrieval share a read
-        # snapshot; decision audit writes flush only after that snapshot closes.
+        # Inference finishes before the business snapshot opens. Builtin policy
+        # reads share it; configured providers retain their own read boundary.
+        # Decision audit writes flush only after the business snapshot closes.
         async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            deferred_decision_audit(context),
             application.database.transaction(consistent_snapshot=True) as connection,
         ):
-            filters = await application.security.filters(
-                self.scope_id, selected_context, tags=tag_filter, connection=connection
+            # Pin SQLite's business read before a configured provider is consulted.
+            # Its decision repository may use a separate transaction.
+            await connection.execute(
+                select(ARTIFACT_HEADS_TABLE.c.artifact_id)
+                .where(ARTIFACT_HEADS_TABLE.c.scope_id == self.scope_id)
+                .limit(1)
             )
+            filters = await application.security.filters(connection, self.scope_id, context, tags=tag_filter)
             request = AtomicMemorySearchRequest(
                 query,
                 replace(filters, kind=kind),
@@ -359,7 +365,7 @@ class ScopedAtomicMemory:
             limit,
             query_embedding if vector is not None else None,
             embedding_calls,
-            selected_context,
+            context,
         )
         return replace(page, recoverable=recoverable)
 
@@ -372,9 +378,6 @@ class ScopedAtomicMemory:
         """
         if not hits:
             return
-        from powercontext.server.authz import AccessUnavailableError
-        from powercontext.server.authz.repository import ACCESS_OWNERS_TABLE
-
         ids = tuple(hit.artifact_ref.artifact_id for hit in hits)
         application = self.application
         table = application.index.table
@@ -389,8 +392,6 @@ class ScopedAtomicMemory:
             "embedding_input_hash",
             "profile_fingerprint",
             "projection_format",
-            "owner_type",
-            "owner_id",
         )
         projected = {
             row["artifact_id"]: row
@@ -414,24 +415,8 @@ class ScopedAtomicMemory:
                 )
             ).mappings()
         }
-        owners = {
-            row["artifact_id"]: row
-            for row in (
-                await connection.execute(
-                    select(ACCESS_OWNERS_TABLE).where(
-                        ACCESS_OWNERS_TABLE.c.owner_kind == "artifact",
-                        ACCESS_OWNERS_TABLE.c.scope_id == self.scope_id,
-                        ACCESS_OWNERS_TABLE.c.family == "atomic-memory",
-                        ACCESS_OWNERS_TABLE.c.selector_type.is_(None),
-                        ACCESS_OWNERS_TABLE.c.artifact_id.in_(ids),
-                    )
-                )
-            ).mappings()
-        }
         for hit in hits:
             identity = hit.artifact_ref.artifact_id
-            if identity not in owners:
-                raise AccessUnavailableError("artifact_owner_pending")
             projection, head = projected.get(identity), heads.get(identity)
             if (
                 projection is None
@@ -451,7 +436,6 @@ class ScopedAtomicMemory:
         )
         for hit, artifact in zip(hits, artifacts, strict=True):
             projection = projected[hit.artifact_ref.artifact_id]
-            owner = owners[hit.artifact_ref.artifact_id]
             content = artifact.content
             payload_hash = sha256(canonical_json(content.model_dump(mode="json", by_alias=True))).hexdigest()
             input_hash = (
@@ -470,8 +454,6 @@ class ScopedAtomicMemory:
                 or (verify_vectors and projection["embedding_input_hash"] != input_hash)
                 or (verify_vectors and projection["profile_fingerprint"] != application.publisher.profile_fingerprint)
                 or projection["projection_format"] != ATOMIC_MEMORY_PROJECTION_FORMAT
-                or projection["owner_type"] != owner["owner_type"]
-                or projection["owner_id"] != owner["owner_id"]
             ):
                 raise AtomicMemoryIndexError("stale-projection", "Atomic Memory projection content is inconsistent")
 
@@ -509,27 +491,20 @@ class ScopedAtomicMemory:
         self,
         candidates: tuple[AtomicMemorySearchHit, ...],
         *,
-        context: AtomicMemoryExecutionContext | None = None,
+        context: ArtifactSearchExecutionContext | None = None,
     ) -> tuple[AtomicMemorySearchHit, ...]:
-        """Retain only exact, active candidates readable in one current authority snapshot."""
-        from powercontext.server.authz import AccessDeniedError
-
+        """Recheck Scope read and retain exact, active candidates from current authority."""
         if not candidates:
             return ()
         application = self.application
-        selected_context = self._context(context)
         available: list[AtomicMemorySearchHit] = []
         async with (
-            selected_context.access.defer_decision_audit() if selected_context.access is not None else nullcontext(),
+            deferred_decision_audit(context),
             application.database.transaction(consistent_snapshot=True) as connection,
         ):
+            await application.security.authorize(connection, self.scope_id, context, "read")
             for candidate in candidates:
-                try:
-                    current = await application.service.get(
-                        connection, self.scope_id, candidate.hit.artifact_ref.artifact_id, selected_context
-                    )
-                except AccessDeniedError:
-                    continue
+                current = await self._current_record(connection, candidate.hit.artifact_ref.artifact_id)
                 if (
                     current.ref == candidate.hit.artifact_ref
                     and current.state.state_version == candidate.hit.state_version
@@ -578,7 +553,6 @@ class ScopedAtomicMemory:
         self, inputs: tuple[AtomicMemoryRead, ...], content: AtomicMemoryContent, *, lineage=None, context=None
     ):
         application = self.application
-        context = self._context(context)
         async with application.database.transaction() as connection:
             plan = await application.service.inspect_merge(
                 connection,
@@ -595,7 +569,6 @@ class ScopedAtomicMemory:
 
     async def forget(self, artifact_id: str, *, expected_revision: int, expected_state_version: int, context=None):
         application = self.application
-        context = self._context(context)
         async with application.database.transaction() as connection:
             plan = await application.service.inspect_forget(
                 connection,
@@ -611,9 +584,8 @@ class ScopedAtomicMemory:
 
     async def preview_restoration(self, artifact_id: str, *, operation="restore", revision=None, context=None):
         application = self.application
-        context = self._context(context)
         async with (
-            context.access.defer_decision_audit() if context.access is not None else nullcontext(),
+            deferred_decision_audit(context),
             application.database.transaction(consistent_snapshot=True) as connection,
         ):
             plan = await application.service.inspect_restore(
@@ -623,7 +595,6 @@ class ScopedAtomicMemory:
 
     async def restore(self, artifact_id: str, *, operation="restore", revision=None, preview_token=None, context=None):
         application = self.application
-        context = self._context(context)
         for attempt in range(application.restore_retry_budget + 1):
             try:
                 async with application.database.transaction() as connection:

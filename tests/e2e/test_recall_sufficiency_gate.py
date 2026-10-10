@@ -30,9 +30,10 @@ from typing import Any, cast
 
 import pytest
 
+from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
 from powercontext.builtin.artifacts.experience import ExperienceSearchOutcome
-from powercontext.builtin.artifacts.memory import EmbeddingProfile, MemoryEntryInput
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.artifacts.search import AdmissionCounts
 from powercontext.builtin.artifacts.topic_memory import (
     TopicMemoryContent,
@@ -44,7 +45,6 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
     BuiltinConfig,
     PrepareContextRequest,
-    RememberMemoryRequest,
     RuntimeConfig,
     open_builtin_runtime,
 )
@@ -63,6 +63,7 @@ from powercontext.builtin.runtime.recall_sufficiency import (
     REASON_SUFFICIENT,
     RecallSufficiencyGate,
 )
+from powercontext.builtin.runtime.topic_memory_search import TopicMemorySearcher
 from powercontext.builtin.scope import ScopeDraft
 
 # A three-term query is required: the round-zero floor only differs from the round-one floor
@@ -140,14 +141,13 @@ async def _runtime(database: Path, runtime: RuntimeConfig | None = None) -> Asyn
         yield opened
 
 
-def _entry(text: str) -> MemoryEntryInput:
-    return MemoryEntryInput(kind="fact", text=text)
+def _entry(text: str) -> AtomicMemoryContent:
+    return AtomicMemoryContent(kind="fact", text=text)
 
 
 async def _seed(runtime: BuiltinRuntime, scope_id: str, texts: list[str]) -> None:
-    await runtime.memory.for_scope(scope_id).remember(
-        RememberMemoryRequest(entries=tuple(_entry(text) for text in texts))
-    )
+    assert runtime.atomic_memory is not None
+    await runtime.atomic_memory.for_scope(scope_id).create(tuple(_entry(text) for text in texts))
 
 
 async def _seed_topic_memories(runtime: BuiltinRuntime, scope_id: str, count: int) -> None:
@@ -477,7 +477,14 @@ def test_topic_embedding_timeout_is_paid_once_per_prepare(tmp_path, monkeypatch)
         ) as runtime:
             scope_id = await _create_scope(runtime, "topic-timeout")
             await _seed_topic_memories(runtime, scope_id, 1)
-            runtime._topic_memory_embedding_model = embedding
+            assert runtime._topic_memory_search is not None
+            runtime._topic_memory_searcher = TopicMemorySearcher(
+                search=runtime._topic_memory_search,
+                get=runtime._topic_memory_get,
+                browse=runtime._topic_memory_browse,
+                embedding_model=embedding,
+                observer=runtime._topic_memory_search_observer,
+            )
             request = _memory_request(assembly=_TOPIC_MEMORY_ONLY)
             for attempt in (1, 2):
                 build, effort = await _prepare_build(runtime, scope_id, request)

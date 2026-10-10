@@ -18,12 +18,11 @@ import asyncio
 import json
 import sqlite3
 from contextlib import AsyncExitStack
-from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -34,8 +33,8 @@ from pydantic import SecretStr
 from sqlalchemy import insert, text
 from starlette.middleware import Middleware
 
+from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
-    AtomicMemoryMigrationError,
     apply_atomic_memory_migration,
     plan_atomic_memory_migration,
     verify_atomic_memory_migration,
@@ -96,18 +95,23 @@ def _snapshot(tmp_path: Path, table: str) -> list[tuple[object, ...]]:
         return connection.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall()  # noqa: S608
 
 
-async def _seed_legacy(tmp_path: Path, scope_id: str, *, revoked: bool = False, replacement: bool = False):
+async def _seed_legacy(
+    tmp_path: Path, scope_id: str, *, revoked: bool = False, replacement: bool = False, artifact_evidence: bool = False
+):
     resources = tuple(
         ResourceRef.artifact(
             scope_id, family="memory", artifact_id="memory", selector=MemoryEntrySelector(entry_id=entry_id)
         )
         for entry_id in ("legacy-entry-1", "legacy-entry-2")
     )
+    evidence = (
+        [{"family": "experience", "artifact_id": "migration-evidence", "revision": 1}] if artifact_evidence else []
+    )
     versions = []
     for ordinal, resource in enumerate(resources, 1):
         assert resource.selector is not None
         entry_id = resource.selector.entry_id
-        value = {"kind": "fact", "text": f"Legacy fact {ordinal}.", "source_refs": [], "artifact_refs": []}
+        value = {"kind": "fact", "text": f"Legacy fact {ordinal}.", "source_refs": [], "artifact_refs": evidence}
         versions.append({
             **value,
             "entry_id": entry_id,
@@ -139,6 +143,33 @@ async def _seed_legacy(tmp_path: Path, scope_id: str, *, revoked: bool = False, 
         SQLiteProfile.open(_config(tmp_path), tables=()) as profile,
         profile.database.transaction() as connection,
     ):
+        if artifact_evidence:
+            await connection.execute(
+                insert(ARTIFACTS_TABLE).values(
+                    scope_id=scope_id,
+                    family="experience",
+                    artifact_id="migration-evidence",
+                    revision=1,
+                    content=json.dumps({
+                        "situation": "Preserve migration evidence.",
+                        "action": "Verify exact imports.",
+                        "outcome": "Evidence remains readable.",
+                        "lesson": "Keep lineage separate from merge inputs.",
+                    }).encode(),
+                )
+            )
+            await connection.execute(
+                insert(ARTIFACT_HEADS_TABLE).values(
+                    scope_id=scope_id,
+                    family="experience",
+                    artifact_id="migration-evidence",
+                    revision=1,
+                    searchable_text=None,
+                    lifecycle_state="active",
+                    replacement_artifact_id=None,
+                    governance_generation=0,
+                )
+            )
         # Frozen legacy records exercise conversion independently of the current Memory models.
         await connection.execute(
             text(
@@ -154,7 +185,6 @@ async def _seed_legacy(tmp_path: Path, scope_id: str, *, revoked: bool = False, 
                 artifact_id="memory",
                 revision=1,
                 content=json.dumps(content).encode(),
-                memory_citations=None,
             )
         )
         await connection.execute(
@@ -176,7 +206,7 @@ async def _seed_legacy(tmp_path: Path, scope_id: str, *, revoked: bool = False, 
                     "(:scope, 'memory', 'memory', :entry_id, :entry_version_id, 1, NULL, :kind, :text, "
                     ":source_refs, :artifact_refs, :entry_content_hash, 1)"
                 ),
-                {**version, "scope": scope_id, "source_refs": b"[]", "artifact_refs": b"[]"},
+                {**version, "scope": scope_id, "source_refs": b"[]", "artifact_refs": json.dumps(evidence).encode()},
             )
         repository = RelationalAccessRepository(profile.database, connection=connection)
         for resource in resources:
@@ -273,53 +303,14 @@ def test_legacy_grant_replay_and_conflicts_survive_migration(tmp_path: Path, rev
         row for row in receipts if row[2] != "binding.create"
     ]
     with _client(tmp_path) as client:
-        for _ in range(2):
-            response = client.post("/v1/access/bindings/create", json=payload)
-            assert response.status_code == 201, response.text
-            binding = response.json()
-            assert binding["binding_id"] == original.binding_id
-            assert binding["granted_by"]["id"] == ACTOR.id
-            assert binding["state"] == ("revoked" if revoked else "active")
-            assert binding["version"] == (2 if revoked else 1)
-            if revoked:
-                assert binding["revoked_by"]["id"] == ACTOR.id
-                replay_revoke = client.post(
-                    "/v1/access/bindings/revoke",
-                    json={
-                        "binding_id": original.binding_id,
-                        "expected_version": 1,
-                        "idempotency_key": "revoke-legacy",
-                    },
-                )
-                assert replay_revoke.status_code == 200, replay_revoke.text
-                assert replay_revoke.json()["binding_id"] == original.binding_id
-        for field, value in (
-            ("subject", {"type": "user", "id": "different-reader"}),
-            ("reason", "A different grant."),
-            ("expires_at", "2031-01-01T00:00:00+00:00"),
-            (
-                "resource",
-                deepcopy(payload["resource"])
-                | {
-                    "selector": {"type": "memory_entry", "entry_id": "legacy-entry-2"},
-                },
-            ),
-        ):
-            response = client.post("/v1/access/bindings/create", json=payload | {field: value})
-            assert response.status_code == 409, response.text
-            assert response.json()["error"]["code"] == "idempotency-key"
-        atomic_resource = binding["resource"]
-        assert (
-            client.post(
-                "/v1/access/bindings/create",
-                json=payload
-                | {
-                    "resource": atomic_resource,
-                    "idempotency_key": "post-migration-grant",
-                },
-            ).status_code
-            == 201
+        legacy = client.post("/v1/access/bindings/create", json=payload)
+        assert legacy.status_code == 422, legacy.text
+        assert legacy.json()["error"]["code"] == "legacy_memory_operation_unsupported"
+        response = client.post(
+            "/v1/access/bindings/create",
+            json=_atomic_payload(payload) | {"idempotency_key": "post-migration-grant"},
         )
+        assert response.status_code == 201, response.text
 
     async def verify_role_and_current() -> None:
         async with SQLiteProfile.open(_config(tmp_path), tables=()) as profile:
@@ -375,10 +366,8 @@ def test_apply_repairs_receipts_left_by_completed_migration(tmp_path: Path) -> N
     assert _snapshot(tmp_path, "pc_access_audit") == audit
     assert [row for row in _snapshot(tmp_path, "pc_access_idempotency") if row[2] != "binding.create"] == noncreate
     with _client(tmp_path) as client:
-        response = client.post("/v1/access/bindings/create", json=payload)
-        assert response.status_code == 201, response.text
-        assert response.json()["binding_id"] == original.binding_id
-        assert response.json()["state"] == "revoked"
+        legacy = client.post("/v1/access/bindings/create", json=payload)
+        assert legacy.status_code == 422, legacy.text
         replacement = client.post(
             "/v1/access/bindings/replace",
             json={
@@ -420,13 +409,9 @@ def test_migration_rejects_unverifiable_grant_receipts(tmp_path: Path, mutation:
                 (value, original.binding_id),
             )
     before = _snapshot(tmp_path, "pc_access_idempotency")
-    if already_migrated:
-        with pytest.raises(AtomicMemoryMigrationError, match="receipt"):
-            asyncio.run(_apply(tmp_path))
-    else:
-        result = asyncio.run(_apply(tmp_path))
-        assert not result.ready
-        assert any("receipt" in error for error in result.errors), result.errors
+    result = asyncio.run(_apply(tmp_path))
+    assert not result.ready
+    assert any("receipt" in error for error in result.errors), result.errors
     assert _snapshot(tmp_path, "pc_access_idempotency") == before
 
 
@@ -481,7 +466,7 @@ def test_server_startup_keeps_grant_projection_current(tmp_path: Path, entrypoin
 
             response = await client.post(
                 "/v1/access/bindings/create",
-                json=payload
+                json=_atomic_payload(payload)
                 | {
                     "subject": {"type": "user", "id": "startup-reader"},
                     "idempotency_key": "startup-grant",
@@ -517,7 +502,7 @@ def test_server_startup_keeps_grant_projection_current(tmp_path: Path, entrypoin
 
 
 def test_offline_inspection_and_apply_upgrade_released_common_columns(tmp_path: Path) -> None:
-    _prepare(tmp_path)
+    _prepare(tmp_path, artifact_evidence=True)
     database = tmp_path / "migration.db"
     with sqlite3.connect(database) as connection:
         for table, columns in (
@@ -535,6 +520,10 @@ def test_offline_inspection_and_apply_upgrade_released_common_columns(tmp_path: 
             connection.execute(f"CREATE TABLE released AS SELECT {columns} FROM {table}")  # noqa: S608
             connection.execute(f"DROP TABLE {table}")
             connection.execute(f"ALTER TABLE released RENAME TO {table}")
+            if table == "pc_artifact_heads":
+                connection.execute(
+                    "CREATE UNIQUE INDEX released_head_identity ON pc_artifact_heads(scope_id, family, artifact_id)"
+                )
         connection.execute("PRAGMA journal_mode = DELETE")
     original = database.read_bytes()
 
@@ -607,9 +596,15 @@ def test_migration_replay_preserves_evolved_head_and_imported_history(tmp_path: 
 
 
 def test_verification_rejects_imported_evidence_marked_as_merge_input(tmp_path: Path) -> None:
-    _prepare(tmp_path)
+    _prepare(tmp_path, artifact_evidence=True)
     assert asyncio.run(_apply(tmp_path)).ready
     with sqlite3.connect(tmp_path / "migration.db") as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM pc_artifact_lineage_artifacts WHERE family = 'atomic-memory' AND is_merge_input = 0"
+            ).fetchone()[0]
+            == 2
+        )
         connection.execute("UPDATE pc_artifact_lineage_artifacts SET is_merge_input = 1 WHERE family = 'atomic-memory'")
 
     async def scenario() -> None:
@@ -622,3 +617,17 @@ def test_verification_rejects_imported_evidence_marked_as_merge_input(tmp_path: 
             assert any("imported exact evidence differs" in error for error in report.errors), report.errors
 
     asyncio.run(scenario())
+
+
+def _atomic_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    resource = payload["resource"]
+    artifact_id = legacy_entry_artifact_id(
+        resource["scope_id"], resource["identity"]["artifact_id"], resource["selector"]["entry_id"]
+    )
+    return payload | {
+        "resource": {
+            "type": "artifact",
+            "scope_id": resource["scope_id"],
+            "identity": {"family": "atomic-memory", "artifact_id": artifact_id},
+        }
+    }

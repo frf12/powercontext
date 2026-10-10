@@ -78,7 +78,6 @@ class AtomicMemoryProjections(Protocol):
         scope_id: str,
         record: AtomicMemoryRecord,
         prepared: PreparedAtomicMemoryProjection,
-        execution_context: Any,
     ) -> None: ...
     async def remove(self, connection: AsyncConnection, scope_id: str, artifact_id: str) -> None: ...
 
@@ -237,7 +236,7 @@ class AtomicMemoryMergeAdapter:
             content = content.without_creation()
         elif content.creation is not None:
             raise AtomicMemoryRelationError("creation metadata is constructed only by the merge service")  # noqa: TRY003
-        if lineage.memory_citations or lineage.publication_source is not None:
+        if lineage.publication_source is not None:
             raise AtomicMemoryRelationError("Atomic Memory accepts direct Sources and exact in-Scope Artifacts")  # noqa: TRY003
         if historical:
             return AtomicMemoryDraft(content=content, sources=lineage.sources, artifacts=lineage.artifacts)
@@ -270,7 +269,7 @@ class AtomicMemoryMergeAdapter:
         prepared: PreparedAtomicMemoryProjection,
         execution_context: Any,
     ) -> None:
-        await self.projections.publish(connection, scope_id, _atomic_record(record), prepared, execution_context)
+        await self.projections.publish(connection, scope_id, _atomic_record(record), prepared)
 
     async def remove(self, connection: AsyncConnection, scope_id: str, artifact_id: str) -> None:
         await self.projections.remove(connection, scope_id, artifact_id)
