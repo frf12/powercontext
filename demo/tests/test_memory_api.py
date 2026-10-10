@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import httpx
+import pytest
 from powercontext.http import RememberMemoryRequest, SearchMemoryRequest
 
 from demo.app import create_demo_app, ensure_scope, shutdown, startup
@@ -98,19 +100,35 @@ def test_entries_retire_revise_roundtrip(tmp_path: Path) -> None:
                     SearchMemoryRequest(scope_id=scope, query="喜欢 咖啡", limit=5)
                 )
                 assert not any("热拿铁" in hit.text for hit in hits.hits)
+                # 遗忘后面板列表为空 (默认不包含 inactive 条目)
+                assert (await client.get("/api/memory/entries")).json()["entries"] == []
         finally:
             await shutdown(app)
 
     asyncio.run(body())
 
 
-def test_memory_endpoints_require_session(tmp_path: Path) -> None:
+# POST 路由带最小合法请求体: FastAPI 先做 body 校验, 401 必须来自会话门而不是 422
+_MIN_CITATION = {"entry_id": "e", "entry_version_id": "v", "artifact_id": "a", "revision": 1}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/api/memory/entries", None),
+        ("POST", "/api/memory/retire", _MIN_CITATION),
+        ("POST", "/api/memory/revise", {**_MIN_CITATION, "kind": "preference", "text": "x"}),
+    ],
+)
+def test_memory_endpoints_require_session(
+    tmp_path: Path, method: str, path: str, payload: dict[str, Any] | None
+) -> None:
     async def body() -> None:
         app = create_demo_app(_cfg(tmp_path))
         await startup(app)
         try:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
-                assert (await client.get("/api/memory/entries")).status_code == 401
+                assert (await client.request(method, path, json=payload)).status_code == 401
         finally:
             await shutdown(app)
 

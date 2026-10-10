@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from powercontext.client import PowerContextClient
+from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.http import (
     ArtifactReference,
     CreateScopeRequest,
@@ -131,19 +131,26 @@ def _add_memory_routes(app: FastAPI) -> None:
     @app.post("/api/memory/retire")
     async def memory_retire(body: RetireBody, request: Request) -> dict[str, bool]:
         scope = await require_session(request)
-        await app.state.client.retire_memory_entry(
-            RetireMemoryEntryRequest(scope_id=scope, citation=_citation(body), reason="demo 面板遗忘")
-        )
+        try:
+            await app.state.client.retire_memory_entry(
+                RetireMemoryEntryRequest(scope_id=scope, citation=_citation(body), reason="demo 面板遗忘")
+            )
+        except ServerResponseError as exc:
+            # 引用已过期等上游失败原样透传状态码, 前端读 {"detail": ...} 提示用户
+            raise HTTPException(status_code=exc.status_code, detail=exc.server_message or "记忆服务错误") from exc
         return {"ok": True}
 
     @app.post("/api/memory/revise")
     async def memory_revise(body: ReviseBody, request: Request) -> dict[str, bool]:
         scope = await require_session(request)
-        await app.state.client.revise_memory_entry(
-            ReviseMemoryEntryRequest(
-                scope_id=scope, citation=_citation(body), kind=body.kind, text=body.text, reason="demo 面板修改"
+        try:
+            await app.state.client.revise_memory_entry(
+                ReviseMemoryEntryRequest(
+                    scope_id=scope, citation=_citation(body), kind=body.kind, text=body.text, reason="demo 面板修改"
+                )
             )
-        )
+        except ServerResponseError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.server_message or "记忆服务错误") from exc
         return {"ok": True}
 
 
