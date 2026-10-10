@@ -8,9 +8,9 @@
 ## 运行
 
 ```bash
-uv sync --extra server --extra builtin
+uv sync --frozen --extra server --extra builtin
 cp demo/.env.example demo/.env   # 填口令与模型 key
-uv run python -m demo            # 0.0.0.0:8080，数据落 demo/data/
+uv run --frozen python -m demo   # 0.0.0.0:8080，数据落 demo/data/
 ```
 
 打开 `http://<服务器>:8080`。SQLite 落盘，重启服务记忆不丢；
@@ -27,6 +27,7 @@ uv run python -m demo            # 0.0.0.0:8080，数据落 demo/data/
 
 ## 排障
 
+- 若 `uv sync` 报 powercontext-langchain/powercontext 解析冲突（uv 版本相关的已知问题），加 `--frozen` 使用仓库锁文件即可。
 - 页面打不开：确认 `DEMO_PORT` 未被占用，服务器防火墙/安全组放行该端口。
 - 聊天报「模型调用失败」：检查 `DEMO_LLM_*` 三项与端点连通性（key、base_url、模型名）。
 - 「我的记忆」一直为空：自动提取需要 `POWERCONTEXT_SERVER_INFERENCE_GENERATION_*`
