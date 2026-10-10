@@ -70,10 +70,10 @@ def test_enter_then_session_and_scope() -> None:
     async def body(client: httpx.AsyncClient, app: Any) -> None:
         resp = await _enter(client, "open-sesame", "张三")
         assert resp.status_code == 200
-        assert resp.json()["scope_id"] == "visitor-zhang-san"
+        assert resp.json()["scope_id"] == "visitor-张三"
         session = await client.get("/api/session")
         assert session.status_code == 200
-        assert session.json() == {"nickname": "张三", "scope_id": "visitor-zhang-san"}
+        assert session.json() == {"nickname": "张三", "scope_id": "visitor-张三"}
 
     run_with_app(body)
 

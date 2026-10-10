@@ -25,17 +25,15 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from pypinyin import lazy_pinyin
 
 from .config import DemoConfig
 
-_NICK_CLEAN = re.compile(r"[^0-9a-z]+")
+_NICK_CLEAN = re.compile(r"[^0-9a-zA-Z一-鿿]+")
 
 
 def scope_for_nickname(nickname: str) -> str:
-    """昵称 -> 稳定 scope_id：汉字转拼音、小写、非法字符折叠为 '-'。"""
-    parts = lazy_pinyin(nickname.strip().lower())
-    cleaned = _NICK_CLEAN.sub("-", "-".join(parts)).strip("-")
+    """昵称 -> 稳定 scope_id：小写、非法字符折叠为 '-'、保留中文。"""
+    cleaned = _NICK_CLEAN.sub("-", nickname.strip().lower()).strip("-")
     if not cleaned:
         raise ValueError("nickname is empty after normalization")
     return f"visitor-{cleaned}"
