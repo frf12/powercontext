@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import urllib.parse
 import uuid
@@ -23,11 +24,12 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from powercontext.client import PowerContextClient
 from powercontext.http import CreateScopeRequest
 from pydantic import BaseModel, Field
 
+from .agent import run_chat_turn
 from .config import DemoConfig
 from .server import EmbeddedPowerContext
 
@@ -60,6 +62,16 @@ async def ensure_scope(client: PowerContextClient, nickname: str) -> str:
 class EnterRequest(BaseModel):
     passphrase: str
     nickname: str = Field(min_length=1, max_length=32)
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+    memory_on: bool = True
 
 
 def create_demo_app(cfg: DemoConfig) -> FastAPI:
@@ -95,6 +107,24 @@ def create_demo_app(cfg: DemoConfig) -> FastAPI:
         scope = await require_session(request)
         nickname = urllib.parse.unquote(request.cookies.get("demo_nick", ""))
         return {"nickname": nickname, "scope_id": scope}
+
+    @app.post("/api/chat")
+    async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
+        # 鉴权在开流之前完成, 会话无效时直接 401 而不是半路断流
+        scope = await require_session(request)
+        messages = [{"role": m.role, "content": m.content} for m in body.messages]
+
+        async def event_stream():
+            async for event in run_chat_turn(
+                app.state.client, app.state.http, app.state.cfg, scope, messages, body.memory_on
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     return app
 

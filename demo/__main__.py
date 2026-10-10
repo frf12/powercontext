@@ -25,7 +25,14 @@ from demo.config import load_config
 def main() -> None:
     cfg = load_config()
     app = create_demo_app(cfg)
-    uvicorn.run(app, host="0.0.0.0", port=cfg.port, log_level="info")  # noqa: S104
+    # SSE 长连接会拖住默认的无限优雅退出, 限时 5 秒保证 Ctrl-C 能确定性走完 lifespan 收尾
+    uvicorn.run(
+        app,
+        host="0.0.0.0",  # noqa: S104
+        port=cfg.port,
+        log_level="info",
+        timeout_graceful_shutdown=5,
+    )
 
 
 if __name__ == "__main__":
