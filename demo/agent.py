@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -35,6 +36,15 @@ from .config import DemoConfig
 
 # 持有在途写入任务的引用, 防止事件循环只握弱引用时任务被垃圾回收
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _log_background_failure(task: asyncio.Task) -> None:
+    # 访客在 done 后刷新页面会取消 SSE 生成器, shield 里的写入任务若失败,
+    # 异常无人认领, GC 时 asyncio 会打 "Task exception was never retrieved";
+    # 这里在任务完成时取走异常并留下一条干净日志 (SSE 已断, 无法再报给前端)
+    if not task.cancelled() and (exc := task.exception()):
+        logging.getLogger(__name__).warning("后台记忆写入失败: %s", exc)
+
 
 PERSONA = (
     "你是「小忆」，一个温暖健谈的中文 AI 助手，正在一个线下的记忆能力体验活动中陪用户聊天。"
@@ -120,6 +130,7 @@ async def run_chat_turn(
         # 写入放进独立任务并 shield: 访客在 done 后立刻刷新页面会取消本生成器,
         # 但这轮对话的记忆不能丢, 让写入在后台继续跑完
         write_task = asyncio.create_task(_capture_and_flush(client, scope_id, last_user, "".join(reply)))
+        write_task.add_done_callback(_log_background_failure)
         _BACKGROUND_TASKS.add(write_task)
         write_task.add_done_callback(_BACKGROUND_TASKS.discard)
         try:
