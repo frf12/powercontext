@@ -52,7 +52,7 @@ from powercontext.builtin.review import (
 )
 from powercontext.builtin.review.generation import SkillGenerationOrigin
 from powercontext.builtin.sources import ExternalSkillImportMode
-from powercontext.builtin.tags import MemoryEntryTagTarget, TagFilter
+from powercontext.builtin.tags import TagFilter
 from powercontext.sources import ConnectorBinding, SourceObservation, SourceRef
 
 PreparedContextSchema: TypeAlias = Literal["powercontext.prepared-context.v1"]
@@ -330,19 +330,6 @@ class MemoryEntriesPage(BaseModel):
 
     memory_ref: ArtifactRef | None
     entries: tuple[MemoryEntryRecord, ...] = ()
-
-
-class GetMemoryEntryRequest(BaseModel):
-    """Read either an exact legacy citation or its mapped current logical target."""
-
-    citation: MemoryCitation | None = None
-    target: MemoryEntryTagTarget | None = None
-
-    @model_validator(mode="after")
-    def exclusive_address(self) -> GetMemoryEntryRequest:
-        if (self.citation is None) == (self.target is None):
-            raise ValueError("exactly one of citation and target is required")  # noqa: TRY003
-        return self
 
 
 class ReviseMemoryEntryRequest(BaseModel):

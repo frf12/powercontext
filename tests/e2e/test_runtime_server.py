@@ -1072,6 +1072,48 @@ def test_runtime_server_accepts_normalized_memory_byte_limit(tmp_path: Path, tex
         assert listed.json()["entries"] == remembered.json()["records"]
 
 
+def test_runtime_server_rejects_legacy_memory_tag_targets(tmp_path: Path) -> None:
+    app = create_server_app(settings=_server_settings(tmp_path / "runtime.db"))
+
+    with TestClient(app) as transport:
+        scope = transport.get("/v1/scopes/default")
+        scope.raise_for_status()
+        scope_id = scope.json()["scope_id"]
+        remembered = transport.post(
+            "/v1/memory/remember", json={"scope_id": scope_id, "kind": "fact", "text": "Tagged migrations."}
+        )
+        remembered.raise_for_status()
+        artifact_id = remembered.json()["records"][0]["artifact"]["artifact_id"]
+        empty = transport.get(f"/v1/scopes/{scope_id}/artifacts/atomic-memory/{artifact_id}/tags")
+        empty.raise_for_status()
+        tagged = transport.put(
+            f"/v1/scopes/{scope_id}/artifacts/atomic-memory/{artifact_id}/tags",
+            json={"tags": ["project"]},
+            headers={"If-Match": empty.headers["ETag"]},
+        )
+        tagged.raise_for_status()
+        collection = f"/v1/scopes/{scope_id}/artifacts/memory/legacy-collection/tags"
+        responses = [
+            transport.get(collection),
+            transport.put(collection, json={"tags": ["project"]}, headers={"If-Match": '"tags:legacy"'}),
+            transport.post(
+                f"/v1/scopes/{scope_id}/artifact-tags/query", json={"tags": ["project"], "families": ["memory"]}
+            ),
+            transport.post(
+                f"/v1/scopes/{scope_id}/artifact-tags/query",
+                json={"tags": ["project"], "target_types": ["memory_entry"]},
+            ),
+        ]
+        for response in responses:
+            assert response.status_code == 422
+            assert response.json()["error"]["code"] == "legacy_memory_operation_unsupported"
+        current = transport.post(f"/v1/scopes/{scope_id}/artifact-tags/query", json={"tags": ["project"]})
+        current.raise_for_status()
+        assert [item["target"] for item in current.json()["items"]] == [
+            {"type": "artifact", "family": "atomic-memory", "artifact_id": artifact_id}
+        ]
+
+
 def test_runtime_server_keeps_unstructured_memory_errors_private(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

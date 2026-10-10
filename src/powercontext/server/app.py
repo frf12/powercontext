@@ -631,6 +631,7 @@ from powercontext.http._generated.models import (
     ReplaceArtifactTagsRequest,
     TaggableArtifactFamily,
     TagMatch,
+    TagTargetType,
 )
 from powercontext.http._generated.models import (
     ShareUnit as TransportShareUnit,
@@ -2549,6 +2550,7 @@ async def get_artifact_tags(
     application: Annotated[ServerApplication, Depends(_require_application)],
     if_none_match: Annotated[str | None, Header(alias="If-None-Match", min_length=1)] = None,
 ) -> ArtifactTagSet | Response:
+    _reject_legacy_memory_tags(family)
     target = ArtifactTagTarget(family=family.value, artifact_id=artifact_id)
     result = await application.records.for_scope(scope_id).get_tags(target)
     return _tag_response(result, response, if_none_match=if_none_match)
@@ -2564,6 +2566,7 @@ async def replace_artifact_tags(
     application: Annotated[ServerApplication, Depends(_require_application)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> ArtifactTagSet:
+    _reject_legacy_memory_tags(family)
     target = ArtifactTagTarget(family=family.value, artifact_id=artifact_id)
     if family.value == "atomic-memory":
         await _authorize_atomic_tag_write(http_request, scope_id, artifact_id, "replace_artifact_tags")
@@ -2572,11 +2575,16 @@ async def replace_artifact_tags(
         tuple(tag.root for tag in request.tags),
         expected_etag=_require_artifact_etag(if_match),
         execution_context=_atomic_execution_context(http_request, "replace_artifact_tags")
-        if target.family in {"memory", "atomic-memory"}
+        if target.family == "atomic-memory"
         else None,
     )
     response.headers["ETag"] = result.etag
     return ArtifactTagSet.model_validate(result.model_dump(mode="json"))
+
+
+def _reject_legacy_memory_tags(family: TaggableArtifactFamily) -> None:
+    if family is TaggableArtifactFamily.MEMORY:
+        raise BaseOperationNotSupportedError("artifact_family", "memory", "collection tags")
 
 
 async def get_memory_entry_tags(
@@ -2635,6 +2643,10 @@ async def query_artifact_tags(
         if principal is not None
         else sha256(http_request.headers.get("authorization", "anonymous").encode()).hexdigest()
     )
+    if TaggableArtifactFamily.MEMORY in (request.families or ()) or TagTargetType.MEMORY_ENTRY in (
+        request.target_types or ()
+    ):
+        raise BaseOperationNotSupportedError("artifact_family", "memory", "tag query")
     query = TagQuery.model_validate_json(request.model_dump_json(exclude_none=True))
     result = await application.records.for_scope(scope_id).query_tags(query, caller=caller)
     return ArtifactTagPage.model_validate(result.model_dump(mode="json"))
