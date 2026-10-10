@@ -7,7 +7,7 @@ title: 迁移到 Atomic Memory
 通过现有配置连接数据库，不启动 Runtime 或 Worker。迁移完成后，旧 Memory 集合只保存在离线归档表
 `pc_memory_artifact_archive` 中，不再出现在公共 Artifact 表、检索或任何在线读取路径里。
 普通服务启动只做轻量残留检查：公共表中没有旧集合、没有指向旧集合的 lineage，旧 entry 表到公共表的
-外键已解除。它不读取归档表或旧 entry 表；逐条完整核验由 `verify` 执行。
+外键已解除，公共表也不再有旧的 `memory_citations` 列。它不读取归档表或旧 entry 表；逐条完整核验由 `verify` 执行。
 
 ## 执行顺序
 
@@ -73,8 +73,7 @@ candidate，也会阻断，必须先按原契约明确处置。
 
 
 旧 MemoryWriteGate 依赖集合写入契约，不能注入 Atomic Runtime；开启
-`POWERCONTEXT_SERVER_RUNTIME_MEMORY_WRITE_GATE_ENABLED` 或注入旧 gate 会明确拒绝构造。
-低层旧 MemoryService 可独立使用该 gate，但它不是新版服务的 Atomic 写入口。容量与 compact 旧配置
+`POWERCONTEXT_SERVER_RUNTIME_MEMORY_WRITE_GATE_ENABLED` 或注入旧 gate 会明确拒绝构造。容量与 compact 旧配置
 不约束 Atomic Memory；配置边界见[配置选项](configuration.md#atomic-memory)，接口和 SDK 适配见
 [使用 Atomic Memory](../workflows/atomic-memory.md#旧-memory-api-兼容)。
 
@@ -94,14 +93,22 @@ apply 按以下顺序执行，每一步都可以在中断后重复：
 4. 指向整个旧集合的关系没有单条 Atomic 对应。迁移先把它的原位置和原值记入被引用集合 revision 的
    归档 `incoming_references`，再从在线 lineage、Candidate `artifact_refs`、Task Outcome
    `produced_artifacts`，以及 Handoff 正文和 Work claim/check 中以 `kind: artifact` 引用整个集合的
-   citation 中移除。Handoff 回执的 `unavailable_evidence` 记录当时不可用的证据，不表达支持关系，
-   其中的集合引用保持原值。
+   citation 中移除。Handoff 回执的 `unavailable_evidence` 记录当时不可用的证据，不表达支持关系：
+   其中的集合引用按原值移入回执的 `historical_data`（格式 `powercontext.handoff-receipt-history.v1`），
+   只作为历史展示，不再解析。
 5. 已结束的 Dream 运行改为历史格式：原请求、输入清单和请求摘要移入 `historical_data`，
-   不再作为可执行请求读取；同一幂等键的重放仍按原请求摘要判定。
+   不再作为可执行请求读取。未结束的运行从请求和输入清单中删除空的旧 entry 引用字段。请求摘要按当前请求
+   格式重算，用同一幂等键重试相同请求仍会重放原运行。引用过旧 entry 的请求无法再次提交，其运行保留原摘要，
+   复用该幂等键会冲突。
 6. 解除保留的旧 entry 表到公共 Artifact 表的外键，然后在旧集合仍在公共表时完整验收：导入历史、
    当前投影、授权转换以及全部引用转换都必须通过，否则不删除任何集合。
 7. 先删除所有旧集合自身的 lineage，再删除公共表中的旧集合、集合 head、标签和 Owner，集合之间的
-   相互引用不会因标识排序阻断清理。旧 entry 表保留但不再使用。最后检查公共表中没有残留。
+   相互引用不会因标识排序阻断清理。旧 entry 表保留但不再使用。
+8. 从 `pc_artifacts` 和 `pc_artifact_candidate_versions` 删除已清空的 `memory_citations` 列。
+   最后检查公共表中没有残留。
+
+如果启动时报告公共表仍有 `memory_citations` 列，说明该数据库的引用转换尚未完成，例如中断前的 apply
+已经移除了全部集合。保持停服，用相同配置再次执行 apply，它会补完回执、Dream 和删列步骤，可以重复执行。
 
 以下情况在改写任何数据前阻断，并在 plan 中列出：未结束的 Dream 运行固定的输入会被本次迁移改变，
 包括旧 entry citation、旧集合，以及正文或 lineage 将被改写的 Artifact 和 Work Source；
@@ -155,8 +162,9 @@ Source Cursor、CAS generation、高水位、pending/flush 请求、已接受任
 `migrated_grant_receipts` 报告本次修复数量，授权身份、撤销状态和审计记录保持不变。
 
 旧集合只保存在归档表中，归档表没有在线读取接口。此任务不提供数据库降级；回退数据库应恢复停服升级前的
-完整备份。归档、引用转换和移除旧对象由本命令自己执行，不经过 RFC 1771 的迁移执行器：该执行器目前只
-覆盖四张 Artifact 表的结构，不能运行数据转换任务。Atomic Memory 内容恢复接口不能替代数据库回退。
+完整备份。归档、引用转换、移除旧对象和删除旧列由本命令自己执行，不经过 RFC 1771 的迁移执行器：该执行器
+目前只覆盖四张 Artifact 表的结构，不能运行数据转换任务。删列只有在引用转换验收通过后才成立，因此没有登记为
+RFC 1771 的结构版本。Atomic Memory 内容恢复接口不能替代数据库回退。
 
 ## 重建当前检索投影
 

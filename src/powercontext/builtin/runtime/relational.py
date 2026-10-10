@@ -35,10 +35,8 @@ from referencing import Registry
 from referencing.exceptions import Unresolvable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
-from typing_extensions import override
 
-from powercontext._logging import log_safely
-from powercontext.artifacts import Artifact, ArtifactRef, MemoryCitation
+from powercontext.artifacts import ArtifactRef
 from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemory
 from powercontext.builtin.artifacts.atomic_memory.extraction import AtomicMemoryGenerationPipeline
@@ -65,15 +63,8 @@ from powercontext.builtin.artifacts.handoff.generation_metadata import HandoffGe
 from powercontext.builtin.artifacts.memory import (
     CandidatePipeline,
     EmbeddingProfile,
-    Memory,
-    MemoryCapacityBudget,
-    MemoryCompactionPolicy,
     MemoryQueryEmbedding,
     MemoryReranker,
-    MemoryService,
-    MemoryWriteGate,
-    MemoryWritePlan,
-    MemoryWriteVerdict,
 )
 from powercontext.builtin.artifacts.profile import Profile
 from powercontext.builtin.artifacts.profile.management import ProfileManagementWriter
@@ -137,7 +128,7 @@ from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.atomic_memory_index import AtomicMemoryIndex
 from powercontext.builtin.persistence.candidates import CandidateRepository
 from powercontext.builtin.persistence.connectors import ConnectorCheckpointRepository
-from powercontext.builtin.persistence.cursors import SourceCursorRepository, StoredSourceCursor
+from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import RepositoryNotFoundError, StoredPayloadConflictError
 from powercontext.builtin.persistence.experience_index import ExperienceIndex, NoExperienceIndex
@@ -147,7 +138,6 @@ from powercontext.builtin.persistence.family_management import (
     ExperienceManagementWriter,
     FamilyManagementWriterRegistry,
     HandoffManagementWriter,
-    MemoryManagementWriter,
     PromptManagementWriter,
     SkillManagementWriter,
 )
@@ -156,9 +146,6 @@ from powercontext.builtin.persistence.handoff import (
     RelationalHandoffBackend,
     RelationalHandoffEvidenceResolver,
 )
-from powercontext.builtin.persistence.memory import RelationalMemoryBackend
-from powercontext.builtin.persistence.memory_index import MemoryIndex, NoMemoryIndex
-from powercontext.builtin.persistence.memory_windows import MemorySourceWindowRepository
 from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.records import RelationalRecordService
@@ -255,7 +242,6 @@ from powercontext.sources import (
     SourceDefinitionManifest,
     SourceDefinitionRegistry,
     SourceObservation,
-    SourceProjectionKey,
     SourceRef,
     TextEvidence,
 )
@@ -268,18 +254,11 @@ if TYPE_CHECKING:
     from powercontext.builtin.runtime.processing_execution import ScopeInvocation
 
 
-MemorySnapshotAuthorizer = Callable[[Memory | None], Awaitable[None]]
-MemoryCommitHook = Callable[[AsyncConnection, Memory | None, Memory | None], Awaitable[None]]
 ExperienceCommitHook = Callable[[AsyncConnection, tuple[ArtifactCandidate[ExperienceContent], ...]], Awaitable[None]]
 
 
 def _artifact_identity(ref: ArtifactRef) -> tuple[str, str, int]:
     return ref.family, ref.artifact_id, ref.revision
-
-
-_MEMORY_COMMIT_STAGE = "memory.commit"
-_MEMORY_COMMIT_MEMORY_CHANGED = "powercontext.memory.commit.memory_changed"
-_MEMORY_COMMIT_ENTRY_VERSION_COUNT = "powercontext.memory.commit.entry_version_count"
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,38 +284,6 @@ class _Repositories:
     topic_memories: TopicMemoryRepository
 
 
-class _FrozenRuntimeMemoryBackend(RelationalMemoryBackend):
-    @override
-    async def _commit(self, connection, value):
-        from powercontext.builtin.records import BaseOperationNotSupportedError
-
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "frozen collection write")
-
-
-class _FrozenRuntimeMemoryService(MemoryService):
-    """Allow exact immutable legacy reads while refusing current collection operations."""
-
-    async def _unsupported(self, *args, **kwargs):
-        from powercontext.builtin.records import BaseOperationNotSupportedError
-
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "frozen collection operation")
-
-    remember = _unsupported
-    plan_remember = _unsupported
-    apply = _unsupported
-    forget = _unsupported
-    reactivate = _unsupported
-    organize = _unsupported
-    compact = _unsupported
-    rebuild_projections = _unsupported
-    head = _unsupported
-    head_entries = _unsupported
-    latest = _unsupported
-    capacity = _unsupported
-    changes = _unsupported
-    search = _unsupported
-
-
 @dataclass(frozen=True, slots=True)
 class _ScopedServices:
     """Centralize relational service wiring for one scope."""
@@ -344,7 +291,6 @@ class _ScopedServices:
     database: AsyncDatabase
     scope_id: str
     repositories: _Repositories
-    index: MemoryIndex
     experience_index: ExperienceIndex
     candidate_pipeline: CandidatePipeline | AtomicMemoryGenerationPipeline | None
     experience_pipeline: ExperienceCandidatePipeline | None
@@ -355,13 +301,8 @@ class _ScopedServices:
     memory_reranker: MemoryReranker | None
     memory_rerank_candidate_limit: int
     decision_model: DecisionModel | None
-    memory_write_gate: MemoryWriteGate | None
-    memory_capacity_budget: MemoryCapacityBudget
-    memory_compaction: MemoryCompactionPolicy
-    memory_max_history_revisions: int
     id_factory: IdFactory
     handoff_artifact_id: str
-    memory_artifact_id: str
     source_lock: asyncio.Lock
     token_estimator: TokenEstimator | None
     source_registry: SourceDefinitionRegistry
@@ -388,56 +329,11 @@ class _ScopedServices:
         )
         return backend, SourceCatalog(backend=backend, registry=self.source_registry)
 
-    def memory(
-        self,
-        source_resolver: SourceCatalog,
-        connection: AsyncConnection | None = None,
-    ) -> MemoryService:
-        return _FrozenRuntimeMemoryService(
-            prompt_context=ScopedPrompts(self.prompts, self.scope_id),
-            backend=_FrozenRuntimeMemoryBackend(
-                database=self.database,
-                scope_id=self.scope_id,
-                artifacts=self.repositories.artifacts,
-                index=self.index,
-                connection=connection,
-            ),
-            candidate_pipeline=None
-            if isinstance(self.candidate_pipeline, AtomicMemoryGenerationPipeline)
-            else self.candidate_pipeline,
-            embedding_model=self.embedding_model,
-            reranker=self.memory_reranker,
-            rerank_candidate_limit=self.memory_rerank_candidate_limit,
-            capacity_budget=self.memory_capacity_budget,
-            compaction=self.memory_compaction,
-            max_history_revisions=self.memory_max_history_revisions,
-            source_resolver=_RelationalMemorySourceResolver(
-                database=self.database,
-                scope_id=self.scope_id,
-                catalog=source_resolver,
-                access=self.generation_sources(),
-                connection=connection,
-            ),
-            artifact_resolver=_RelationalArtifactResolver(
-                database=self.database,
-                scope_id=self.scope_id,
-                repository=self.repositories.artifacts,
-                connection=connection,
-            ),
-            id_factory=self.id_factory,
-            write_gate=self.memory_write_gate,
-        )
-
     def evidence(self, authorize: EvidenceAuthorizer | None = None) -> EvidenceResolver:
-        async def read_memory(connection: AsyncConnection, citation: MemoryCitation):
-            _, catalog = self.sources(connection)
-            return await self.memory(catalog, connection).validate_citation(citation)
-
         return EvidenceResolver(
             scope_id=self.scope_id,
             sources=self.repositories.sources,
             artifacts=self.repositories.artifacts,
-            memory_reader=read_memory,
             authorize=authorize,
             source_projector=lambda source: json.dumps(
                 self.source_registry.project(source, TEXT_EVIDENCE_PROJECTION_KEY),
@@ -485,21 +381,14 @@ class _ScopedServices:
             skill_generator=self.skill_generator,
         )
 
-    def handoff(
-        self,
-        source_resolver: SourceCatalog,
-    ) -> HandoffService:
-        memory = self.memory(source_resolver)
-
+    def handoff(self) -> HandoffService:
         def evidence_resolver(scope_id: str) -> RelationalHandoffEvidenceResolver:
             services = self if scope_id == self.scope_id else replace(self, scope_id=scope_id)
-            _, catalog = services.sources()
             return RelationalHandoffEvidenceResolver(
                 database=services.database,
                 scope_id=scope_id,
                 sources=services.generation_sources(),
                 artifacts=services.repositories.artifacts,
-                memory=services.memory(catalog),
             )
 
         return HandoffService(
@@ -517,7 +406,6 @@ class _ScopedServices:
                 scope_id=self.scope_id,
                 sources=self.generation_sources(),
                 artifacts=self.repositories.artifacts,
-                memory=memory,
             ),
             evidence_resolver_for_scope=evidence_resolver,
             generation_pipeline=self.handoff_pipeline,
@@ -541,17 +429,11 @@ class _ScopedServices:
         if self.token_estimator is None:
             return None
 
-        def memory_service(scope_id: str, connection: AsyncConnection) -> MemoryService:
-            services = self if scope_id == self.scope_id else replace(self, scope_id=scope_id)
-            _, source_catalog = services.sources(connection)
-            return services.memory(source_catalog, connection)
-
         return RelationalRecallTokenEstimator(
             database=self.database,
             scope_id=self.scope_id,
             sources=self.repositories.sources,
             artifacts=self.repositories.artifacts,
-            memory_service=memory_service,
             estimator=self.token_estimator,
         )
 
@@ -572,7 +454,6 @@ class RelationalContexts:
         self,
         *,
         database: AsyncDatabase,
-        index: MemoryIndex | None = None,
         topic_memory_index: TopicMemoryIndex | None = None,
         atomic_memory_index: AtomicMemoryIndex | None = None,
         atomic_memory_preview_signing_secret: bytes | None = None,
@@ -591,14 +472,9 @@ class RelationalContexts:
         token_estimator: TokenEstimator | None = None,
         memory_reranker: MemoryReranker | None = None,
         decision_model: DecisionModel | None = None,
-        memory_write_gate: MemoryWriteGate | None = None,
         memory_rerank_candidate_limit: int = 30,
-        memory_capacity_budget: MemoryCapacityBudget | None = None,
-        memory_compaction: MemoryCompactionPolicy | None = None,
-        memory_max_history_revisions: int = 100,
         id_factory: IdFactory | None = None,
         handoff_artifact_id: str = "handoff",
-        memory_artifact_id: str = "memory",
         source_registry: SourceDefinitionRegistry | None = None,
         cursor_secret: bytes | None = None,
         tracing: RuntimeTracing | None = None,
@@ -611,19 +487,14 @@ class RelationalContexts:
         model_usage_write_timeout_seconds: float = 1.0,
         model_usage_flush_timeout_seconds: float = 0.5,
     ) -> None:
-        if memory_write_gate is not None:
-            from powercontext.builtin.runtime.composition import BuiltinConfigurationError
-
-            raise BuiltinConfigurationError("legacy-memory-write-gate")
         self.database = database
         self.scopes = ScopeApplication(database, cursor_secret=cursor_secret)
         self.source_registry = source_registry or BUILTIN_SOURCE_REGISTRY
-        self.index = NoMemoryIndex() if index is None else index
         self.topic_memory_index = NoTopicMemoryIndex() if topic_memory_index is None else topic_memory_index
         self.experience_index = NoExperienceIndex() if experience_index is None else experience_index
         source_repository = SourceRepository(self.source_registry)
         artifact_repository = ArtifactRepository(
-            (Handoff, Memory, AtomicMemory, Experience, Skill, Profile, Prompt, TopicMemory),
+            (Handoff, AtomicMemory, Experience, Skill, Profile, Prompt, TopicMemory),
             sources=source_repository,
         )
         if atomic_memory_index is None:
@@ -639,6 +510,7 @@ class RelationalContexts:
                 atomic_memory_index = OceanBaseAtomicMemoryIndex(
                     None if embedding_model is None else embedding_model.profile
                 )
+        self.atomic_memory_index = atomic_memory_index
         from powercontext.builtin.artifacts.atomic_memory.restoration import AtomicMemoryPreviewSigner
 
         preview_signer = (
@@ -694,7 +566,7 @@ class RelationalContexts:
             write_timeout_seconds=model_usage_write_timeout_seconds,
             flush_timeout_seconds=model_usage_flush_timeout_seconds,
         )
-        self._id_factory = _scoped_id_factory(memory_artifact_id, id_factory)
+        self._id_factory = _scoped_id_factory(id_factory)
         self.prompt_registry = prompt_registry or PromptRegistry(
             builtin_prompt_definitions(),
             injected=frozenset(
@@ -737,14 +609,6 @@ class RelationalContexts:
             topic_memory_writer,
             PromptManagementWriter(self.repositories.artifacts, self.prompt_registry),
             ProfileManagementWriter(self.repositories.artifacts),
-            MemoryManagementWriter(
-                capacity_budget=memory_capacity_budget,
-                database=database,
-                artifacts=self.repositories.artifacts,
-                index=self.index,
-                embedding_model=embedding_model,
-                id_factory=self._id_factory,
-            ),
             ExperienceManagementWriter(self.repositories.artifacts, self.experience_index),
             SkillManagementWriter(
                 self.repositories.artifacts,
@@ -755,9 +619,6 @@ class RelationalContexts:
                 database=database,
                 artifacts=self.repositories.artifacts,
                 sources=self.repositories.sources,
-                memory_index=self.index,
-                id_factory=self._id_factory,
-                memory_artifact_id=memory_artifact_id,
                 handoff_artifact_id=handoff_artifact_id,
             ),
         ))
@@ -810,15 +671,8 @@ class RelationalContexts:
         self._token_estimator = token_estimator
         self._memory_reranker = memory_reranker
         self._decision_model = decision_model
-        self._memory_write_gate = memory_write_gate
         self._memory_rerank_candidate_limit = memory_rerank_candidate_limit
-        self._memory_capacity_budget = (
-            MemoryCapacityBudget() if memory_capacity_budget is None else memory_capacity_budget
-        )
-        self._memory_compaction = MemoryCompactionPolicy() if memory_compaction is None else memory_compaction
-        self._memory_max_history_revisions = memory_max_history_revisions
         self._handoff_artifact_id = handoff_artifact_id
-        self._memory_artifact_id = memory_artifact_id
         self._tracing = tracing
         self._scope_states: dict[str, _ScopeState] = {}
 
@@ -1515,8 +1369,6 @@ class RelationalContexts:
         /,
         *,
         processing: ScopeInvocation | None = None,
-        authorize_snapshot: MemorySnapshotAuthorizer | None = None,
-        on_commit: MemoryCommitHook | None = None,
         atomic_context: ArtifactSearchExecutionContext | None = None,
     ) -> MemoryFlushResult:
         services = self._services_for(scope_id)
@@ -1527,8 +1379,6 @@ class RelationalContexts:
         ).flush(
             limit=limit,
             processing=processing,
-            authorize_snapshot=authorize_snapshot,
-            on_commit=on_commit,
             atomic_context=atomic_context,
         )
 
@@ -1577,10 +1427,8 @@ class RelationalContexts:
                 journal=sources_backend,
             ),
             artifacts=BuiltinArtifacts(
-                handoff=services.handoff(source_catalog),
+                handoff=services.handoff(),
                 handoff_artifact_id=self._handoff_artifact_id,
-                memory=services.memory(source_catalog),
-                memory_artifact_id=self._memory_artifact_id,
             ),
             triggers=triggers,
         )
@@ -1594,7 +1442,6 @@ class RelationalContexts:
             database=self.database,
             scope_id=scope,
             repositories=self.repositories,
-            index=self.index,
             experience_index=self.experience_index,
             candidate_pipeline=self._candidate_pipeline,
             experience_pipeline=self._experience_pipeline,
@@ -1605,13 +1452,8 @@ class RelationalContexts:
             memory_reranker=self._memory_reranker,
             memory_rerank_candidate_limit=self._memory_rerank_candidate_limit,
             decision_model=self._decision_model,
-            memory_write_gate=self._memory_write_gate,
-            memory_capacity_budget=self._memory_capacity_budget,
-            memory_compaction=self._memory_compaction,
-            memory_max_history_revisions=self._memory_max_history_revisions,
             id_factory=self._id_factory,
             handoff_artifact_id=self._handoff_artifact_id,
-            memory_artifact_id=self._memory_artifact_id,
             source_lock=self._state_for(scope).scope_locks.setdefault("source", asyncio.Lock()),
             prompts=self.prompts,
             generation_receipts=self._generation_receipts,
@@ -1620,51 +1462,6 @@ class RelationalContexts:
             model_usage=self._model_usage,
             atomic_memory_processor=self.atomic_memory_processor,
         )
-
-
-class _RelationalMemorySourceResolver:
-    """Admit Memory evidence without changing the ordinary Source catalog."""
-
-    def __init__(
-        self,
-        *,
-        database: AsyncDatabase,
-        scope_id: str,
-        catalog: SourceCatalog,
-        access: GenerationSourceAccess,
-        connection: AsyncConnection | None = None,
-    ) -> None:
-        self._database = database
-        self._scope_id = scope_id
-        self._catalog = catalog
-        self._access = access
-        self._connection = connection
-
-    def as_ref(self, source: Source, /) -> SourceRef:
-        return self._catalog.as_ref(source)
-
-    def project(self, source: Source, key: SourceProjectionKey, /) -> object:
-        return self._catalog.project(source, key)
-
-    async def get_ref(self, ref: SourceRef, /) -> Source:
-        try:
-            async with self._database.connection(self._connection) as connection:
-                (stored,) = await self._access.require_for_generation(connection, self._scope_id, (ref,))
-        except RepositoryNotFoundError:
-            raise SourceNotFoundError(ref) from None
-        return stored.value
-
-    async def get(self, source: Source, /) -> Source:
-        try:
-            async with self._database.connection(self._connection) as connection:
-                (stored,) = await self._access.require_for_generation(
-                    connection, self._scope_id, (self.as_ref(source),)
-                )
-        except RepositoryNotFoundError:
-            raise SourceNotFoundError(source) from None
-        if type(stored.value) is not type(source) or stored.value != source:
-            raise SourceNotFoundError(source)
-        return stored.value
 
 
 class _RelationalSources:
@@ -1743,34 +1540,6 @@ class _RelationalSources:
         return SourceRef(source_type=definition.name, source_id=source.name)
 
 
-class _RelationalArtifactResolver:
-    def __init__(
-        self,
-        *,
-        database: AsyncDatabase,
-        scope_id: str,
-        repository: ArtifactRepository,
-        connection: AsyncConnection | None = None,
-    ) -> None:
-        self._database = database
-        self._scope_id = scope_id
-        self._repository = repository
-        self._bound_connection = connection
-
-    async def get(self, artifact: Artifact[object], /) -> Artifact[object]:
-        try:
-            return await self.get_ref(artifact.as_ref())
-        except ArtifactNotFoundError:
-            raise ArtifactNotFoundError(artifact) from None
-
-    async def get_ref(self, ref: ArtifactRef, /) -> Artifact[object]:
-        try:
-            async with self._database.connection(self._bound_connection) as connection:
-                return cast(Artifact[object], await self._repository.get(connection, self._scope_id, ref))
-        except RepositoryNotFoundError:
-            raise ArtifactNotFoundError(ref) from None
-
-
 class _RelationalTriggers:
     def __init__(
         self,
@@ -1822,8 +1591,7 @@ class _RelationalTriggers:
                     draft=None,
                 )
 
-            _, source_catalog = self._services.sources()
-            draft = await self._services.handoff(source_catalog).prepare(transition.actions[0])
+            draft = await self._services.handoff().prepare(transition.actions[0])
             async with self._services.database.transaction() as connection:
                 await self._services.repositories.cursors.save(
                     connection,
@@ -1854,14 +1622,8 @@ class _RelationalTriggers:
         *,
         limit: int,
         processing: ScopeInvocation | None = None,
-        authorize_snapshot: MemorySnapshotAuthorizer | None = None,
-        on_commit: MemoryCommitHook | None = None,
         atomic_context: ArtifactSearchExecutionContext | None = None,
     ) -> MemoryFlushResult:
-        if authorize_snapshot is not None or on_commit is not None:
-            from powercontext.builtin.records import BaseOperationNotSupportedError
-
-            raise BaseOperationNotSupportedError("artifact_family", "memory", "legacy flush callbacks")
         async with self._lock:
             return await self._services.atomic_memory_processor.flush(
                 self._services.scope_id,
@@ -1869,73 +1631,6 @@ class _RelationalTriggers:
                 processing=processing,
                 context=atomic_context,
             )
-
-    async def _reduce_memory_window(
-        self,
-        action: ProcessSourceWindow,
-        high_watermark: int,
-        state_row: StoredSourceCursor | None,
-        processing: ScopeInvocation | None,
-    ) -> None:
-        reduced_limit = max(1, (action.through - action.after) // 2)
-        async with self._services.database.transaction() as connection:
-            if processing is not None:
-                await processing.guard(connection)
-            # Preserve the position, but invalidate stale publishers before
-            # changing the window used by a new Worker or SDK flush.
-            await self._services.repositories.cursors.save(
-                connection,
-                self._services.scope_id,
-                SOURCE_WINDOW_TRIGGER_NAME,
-                SourceCursor(sequence=action.after),
-                expected_generation=None if state_row is None else state_row.generation,
-            )
-            await MemorySourceWindowRepository().reduce(
-                connection,
-                self._services.scope_id,
-                source_through=high_watermark,
-                window_limit=reduced_limit,
-            )
-        log_safely(
-            logger,
-            logging.WARNING,
-            "Memory extraction timed out; reduced the next Source window",
-            extra={
-                "event": "memory.window_reduced",
-                "scope_id": self._services.scope_id,
-                "source_after": action.after,
-                "source_through": action.through,
-                "window_limit": reduced_limit,
-            },
-        )
-
-    async def _sources(
-        self,
-        connection: AsyncConnection,
-        action: ProcessSourceWindow,
-    ) -> tuple[Source, ...]:
-        rows = await self._services.generation_sources().list_window_for_generation(
-            connection,
-            self._services.scope_id,
-            after=action.after,
-            through=action.through,
-        )
-        return tuple(
-            row.value for row in rows if row.journal_position <= action.through and is_generation_eligible(row.value)
-        )
-
-    async def _prepare_memory(
-        self, sources: tuple[Source, ...], *, authorize_snapshot: MemorySnapshotAuthorizer | None = None
-    ) -> MemoryWritePlan:
-        _, source_catalog = self._services.sources()
-        service = self._services.memory(source_catalog)
-        try:
-            current = await service.head(self._services.memory_artifact_id)
-        except ArtifactNotFoundError:
-            current = None
-        if authorize_snapshot is not None:
-            await authorize_snapshot(current)
-        return await service.plan_remember(memory=current, sources=sources, mode="extract")
 
     def _stage(
         self,
@@ -2171,30 +1866,8 @@ def _validate_schema_value(name: str, schema: Mapping[str, Any], value: object) 
         raise InvalidSourceObservationError("schema", f"value does not match {name!r}") from error
 
 
-def _is_held_write(plan: MemoryWritePlan | None) -> bool:
-    """Report whether the gate refused this prepared write."""
-
-    if plan is None:
-        return False
-    decision = plan.decision
-    return decision is not None and decision.verdict is MemoryWriteVerdict.HOLD
-
-
-def _hold_codes(plan: MemoryWritePlan | None) -> tuple[str, ...]:
-    """Expose the structured refusal code of a held write to the window caller."""
-
-    if not _is_held_write(plan) or plan is None:
-        return ()
-    decision = plan.decision
-    if decision is None or decision.code is None:
-        return ()
-    return (decision.code.value,)
-
-
-def _scoped_id_factory(memory_artifact_id: str, delegate: IdFactory | None) -> IdFactory:
+def _scoped_id_factory(delegate: IdFactory | None) -> IdFactory:
     def new_id(kind: str) -> str:
-        if kind == "memory":
-            return memory_artifact_id
         if delegate is not None:
             return delegate(kind)
         prefixes = {

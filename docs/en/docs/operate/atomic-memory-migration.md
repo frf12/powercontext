@@ -8,7 +8,8 @@ identity rules, version chains and import encoding. It connects using deployment
 a Runtime or Worker. After migration, legacy Memory collections exist only in the offline archive table
 `pc_memory_artifact_archive`; they leave the public Artifact tables, search and every online read path.
 Normal service startup runs only a light residual check: no legacy collection or lineage to one remains in the
-public tables, and the legacy entry tables no longer reference them. It reads neither the archive nor the
+public tables, the legacy entry tables no longer reference them, and the public tables no longer declare the
+legacy `memory_citations` columns. It reads neither the archive nor the
 legacy entry tables; complete per-entry verification is the job of `verify`.
 
 ## Run the maintenance task
@@ -82,8 +83,7 @@ or examples. Unknown cursor/task formats and unresolved legacy Memory candidates
 
 The legacy MemoryWriteGate depends on the collection write contract and cannot be injected into Atomic Runtime.
 Enabling `POWERCONTEXT_SERVER_RUNTIME_MEMORY_WRITE_GATE_ENABLED` or injecting an old gate is rejected during
-construction. The legacy low-level MemoryService may use its gate independently; it is not the new service's Atomic
-write surface. Legacy capacity and compact settings do not constrain Atomic Memory. See
+construction. Legacy capacity and compact settings do not constrain Atomic Memory. See
 [configuration](configuration.md#atomic-memory) and [API/SDK compatibility](../workflows/atomic-memory.md#legacy-memory-api-compatibility).
 
 ## Archive, legacy references and decisions
@@ -104,17 +104,28 @@ Apply runs these steps in order; each can be repeated after an interruption:
    are recorded in the referenced collection revision's archived `incoming_references` before it is removed
    from online lineage, Candidate `artifact_refs`, Task Outcome `produced_artifacts`, and `kind: artifact`
    citations of a whole collection in Handoff content and Work claims or checks. A Handoff receipt's
-   `unavailable_evidence` records evidence that was unavailable rather than support, so collection references
-   there keep their original value.
+   `unavailable_evidence` records evidence that was unavailable rather than support: its collection references
+   move unchanged into the receipt's `historical_data` (format `powercontext.handoff-receipt-history.v1`), which
+   is shown as history and never resolved.
 5. Finished Dream runs move to a historical format: the original request, input manifest and request digest
-   move to `historical_data` and are no longer read as an executable request. Replaying the same idempotency
-   key is still judged by the original request digest.
+   move to `historical_data` and are no longer read as an executable request. Unfinished runs drop the empty
+   legacy entry citation fields from their request and input manifest. Request digests are recomputed in the
+   current request format, so retrying the same request with the same idempotency key still replays the run.
+   A request that cited legacy entries cannot be sent again; its run keeps the accepted digest, so reusing its
+   key conflicts.
 6. The retained legacy entry tables are detached from public Artifact rows. While the collections are still
    public, the import history, current projection, grant conversion and every reference conversion are
    accepted; any failure stops before a collection is removed.
 7. The lineage owned by every legacy collection is deleted first, then the collections, their heads, tags
    and Owners, so collections that cite each other never block removal through identifier order. Legacy entry
-   tables stay unused. A final residual check confirms nothing legacy remains public.
+   tables stay unused.
+8. The emptied `memory_citations` columns are dropped from `pc_artifacts` and `pc_artifact_candidate_versions`.
+   A final residual check confirms nothing legacy remains public.
+
+If startup reports that public tables still declare `memory_citations`, reference conversion has not finished
+for that database, for example because an interrupted apply had already removed every collection. Keep writers
+stopped and rerun apply with the same configuration; it completes the remaining receipt, Dream and column steps
+and can be repeated.
 
 These conditions block before any data is rewritten and are listed by plan: an unfinished Dream run whose
 pinned inputs this migration changes, including legacy entry citations, legacy collections, and Artifacts or
@@ -174,8 +185,10 @@ state and audit records remain unchanged.
 
 Legacy collections are retained only in the archive table, which has no online read surface. This task does
 not downgrade the database; rollback requires the complete backup from before maintenance. The command
-performs archiving, reference conversion and removal itself rather than through the RFC 1771 migration
-executor, which currently covers only the four Artifact tables' structure and cannot run data tasks. Atomic
+performs archiving, reference conversion, removal and the column drop itself rather than through the RFC 1771
+migration executor, which currently covers only the four Artifact tables' structure and cannot run data tasks.
+The column drop is not registered as an RFC 1771 schema revision because it is valid only after the reference
+conversion has been accepted. Atomic
 Memory content restoration is a separate operation.
 
 ## Rebuild the current search projection

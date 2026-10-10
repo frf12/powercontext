@@ -25,13 +25,9 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.experience import ExperienceContent
 from powercontext.builtin.artifacts.memory.models import (
-    MemoryCitation,
     MemoryEntryInput,
-    MemoryEntryState,
-    MemoryEntryVersion,
     MemoryHit,
     MemoryRerankTrace,
-    MemoryRevisionChanges,
     MemorySearchMode,
     MemoryUsedSearchMode,
 )
@@ -309,59 +305,12 @@ class PreparedContext(_PreparedContextModel):
         return self
 
 
-class MemoryEntryRecord(BaseModel):
-    """An exact entry version together with its state in one Revision."""
-
-    memory_ref: ArtifactRef
-    state: MemoryEntryState
-    entry: MemoryEntryVersion
-
-    @property
-    def citation(self) -> MemoryCitation:
-        return MemoryCitation(
-            memory_ref=self.memory_ref,
-            entry_id=self.entry.entry_id,
-            entry_version_id=self.entry.entry_version_id,
-        )
-
-
-class MemoryEntriesPage(BaseModel):
-    """Selected current-head entries for one scope, or an absent Memory."""
-
-    memory_ref: ArtifactRef | None
-    entries: tuple[MemoryEntryRecord, ...] = ()
-
-
-class ReviseMemoryEntryRequest(BaseModel):
-    citation: MemoryCitation
-    kind: str
-    text: str
-    reason: str | None = None
-
-
-class RetireMemoryEntryRequest(BaseModel):
-    citation: MemoryCitation
-    reason: str | None = None
-
-
-class MemoryMutationResult(BaseModel):
-    previous_revision: int | None
-    memory_ref: ArtifactRef
-    entry: MemoryEntryRecord | None = None
-
-
-class MemoryChangesPage(BaseModel):
-    memory_ref: ArtifactRef | None
-    revisions: tuple[MemoryRevisionChanges, ...] = ()
-
-
 class ProposeExperienceRequest(BaseModel):
     """Submit a complete Experience proposal with exact evidence."""
 
     proposal: ExperienceContent
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
-    memory_citations: tuple[MemoryCitation, ...] = ()
     target: ArtifactRef | None = None
     reason: str | None = None
 
@@ -469,7 +418,6 @@ class ReviseArtifactCandidateRequest(ApproveArtifactCandidateRequest):
     proposal: ExperienceContent | SkillContent | ProfileWriteContent
     sources: tuple[SourceRef, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
-    memory_citations: tuple[MemoryCitation, ...] | None = None
     target: ArtifactRef | None = None
     reason: str | None = None
 

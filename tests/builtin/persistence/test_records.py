@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -28,7 +28,6 @@ from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemory, AtomicMemoryContent
 from powercontext.builtin.artifacts.experience import Experience
 from powercontext.builtin.artifacts.handoff import Handoff
-from powercontext.builtin.artifacts.memory import Memory
 from powercontext.builtin.artifacts.skill import Skill
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_STATES_TABLE
@@ -37,10 +36,8 @@ from powercontext.builtin.persistence.family_management import (
     ExperienceManagementWriter,
     FamilyManagementWriterRegistry,
     HandoffManagementWriter,
-    MemoryManagementWriter,
     SkillManagementWriter,
 )
-from powercontext.builtin.persistence.memory_index import NoMemoryIndex
 from powercontext.builtin.persistence.records import RelationalRecordService
 from powercontext.builtin.persistence.skill_packages import SkillPackageRepository
 from powercontext.builtin.persistence.sources import SourceRepository
@@ -57,6 +54,7 @@ from powercontext.builtin.persistence.tables import (
 from powercontext.builtin.records import (
     ArtifactRevisionPreconditionError,
     ArtifactWrite,
+    BaseOperationNotSupportedError,
     BaseValueConflictError,
     InvalidBaseAccessRequestError,
     InvalidCursorError,
@@ -297,7 +295,7 @@ def _services(
         counters[kind] += 1
         if kind == "atomic-memory" and atomic_artifact_id is not None:
             return atomic_artifact_id
-        prefixes = {"source": "src", "memory": "mem", "atomic-memory": "mem", "experience": "exp", "skill": "skill"}
+        prefixes = {"source": "src", "atomic-memory": "mem", "experience": "exp", "skill": "skill"}
         return f"{prefixes.get(kind, kind)}-{counters[kind]}"
 
     if atomic_memory_application is not None:
@@ -310,27 +308,16 @@ def _services(
         return contexts.records, contexts.repositories.artifacts, contexts.repositories.sources
 
     sources = SourceRepository((CONTENT_SOURCE_ADAPTER,))
-    artifacts = ArtifactRepository((Handoff, Memory, AtomicMemory, Experience, Skill), sources=sources)
-    memory_index = NoMemoryIndex()
+    artifacts = ArtifactRepository((Handoff, AtomicMemory, Experience, Skill), sources=sources)
     selected_experience_index = NoExperienceIndex() if experience_index is None else experience_index
     packages = SkillPackageRepository()
     writers = FamilyManagementWriterRegistry((
-        MemoryManagementWriter(
-            database=profile.database,
-            artifacts=artifacts,
-            index=memory_index,
-            embedding_model=None,
-            id_factory=new_id,
-        ),
         ExperienceManagementWriter(artifacts, selected_experience_index),
         SkillManagementWriter(artifacts, selected_experience_index, packages),
         HandoffManagementWriter(
             database=profile.database,
             artifacts=artifacts,
             sources=sources,
-            memory_index=memory_index,
-            id_factory=new_id,
-            memory_artifact_id="memory",
             handoff_artifact_id="handoff",
         ),
     ))
@@ -721,4 +708,23 @@ def test_base_access_reuses_existing_tables_without_lifecycle_columns() -> None:
     assert "created_at" not in SOURCES_TABLE.c
     assert "created_at" not in ARTIFACTS_TABLE.c
     assert "deleted_at" not in ARTIFACT_HEADS_TABLE.c
-    assert ArtifactRef(family="memory", artifact_id="memory-1", revision=1).revision == 1
+
+
+def test_legacy_memory_family_is_unsupported_for_generic_reads_and_tags() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES) as profile:
+            records, _, _ = _services(profile)
+            for read in (
+                records.get_artifact("scope", "memory", "memory"),
+                records.get_artifact_revision("scope", "memory", "memory", 1),
+                records.list_artifact_revisions("scope", "memory", "memory", limit=10, cursor=None),
+                records.query_artifacts("scope", "memory", limit=10, cursor=None),
+            ):
+                with pytest.raises(BaseOperationNotSupportedError):
+                    await read
+        with pytest.raises(ValidationError):
+            TagQuery.model_validate({"tags": ("shared",), "families": ("memory",)})
+        with pytest.raises(ValidationError):
+            ArtifactTagTarget.model_validate({"family": "memory", "artifact_id": "memory"})
+
+    asyncio.run(scenario())

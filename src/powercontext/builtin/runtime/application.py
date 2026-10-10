@@ -64,19 +64,7 @@ from powercontext.builtin.artifacts.handoff import (
     PrepareHandoff,
     PrepareHandoffHint,
 )
-from powercontext.builtin.artifacts.memory import (
-    EmbeddingProfile,
-    Memory,
-    MemoryQueryEmbedding,
-    MemoryService,
-    MemoryWritePlan,
-    MemoryWriteVerdict,
-)
-from powercontext.builtin.artifacts.memory.errors import (
-    CapabilityNotSupportedError,
-    InvalidMemoryCitationError,
-    MemoryWriteRejectedError,
-)
+from powercontext.builtin.artifacts.memory import EmbeddingProfile, MemoryQueryEmbedding
 from powercontext.builtin.artifacts.profile.service import RelationalProfileService
 from powercontext.builtin.artifacts.prompt import (
     GeneratePromptDemonstrations,
@@ -287,7 +275,7 @@ from powercontext.builtin.work import (
     project_work_continuity,
 )
 from powercontext.context import PowerContext
-from powercontext.errors import ArtifactNotFoundError, SourceConflictError
+from powercontext.errors import SourceConflictError
 from powercontext.sources import ConnectorBinding, SourceDefinitionManifest, SourceRef
 
 if TYPE_CHECKING:
@@ -1713,7 +1701,6 @@ class ScopedExperienceApplication:
                 request.proposal,
                 sources=request.sources,
                 artifacts=request.artifacts,
-                memory_citations=request.memory_citations,
                 target=request.target,
                 reason=request.reason,
             )
@@ -2451,7 +2438,6 @@ class ScopedReviewApplication:
                 request.proposal,
                 sources=request.sources,
                 artifacts=request.artifacts,
-                memory_citations=request.memory_citations,
                 target=request.target,
                 reason=request.reason,
             )
@@ -3419,26 +3405,3 @@ def _bounded_topic_memory_recall_query(query: str) -> str:
         selected.append(term[:available])
         characters += separator + min(len(term), available)
     return " ".join(selected)
-
-
-async def _head_or_none(service: MemoryService, artifact_id: str) -> Memory | None:
-    try:
-        return await service.head(artifact_id)
-    except ArtifactNotFoundError:
-        return None
-
-
-def _is_stale_memory_search(error: CapabilityNotSupportedError | InvalidMemoryCitationError) -> bool:
-    return (isinstance(error, CapabilityNotSupportedError) and error.capability == "head") or (
-        isinstance(error, InvalidMemoryCitationError) and error.code == "memory-mismatch"
-    )
-
-
-def _raise_if_held(plan: MemoryWritePlan) -> None:
-    """Surface a gate refusal as a structured error so the caller can read code and reason."""
-
-    decision = plan.decision
-    if decision is None or decision.verdict is not MemoryWriteVerdict.HOLD:
-        return
-    code = "unspecified" if decision.code is None else decision.code.value
-    raise MemoryWriteRejectedError(code, decision.reason)

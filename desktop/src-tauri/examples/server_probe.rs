@@ -114,7 +114,7 @@ async fn main() {
         results
             .hits
             .iter()
-            .any(|hit| hit.artifact.as_ref() == Some(&entry.artifact))
+            .any(|hit| hit.artifact == entry.artifact)
     );
     let exact = api
         .atomic_entry(&fixture.scope_id, &entry.artifact)
@@ -161,7 +161,7 @@ async fn main() {
         matches
             .hits
             .iter()
-            .any(|hit| hit.artifact.as_ref() == Some(&entry.artifact))
+            .any(|hit| hit.artifact == entry.artifact)
     );
     let exact = manager
         .atomic_memory_entry(generation, &entry.artifact)
@@ -213,7 +213,7 @@ async fn main() {
         let results = manager.search_memory(generation, &keyword).await.unwrap();
         assert_eq!(results.hits.len(), 1);
         let committed = manager
-            .atomic_memory_entry(generation, results.hits[0].artifact.as_ref().unwrap())
+            .atomic_memory_entry(generation, &results.hits[0].artifact)
             .await
             .unwrap();
         assert_eq!(committed.text, text);

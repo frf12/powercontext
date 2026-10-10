@@ -279,7 +279,6 @@ def test_memory_dream_approval_and_skill_preserve_exact_provenance(database: Dat
             candidate = await runtime.review.for_scope(scope).get(
                 GetArtifactCandidateRequest(candidate_id=run.candidate.candidate_id)
             )
-            assert candidate.memory_citations == ()
             assert candidate.artifacts == (citation,)
             assert candidate.sources == (root,)
             followup = PrepareContextRequest(query=experience().lesson)
@@ -295,7 +294,6 @@ def test_memory_dream_approval_and_skill_preserve_exact_provenance(database: Dat
             artifact = await runtime.experience.for_scope(scope).get(
                 GetExperienceRequest(artifact=approved.result_artifact)
             )
-            assert artifact.lineage.memory_citations == ()
             assert artifact.lineage.artifacts == (citation,)
             approved_context = await runtime.context.for_scope(scope).prepare(followup)
             assert approved_context.status == "ready" and approved_context.content is not None
@@ -317,7 +315,6 @@ def test_memory_dream_approval_and_skill_preserve_exact_provenance(database: Dat
             skill_candidate = await runtime.review.for_scope(scope).get(
                 GetArtifactCandidateRequest(candidate_id=derived.candidate.candidate_id)
             )
-            assert skill_candidate.memory_citations == ()
             assert skill_candidate.artifacts == (artifact.as_ref(),)
             skill_approval = await runtime.review.for_scope(scope).approve(
                 ApproveArtifactCandidateRequest(
@@ -422,7 +419,6 @@ def test_review_rechecks_memory_and_revision_omission_preserves_citations(databa
                     artifacts=(citation,),
                 )
             )
-            assert revised.memory_citations == ()
             assert revised.artifacts == (citation,)
             await forget_memory(runtime, scope, citation)
             with pytest.raises(EvidenceResolutionError, match="memory_entry_inactive"):
@@ -441,7 +437,6 @@ def test_review_rechecks_memory_and_revision_omission_preserves_citations(databa
                     artifacts=(),
                 )
             )
-            assert cleared.memory_citations == ()
             assert cleared.artifacts == ()
             approved = await runtime.review.for_scope(scope).approve(
                 ApproveArtifactCandidateRequest(
@@ -532,15 +527,8 @@ def test_dream_http_client_accepts_active_and_terminal_replays(database: Databas
                     artifact_refs=candidate.artifact_refs,
                 )
                 retained = await client.revise_artifact_candidate(revision)
-                assert retained.memory_citations == candidate.memory_citations
-                retained = await client.revise_artifact_candidate(
-                    revision.model_copy(update={"expected_version": retained.version, "memory_citations": None})
-                )
-                assert retained.memory_citations == candidate.memory_citations
-                cleared = await client.revise_artifact_candidate(
-                    revision.model_copy(update={"expected_version": retained.version, "memory_citations": []})
-                )
-                assert cleared.memory_citations == []
+                assert retained.source_refs == candidate.source_refs
+                assert retained.artifact_refs == candidate.artifact_refs
                 assert await client.get_dream_run(scope, complete.run_id) == complete
 
     asyncio.run(scenario())
@@ -792,7 +780,6 @@ def test_enforced_access_rechecks_background_actor_and_attests_candidate(databas
                         )
                     )
                     assert ownership is not None and ownership.owner == author
-                    assert approved.json()["memory_citations"] == []
                     assert approved.json()["artifact_refs"] == [citation.model_dump(mode="json")]
 
     asyncio.run(scenario())
@@ -957,10 +944,6 @@ def test_additive_migration_preserves_existing_experience_and_candidate(database
         engine = create_async_engine(url, hide_parameters=True)
         try:
             async with engine.begin() as connection:
-                await connection.exec_driver_sql("ALTER TABLE pc_artifacts DROP COLUMN memory_citations")
-                await connection.exec_driver_sql(
-                    "ALTER TABLE pc_artifact_candidate_versions DROP COLUMN memory_citations"
-                )
                 await connection.exec_driver_sql("DROP TABLE pc_dream_runs")
         finally:
             await engine.dispose()
@@ -970,7 +953,6 @@ def test_additive_migration_preserves_existing_experience_and_candidate(database
                 GetExperienceRequest(artifact=approved.result_artifact)
             )
             assert restored.content == experience()
-            assert restored.lineage.memory_citations == ()
             assert restored.lineage.sources == (root,)
             restored_candidate = await runtime.review.for_scope(scope).get(
                 GetArtifactCandidateRequest(
@@ -1447,7 +1429,6 @@ def test_multiple_entries_and_experience_reusing_a_source_keep_one_root(database
                 GetArtifactCandidateRequest(candidate_id=run.candidate.candidate_id)
             )
             assert result.sources == (root,)
-            assert result.memory_citations == ()
             assert {ref.model_dump_json() for ref in result.artifacts} == {
                 ref.model_dump_json() for ref in (approved.result_artifact, *citations)
             }

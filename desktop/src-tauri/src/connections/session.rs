@@ -114,9 +114,6 @@ pub struct WriteRecord {
     pub operation_id: String,
     pub context: MemoryContext,
     pub status: WriteStatus,
-    pub citation: Option<MemoryCitation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional = nullable)]
     pub artifact: Option<ArtifactReference>,
     pub error: Option<ApiFailure>,
 }
@@ -595,29 +592,6 @@ impl ConnectionManager {
         )
         .await
     }
-    pub async fn memory_entry(
-        &self,
-        generation: u32,
-        citation: &MemoryCitation,
-    ) -> Result<MemoryEntry, ApiFailure> {
-        let (
-            ReadSnapshot {
-                api,
-                identity,
-                mut cancelled,
-            },
-            context,
-        ) = self.memory_snapshot(generation, "get_memory_entry")?;
-        let mut query_cancelled = self.begin_memory_read(generation)?;
-        Self::cancellable(
-            &mut cancelled,
-            Self::cancellable(&mut query_cancelled, async {
-                self.identity_unchanged(&api, &identity, generation).await?;
-                api.entry(&context.scope_id, citation).await
-            }),
-        )
-        .await
-    }
     pub async fn atomic_memory_entry(
         &self,
         generation: u32,
@@ -661,7 +635,6 @@ impl ConnectionManager {
             operation_id: uuid::Uuid::new_v4().to_string(),
             context,
             status: WriteStatus::Pending,
-            citation: None,
             artifact: None,
             error: None,
         };
@@ -681,7 +654,6 @@ impl ConnectionManager {
         let result = match response {
             Ok(value) => {
                 record.status = WriteStatus::Succeeded;
-                record.citation = value.entry.as_ref().map(|e| e.citation.clone());
                 record.artifact =
                     (value.records.len() == 1).then(|| value.records[0].artifact.clone());
                 Some(value)

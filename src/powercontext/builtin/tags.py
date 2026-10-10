@@ -117,9 +117,7 @@ class TagPreconditionError(BaseAccessError):
 class TagQuery(TagFilter):
     """A bounded exact query within one authorized Scope."""
 
-    families: tuple[TaggableArtifactFamily, ...] = tuple(
-        family for family in get_args(TaggableArtifactFamily) if family != "memory"
-    )
+    families: tuple[TaggableArtifactFamily, ...] = get_args(TaggableArtifactFamily)
     target_types: tuple[TagTargetType, ...] = ("artifact",)
     include_inactive: bool = False
     limit: int = Field(default=50, ge=1, le=100)

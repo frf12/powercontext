@@ -58,14 +58,12 @@ from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import PersistenceError
 from powercontext.builtin.persistence.migrations.atomic_memory_archive import (
     ARCHIVE_TABLE_NAME,
+    LEGACY_CITATION_COLUMN,
     LegacyCollection,
     archive_collection,
     ensure_archive_table,
     frozen_identity,
     load_collections,
-)
-from powercontext.builtin.persistence.migrations.atomic_memory_archive import (
-    ARTIFACT_COLUMNS as _ARTIFACT_COLUMNS,
 )
 from powercontext.builtin.persistence.migrations.atomic_memory_archive import (
     BINDING_COLUMNS as _BINDING_COLUMNS,
@@ -87,6 +85,7 @@ from powercontext.builtin.persistence.migrations.atomic_memory_archive import ta
 from powercontext.builtin.persistence.migrations.atomic_memory_references import (
     CandidateDecision,
     convert_references,
+    drop_legacy_citation_columns,
     drop_legacy_foreign_keys,
     remove_legacy_collections,
     residual_issues,
@@ -492,7 +491,8 @@ async def _processing_snapshot(connection: AsyncConnection, tables: set[str], er
         encoded: list[bytes] = []
         for row in records:
             values = dict(row)
-            if set(values) != _PROCESSING_COLUMNS[name]:
+            # Completion drops the emptied legacy citation column from Candidate revisions.
+            if set(values) - {LEGACY_CITATION_COLUMN} != _PROCESSING_COLUMNS[name] - {LEGACY_CITATION_COLUMN}:
                 errors.append(f"{name}: unsupported persisted task columns; complete processing schema migration first")
             if name == "pc_source_cursors":
                 try:
@@ -572,7 +572,10 @@ async def _inventory(connection: AsyncConnection) -> _Inventory:  # noqa: C901
     )
     processing_hash = await _processing_snapshot(connection, tables, errors)
     for row in await _rows(
-        connection, "pc_artifacts", _ARTIFACT_COLUMNS, "WHERE family = 'prompt' AND artifact_id = 'memory.extract'"
+        connection,
+        "pc_artifacts",
+        ("scope_id", "revision", "content"),
+        "WHERE family = 'prompt' AND artifact_id = 'memory.extract'",
     ):
         current = await connection.scalar(
             text(
@@ -1022,18 +1025,14 @@ async def _history_issues(connection: AsyncConnection, entry: _Entry, *, repair:
         imported = await _rows(
             connection,
             "pc_artifacts",
-            _ARTIFACT_COLUMNS,
+            ("content",),
             "WHERE scope_id = :scope AND family = 'atomic-memory' AND artifact_id = :id AND revision = :revision",
             scope=entry.scope_id,
             id=entry.artifact_id,
             revision=row["version"],
         )
         expected = _content(row).model_dump(mode="json", by_alias=True)
-        if (
-            len(imported) != 1
-            or _decode(imported[0]["content"]) != expected
-            or imported[0]["memory_citations"] is not None
-        ):
+        if len(imported) != 1 or _decode(imported[0]["content"]) != expected:
             errors.append(f"{entry.entry_id}@{row['version']}: imported body differs or is missing")
             continue
         sources, refs = await _imported_lineage(connection, entry, row["version"])
@@ -1100,14 +1099,13 @@ async def _import_entry(connection: AsyncConnection, entry: _Entry) -> bool:
         await _insert(
             connection,
             "pc_artifacts",
-            _ARTIFACT_COLUMNS,
+            ("scope_id", "family", "artifact_id", "revision", "content"),
             {
                 "scope_id": entry.scope_id,
                 "family": _FAMILY,
                 "artifact_id": entry.artifact_id,
                 "revision": row["version"],
                 "content": _content(row).model_dump_json(by_alias=True).encode("utf-8"),
-                "memory_citations": None,
             },
         )
         await _insert_lineage(connection, entry, row)
@@ -1210,7 +1208,7 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
     embedding_model: Any = None,
     decisions: Mapping[tuple[str, str, int], CandidateDecision] | None = None,
 ) -> AtomicMemoryMigrationReport:
-    """Archive, import, convert references, then remove legacy collections from public tables."""
+    """Archive, import, convert references, then remove legacy collections and citation columns from public tables."""
 
     if not maintenance_confirmed:
         raise AtomicMemoryMigrationError(("apply requires stopped old writers and --maintenance-confirmed",))
@@ -1326,6 +1324,8 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
         removed = await remove_legacy_collections(database, dict(archived_inventory.collections))
     except ValueError as error:
         raise AtomicMemoryMigrationError((str(error),)) from error
+    async with database.transaction() as connection:
+        await drop_legacy_citation_columns(connection)
     async with database.transaction() as connection:
         residual = await residual_issues(connection, await _tables(connection), thorough=False)
     if rebuilt_projection:
@@ -1468,7 +1468,7 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
                     await _rows(
                         connection,
                         "pc_artifacts",
-                        _ARTIFACT_COLUMNS,
+                        ("content",),
                         "WHERE scope_id = :scope AND family = 'atomic-memory' AND artifact_id = :id AND revision = :revision",
                         scope=entry.scope_id,
                         id=entry.artifact_id,

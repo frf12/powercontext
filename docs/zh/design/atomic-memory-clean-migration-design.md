@@ -347,14 +347,14 @@ pc_dream_runs.payload.run.candidate
 | 历史载体 | 迁移后的表示 |
 | --- | --- |
 | 全部旧格式终态 Dream | 保留 run ID、状态、时间、结果等普通元数据；原 request、input manifest 及其原摘要移入 `historical_data`。旧字段即使为空也完成格式转换，不要求旧 request 通过新的请求模型校验 |
-| 历史 HandoffReceipt | `unavailable_evidence` 中的旧 citation 是精确 entry 引用，按第 6 节与其他 Work Source 一样转换为 Atomic 引用；回执状态和证据列表保持有效，不需要历史格式。以 `kind: artifact` 引用整个集合的条目没有 Atomic 对应，在移除 Memory Family 注册的版本中移入 `historical_data`，不留在强类型字段中 |
+| 历史 HandoffReceipt | `unavailable_evidence` 中的旧 citation 是精确 entry 引用，按第 6 节与其他 Work Source 一样转换为 Atomic 引用；回执状态和证据列表保持有效，不需要历史格式。以 `kind: artifact` 引用整个集合的条目没有 Atomic 对应，按原值移入回执的 `historical_data`（格式 `powercontext.handoff-receipt-history.v1`），不留在强类型字段中；回执只因这些条目而不可用时，证据状态保持 `unavailable` |
 | ContentSource 的旧 `internal.target` | 只标记 lineage_only 写入回执的目标，运行时不据此读取旧 Memory，按原值保留 |
 
 上述历史数据写入各载体现有的 JSON 载荷，不新增历史表，也不为 Handoff statement、Work claim/check 或 Candidate 增加历史条目变体。失去必需证据的业务条目按第 5.2 节阻断升级。当前业务输入拒绝把这些无类型历史数据当作有效证据。
 
 原 `prepared_digest`、模型输入快照摘要、Prompt 和草稿摘要描述当时的内容，随历史信息保留，不按今天的引用重新计算。历史查询返回显式历史字段；调用方若提交它来恢复执行，明确拒绝。
 
-原有任务 ID 和幂等键关联保留。已完成请求的查询或幂等结果读取直接使用新历史记录及已保存的请求摘要，不重新解码旧 request 来计算摘要或重建输入。
+原有任务 ID 和幂等键关联保留。已完成请求的查询或幂等结果读取直接使用新历史记录及已保存的请求摘要，运行时不解码旧 request 或重建输入。旧请求模型里始终为空的 entry 引用字段会改变请求摘要，因此迁移在离线阶段删除未结束运行请求和输入清单中的空字段，并对未引用旧 entry 的请求按当前请求格式重算已保存的摘要，使相同请求的重试仍能命中原运行；引用过旧 entry 的请求无法再提交，保留原摘要。
 
 仍参与 Work 连续性、recurrence 或审批的结构化内容按第 6 节转换，不能整条塞进无类型字段后跳过业务处理。无类型字段只保存退出业务解释的历史部分。迁移完成后，业务目录中 `MemoryCitation` 和 `memory_citations` 零命中；旧解码代码只允许存在于登记的离线迁移资源中，运行时不得导入。
 
@@ -463,7 +463,7 @@ Dream 的 `refine_experience` 和 Experience Candidate 使用 Atomic 的普通 A
 
 ### 9.1 公共迁移版本与数据任务
 
-RFC 1771 的迁移执行器目前只管理四张 Artifact 表的结构版本，拒绝完整的服务端数据库，也没有数据任务执行器。因此归档、导入、引用转换和移除旧对象由 `atomic-memory-migrate` 自己执行，所需的结构变更（建立归档表、解除外键）也在同一命令中完成；它不另建私有进度表，完成状态由实际数据核验。Atomic 状态表和当前投影是功能前置条件。
+RFC 1771 的迁移执行器目前只管理四张 Artifact 表的结构版本，拒绝完整的服务端数据库，也没有数据任务执行器。因此归档、导入、引用转换和移除旧对象由 `atomic-memory-migrate` 自己执行，所需的结构变更（建立归档表、解除外键、删除旧引用列）也在同一命令中完成；它不另建私有进度表，完成状态由实际数据核验。Atomic 状态表和当前投影是功能前置条件。
 
 `apply` 的执行顺序为：
 
@@ -476,7 +476,7 @@ RFC 1771 的迁移执行器目前只管理四张 Artifact 表的结构版本，�
 
 旧集合移出以第 5 步验收通过为前提，所以普通启动只需检查公共表残留即可确认迁移完成，不重复全量验收。
 
-两张公共表的 `memory_citations` 列在转换后只保存空列表，在移除运行时该字段的版本中一起删除。
+两张公共表的 `memory_citations` 列在引用转换验收和公共表移出之后删除。删列是迁移的最后一步，启动门禁把该列存在视为迁移未完成；已移出全部集合但尚未删列的数据库重新执行迁移即可补完回执、Dream 和删列步骤。
 
 大量复制、引用改写和 embedding 不放在长 DDL 事务中。数据任务分批提交，失败后根据实际数据核验和重跑，不增加私有进度表，也不借用调度专属 schema/receipts。
 

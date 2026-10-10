@@ -164,7 +164,6 @@ class DreamService:
                 connection,
                 sources=request.sources,
                 artifacts=request.artifacts,
-                memory_citations=request.memory_citations,
                 project=False,
                 lock_memory=True,
             )
@@ -312,7 +311,6 @@ class DreamService:
                 bound,
                 sources=request.sources,
                 artifacts=request.artifacts,
-                memory_citations=request.memory_citations,
                 include_memory_text=request.operation != "derive_skill",
                 pinned=record.run.input_manifest,
                 lock_memory=connection is not None,
@@ -361,7 +359,6 @@ class DreamService:
                 plan.proposal,
                 sources=selected.sources,
                 artifacts=selected.artifacts,
-                memory_citations=selected.memory_citations,
                 target=record.run.target,
                 reason=plan.reason,
                 candidate_id=_candidate_id(record),

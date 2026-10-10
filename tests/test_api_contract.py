@@ -693,15 +693,16 @@ def test_source_reference_keeps_name_as_the_source_type() -> None:
     assert set(properties) == {"name", "source_id"}
 
 
-def test_memory_transport_has_one_reference_shape_and_nested_citations() -> None:
+def test_memory_transport_has_no_legacy_citation_shape() -> None:
     contract = yaml.safe_load(CONTRACT_PATH.read_text())
     schemas = contract["components"]["schemas"]
 
-    assert "MemoryReference" not in schemas
-    assert schemas["MemoryCitation"]["properties"]["memory_ref"] == {"$ref": "#/components/schemas/ArtifactReference"}
+    assert not {"MemoryReference", "MemoryCitation", "HandoffMemoryCitation"} & set(schemas)
+    assert "memory_citations" not in CONTRACT_PATH.read_text()
     for name in ("GetMemoryEntryRequest", "ReviseMemoryEntryRequest", "RetireMemoryEntryRequest"):
         properties = schemas[name]["properties"]
-        assert properties["citation"] == {"$ref": "#/components/schemas/MemoryCitation"}
+        # The Server rejects an exact legacy citation as unsupported instead of decoding it.
+        assert properties["citation"]["type"] == "object" and "properties" not in properties["citation"]
         assert "memory_id" not in properties
         assert "expected_revision" not in properties
 
@@ -730,11 +731,8 @@ def test_entry_list_hides_inactive_entries_unless_explicitly_requested() -> None
             GetMemoryEntryRequest,
             {
                 "scope_id": "scope",
-                "citation": {
-                    "memory_ref": {"family": "memory", "artifact_id": "memory-1", "revision": 1},
-                    "entry_id": "记忆",
-                    "entry_version_id": "version-1",
-                },
+                "citation": {"entry_id": "记忆"},
+                "target": {"type": "memory_entry", "family": "memory", "artifact_id": "memory-1", "entry_id": "记忆"},
             },
         ),
     ],

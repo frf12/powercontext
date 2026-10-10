@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import insert, select, text, tuple_
+from sqlalchemy import insert, inspect, select, text, tuple_
 
-from powercontext.artifacts import ArtifactRef, MemoryCitation
+from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
@@ -46,24 +46,25 @@ from powercontext.builtin.artifacts.experience.recurrence import (
 from powercontext.builtin.artifacts.handoff.models import (
     HandoffArtifactCitation,
     HandoffContent,
-    HandoffMemoryCitation,
     HandoffSourceCitation,
     HandoffStatement,
 )
-from powercontext.builtin.artifacts.memory import MemoryService
 from powercontext.builtin.artifacts.memory.canonical import canonical_json, entry_content_hash, normalize_refs
-from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamRecord, DreamRun
-from powercontext.builtin.evidence.models import EvidenceManifest, EvidenceNode
+from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamError, DreamRecord, DreamRun
+from powercontext.builtin.evidence.models import EvidenceManifest, EvidenceNode, content_digest
 from powercontext.builtin.evidence.resolver import EvidenceResolver, evidence_id
 from powercontext.builtin.evidence.selection import select_evidence
 from powercontext.builtin.inference import GenerationResult, character_token_estimator
 from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
 from powercontext.builtin.persistence.dream import DreamRepository
-from powercontext.builtin.persistence.errors import RepositoryNotFoundError
-from powercontext.builtin.persistence.memory import RelationalMemoryBackend
 from powercontext.builtin.persistence.migrations.atomic_memory_archive import ARCHIVE_TABLE
-from powercontext.builtin.persistence.migrations.atomic_memory_references import DECISIONS_FORMAT, load_decisions
+from powercontext.builtin.persistence.migrations.atomic_memory_references import (
+    DECISIONS_FORMAT,
+    RECEIPT_HISTORY_FORMAT,
+    load_decisions,
+)
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
+    AtomicMemoryMigrationError,
     apply_atomic_memory_migration,
     verify_atomic_memory_migration,
 )
@@ -78,17 +79,20 @@ from powercontext.builtin.persistence.tables import (
     ARTIFACT_LINEAGE_ARTIFACTS_TABLE,
     ARTIFACT_LINEAGE_SOURCES_TABLE,
     ARTIFACTS_TABLE,
+    DREAM_RUNS_TABLE,
     MEMORY_ENTRY_VERSIONS_TABLE,
     SCOPES_TABLE,
     SOURCES_TABLE,
 )
+from powercontext.builtin.records import BaseOperationNotSupportedError
 from powercontext.builtin.runtime import BuiltinConfig, RuntimeConfig, open_builtin_contexts
 from powercontext.builtin.runtime.atomic_memory_rebuild import rebuild_atomic_memory_projection
 from powercontext.builtin.sources.content import ContentSource, ContentSourceInternal, ContentSourceTarget
-from powercontext.builtin.work.models import TaskOutcome, WorkClaim
+from powercontext.builtin.work.models import HandoffReceipt, TaskOutcome
 from powercontext.server.authz import ArtifactOwnerRelation, MemoryEntrySelector, PrincipalRef, ResourceRef
 from powercontext.server.authz.repository import RelationalAccessRepository
 from powercontext.sources import SourceMaterialization, SourceRef
+from tests.legacy_memory import add_legacy_citation_columns
 
 SCOPE = "migration-evidence"
 COLLECTION = "legacy-memory"
@@ -101,8 +105,10 @@ EA = ArtifactRef(family="experience", artifact_id="task-a-experience", revision=
 EB = ArtifactRef(family="experience", artifact_id="task-b-experience", revision=1)
 
 
-def _collection(revision: int) -> ArtifactRef:
-    return ArtifactRef(family="memory", artifact_id=COLLECTION, revision=revision)
+def _collection(revision: int) -> dict[str, Any]:
+    """A legacy collection reference; today's ArtifactRef rejects this family."""
+
+    return {"family": "memory", "artifact_id": COLLECTION, "revision": revision}
 
 
 def _atomic(entry_id: str, revision: int) -> ArtifactRef:
@@ -140,6 +146,7 @@ async def _seed(config: SQLiteConfig, extra=None) -> bytes:
         await contexts.get(SCOPE)
         async with contexts.database.transaction() as connection:
             await create_tables(connection, (MEMORY_ENTRY_VERSIONS_TABLE,))
+            await add_legacy_citation_columns(connection)
             for source in (A, B, C):
                 await contexts.repositories.sources.add(
                     connection,
@@ -214,7 +221,6 @@ async def _seed(config: SQLiteConfig, extra=None) -> bytes:
                         artifact_id=COLLECTION,
                         revision=revision,
                         content=json.dumps(content).encode(),
-                        memory_citations=None,
                     )
                 )
                 await connection.execute(
@@ -333,7 +339,6 @@ async def _restore_public_collection(connection) -> None:
                 artifact_id=row["artifact_id"],
                 revision=row["revision"],
                 content=row["content"],
-                memory_citations=row["memory_citations"],
             )
         )
     await connection.execute(
@@ -342,22 +347,8 @@ async def _restore_public_collection(connection) -> None:
 
 
 def _resolver(contexts) -> EvidenceResolver:
-    async def read_memory(connection, citation):
-        service = MemoryService(
-            backend=RelationalMemoryBackend(
-                database=contexts.database,
-                scope_id=SCOPE,
-                artifacts=contexts.repositories.artifacts,
-                connection=connection,
-            )
-        )
-        return await service.validate_citation(citation)
-
     return EvidenceResolver(
-        scope_id=SCOPE,
-        sources=contexts.repositories.sources,
-        artifacts=contexts.repositories.artifacts,
-        memory_reader=read_memory,
+        scope_id=SCOPE, sources=contexts.repositories.sources, artifacts=contexts.repositories.artifacts
     )
 
 
@@ -507,14 +498,14 @@ def test_apply_replaces_the_collection_anchor_left_by_an_earlier_import(migrated
                     await connection.execute(
                         table.delete().where(*(table.c[key] == value for key, value in identity.items()))
                     )
-                for ordinal, ref in enumerate((_collection(2), EA, _atomic("alpha", 1))):
+                for ordinal, ref in enumerate((_collection(2), EA.model_dump(), _atomic("alpha", 1).model_dump())):
                     await connection.execute(
                         insert(ARTIFACT_LINEAGE_ARTIFACTS_TABLE).values(
                             **identity,
                             ordinal=ordinal,
-                            upstream_family=ref.family,
-                            upstream_artifact_id=ref.artifact_id,
-                            upstream_revision=ref.revision,
+                            upstream_family=ref["family"],
+                            upstream_artifact_id=ref["artifact_id"],
+                            upstream_revision=ref["revision"],
                         )
                     )
                 report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
@@ -596,8 +587,12 @@ def test_migrated_collection_leaves_public_artifact_reads(migrated) -> None:
             contexts.database.transaction() as connection,
         ):
             assert not await _public_collection_rows(connection)
-            with pytest.raises(RepositoryNotFoundError):
-                await contexts.repositories.artifacts.get(connection, SCOPE, _collection(2))
+        for read in (
+            contexts.records.get_artifact_revision(SCOPE, "memory", COLLECTION, 2),
+            contexts.records.list_artifact_revisions(SCOPE, "memory", COLLECTION, limit=10, cursor=None),
+        ):
+            with pytest.raises(BaseOperationNotSupportedError):
+                await read
 
     asyncio.run(scenario())
 
@@ -675,11 +670,11 @@ def test_source_flush_supplies_the_migrated_related_entry_current_content(migrat
     asyncio.run(scenario())
 
 
-ALPHA_2 = MemoryCitation(memory_ref=_collection(2), entry_id="alpha", entry_version_id="alpha-v2")
+ALPHA_2 = {"memory_ref": _collection(2), "entry_id": "alpha", "entry_version_id": "alpha-v2"}
+ALPHA_2_CITATION = {"kind": "memory", "memory_citation": ALPHA_2}
 OUTCOME = SourceRef(source_type="content", source_id="legacy-outcome")
-DREAM_REQUEST = CreateDreamRunRequest(
-    operation="refine_experience", memory_citations=(ALPHA_2,), idempotency_key="legacy-dream"
-)
+RECEIPT = SourceRef(source_type="content", source_id="legacy-receipt")
+OWNER = "migration-owner"
 
 
 def _experience(name: str) -> ExperienceContent:
@@ -691,16 +686,78 @@ def _experience(name: str) -> ExperienceContent:
     )
 
 
-def _outcome() -> TaskOutcome:
-    return TaskOutcome(
-        objective="Ship task A.",
-        status="failed",
-        summary="Deployment failed.",
-        observations=(
-            WorkClaim(
-                text="Deploy failed.", basis="verified", evidence=(HandoffMemoryCitation(memory_citation=ALPHA_2),)
-            ),
-        ),
+def _compact(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+# Legacy values are frozen JSON in the field order the removed models serialized.
+LEGACY_OBSERVATION = {"text": "Deploy failed.", "basis": "verified", "evidence": [ALPHA_2_CITATION]}
+LEGACY_OUTCOME = {
+    "schema": "powercontext.task-outcome.v1",
+    "trust": "untrusted_observation",
+    "objective": "Ship task A.",
+    "status": "failed",
+    "summary": "Deployment failed.",
+    "handoff_receipt_ref": None,
+    "observations": [LEGACY_OBSERVATION],
+    "checks": [],
+    "produced_artifacts": [],
+    "remaining_work": [],
+}
+
+
+def _legacy_request(idempotency_key: str, memory_citations: list[Any]) -> dict[str, Any]:
+    return {
+        "operation": "refine_experience",
+        "artifacts": [],
+        "memory_citations": memory_citations,
+        "sources": [],
+        "target": None,
+        "idempotency_key": idempotency_key,
+    }
+
+
+def _legacy_request_digest(request: dict[str, Any]) -> str:
+    return content_digest(_compact({name: value for name, value in request.items() if name != "idempotency_key"}))
+
+
+async def _legacy_dream(connection, run_id: str, status: str, request: dict[str, Any], manifest=None) -> None:
+    run = DreamRun.model_validate({
+        "scope_id": SCOPE,
+        "run_id": run_id,
+        "operation": "refine_experience",
+        "status": status,
+        "accepted_at": datetime(2026, 1, 2, tzinfo=UTC),
+    }).model_dump(mode="json", exclude={"historical_data"})
+    payload = {
+        "run": {**run, "input_manifest": manifest},
+        "request": request,
+        "principal_id": OWNER,
+        "generation": 0,
+        "request_generation": 0,
+        "deadline_at": None,
+    }
+    await connection.execute(
+        insert(DREAM_RUNS_TABLE).values(
+            scope_id=SCOPE,
+            run_id=run_id,
+            principal_key=content_digest(OWNER.encode())[7:],
+            idempotency_key=request["idempotency_key"],
+            request_digest=_legacy_request_digest(request),
+            operation="refine_experience",
+            status=status,
+            accepted_at=0,
+            generation=0,
+            request_generation=0,
+            payload=_compact(payload),
+        )
+    )
+
+
+async def _set_citations(connection, table: str, where: str, citations: list[Any], **identity: Any) -> None:
+    await connection.execute(
+        text(f"UPDATE {table} SET memory_citations = :citations WHERE {where}"),  # noqa: S608
+        {**identity, "citations": _compact(citations)},
     )
 
 
@@ -714,9 +771,17 @@ async def _candidate(connection, candidate_id: str, *, artifact_refs: list[Any],
             proposal=_experience(candidate_id).model_dump_json(by_alias=True).encode(),
             source_refs=b"[]",
             artifact_refs=json.dumps(artifact_refs).encode(),
-            memory_citations=None if citations is None else json.dumps(citations).encode(),
         )
     )
+    if citations is not None:
+        await _set_citations(
+            connection,
+            "pc_artifact_candidate_versions",
+            "scope_id = :scope AND candidate_id = :candidate",
+            citations,
+            scope=SCOPE,
+            candidate=candidate_id,
+        )
     await connection.execute(
         insert(ARTIFACT_CANDIDATE_HEADS_TABLE).values(
             scope_id=SCOPE, candidate_id=candidate_id, family="experience", version=1, status="pending"
@@ -738,35 +803,82 @@ async def _scope_row(connection) -> None:
     )
 
 
-async def _legacy_references(contexts, connection) -> None:
-    await contexts.repositories.artifacts.create(
-        connection,
-        SCOPE,
-        "cited-experience",
-        ExperienceDraft(content=_experience("cited"), sources=(A,), memory_citations=(ALPHA_2,)),
-    )
-    await contexts.repositories.artifacts.create(
-        connection,
-        SCOPE,
-        "collection-experience",
-        ExperienceDraft(content=_experience("collection"), sources=(B,), artifacts=(_collection(1),)),
-    )
-    await _candidate(connection, "cited-candidate", artifact_refs=[], citations=[ALPHA_2.model_dump(mode="json")])
-    handoff = HandoffContent(
+def _handoff_content(*citations: Any) -> dict[str, Any]:
+    """Serialize a Handoff whose single statement cites the given raw citation values."""
+
+    content = HandoffContent(
         objective="Continue task A.",
-        state=(HandoffStatement(text="Task A shipped.", citations=(HandoffMemoryCitation(memory_citation=ALPHA_2),)),),
+        state=(HandoffStatement(text="Task A shipped.", citations=(HandoffSourceCitation(source_ref=A),)),),
         disposition="complete",
-    )
-    await connection.execute(
+    ).model_dump(mode="json", by_alias=True)
+    content["state"][0]["citations"] = list(citations)
+    return content
+
+
+def _insert_handoff(connection, artifact_id: str, content: dict[str, Any]):
+    return connection.execute(
         insert(ARTIFACTS_TABLE).values(
-            scope_id=SCOPE,
-            family="handoff",
-            artifact_id="legacy-handoff",
-            revision=1,
-            content=handoff.model_dump_json(by_alias=True).encode(),
-            memory_citations=None,
+            scope_id=SCOPE, family="handoff", artifact_id=artifact_id, revision=1, content=_compact(content)
         )
     )
+
+
+async def _work_source(contexts, connection, ref: SourceRef, kind: str, schema: str, value: dict[str, Any]):
+    return await contexts.repositories.sources.add(
+        connection,
+        SCOPE,
+        ContentSource(
+            name=ref.source_id,
+            materialization=SourceMaterialization.CAPTURED,
+            content=json.dumps(value, ensure_ascii=False, indent=2),
+            metadata={"kind": kind, "schema": schema},
+        ),
+    )
+
+
+def _legacy_receipt(*unavailable: Any) -> dict[str, Any]:
+    return {
+        "schema": "powercontext.handoff-receipt.v1",
+        "trust": "untrusted_observation",
+        "receiver": "next-agent",
+        "status": "needs_clarification",
+        "selection": "exact",
+        "selected_revision": {"family": "handoff", "artifact_id": "legacy-handoff", "revision": 1},
+        "prepared_digest": None,
+        "receiver_checks": None,
+        "evidence_status": "unavailable",
+        "unavailable_evidence": list(unavailable),
+        "message": "Evidence was missing.",
+    }
+
+
+async def _legacy_references(contexts, connection) -> None:
+    for artifact_id, draft in (
+        ("cited-experience", ExperienceDraft(content=_experience("cited"), sources=(A,))),
+        ("collection-experience", ExperienceDraft(content=_experience("collection"), sources=(B,))),
+    ):
+        await contexts.repositories.artifacts.create(connection, SCOPE, artifact_id, draft)
+    await _set_citations(
+        connection,
+        "pc_artifacts",
+        "scope_id = :scope AND family = 'experience' AND artifact_id = 'cited-experience'",
+        [ALPHA_2],
+        scope=SCOPE,
+    )
+    await connection.execute(
+        insert(ARTIFACT_LINEAGE_ARTIFACTS_TABLE).values(
+            scope_id=SCOPE,
+            family="experience",
+            artifact_id="collection-experience",
+            revision=1,
+            ordinal=0,
+            upstream_family="memory",
+            upstream_artifact_id=COLLECTION,
+            upstream_revision=1,
+        )
+    )
+    await _candidate(connection, "cited-candidate", artifact_refs=[], citations=[ALPHA_2])
+    await _insert_handoff(connection, "legacy-handoff", _handoff_content(ALPHA_2_CITATION))
     await connection.execute(
         insert(ARTIFACT_LINEAGE_ARTIFACTS_TABLE).values(
             scope_id=SCOPE,
@@ -783,16 +895,8 @@ async def _legacy_references(contexts, connection) -> None:
         insert(ARTIFACT_HEADS_TABLE).values(scope_id=SCOPE, family="handoff", artifact_id="legacy-handoff", revision=1)
     )
     await _scope_row(connection)
-    outcome = _outcome()
-    stored = await contexts.repositories.sources.add(
-        connection,
-        SCOPE,
-        ContentSource(
-            name=OUTCOME.source_id,
-            materialization=SourceMaterialization.CAPTURED,
-            content=outcome.model_dump_json(by_alias=True, exclude_none=False, indent=2),
-            metadata={"kind": "task-outcome", "schema": "powercontext.task-outcome.v1"},
-        ),
+    stored = await _work_source(
+        contexts, connection, OUTCOME, "task-outcome", "powercontext.task-outcome.v1", LEGACY_OUTCOME
     )
     await RecurrenceRepository().append_match(
         connection,
@@ -804,7 +908,7 @@ async def _legacy_references(contexts, connection) -> None:
                 task_outcome_ref=OUTCOME,
                 item_kind="observation",
                 item_index=0,
-                item_digest=item_digest(outcome.observations[0]),
+                item_digest=content_digest(_compact(LEGACY_OBSERVATION)),
             ),
             candidate_set_mode="scope_heads",
             candidate_refs=(),
@@ -812,20 +916,47 @@ async def _legacy_references(contexts, connection) -> None:
             result="unmatched",
         ),
     )
-    await DreamRepository().create(
+    await _work_source(
+        contexts,
         connection,
-        DreamRecord(
-            run=DreamRun(
-                scope_id=SCOPE,
-                run_id="legacy-dream",
-                operation="refine_experience",
-                status="succeeded",
-                accepted_at=datetime(2026, 1, 2, tzinfo=UTC),
-            ),
-            request=DREAM_REQUEST,
-            principal_id="migration-owner",
-        ),
+        RECEIPT,
+        "handoff-receipt",
+        "powercontext.handoff-receipt.v1",
+        _legacy_receipt(ALPHA_2_CITATION, {"kind": "artifact", "artifact_ref": _collection(7)}),
     )
+    await _legacy_dream(connection, "cited-dream", "succeeded", _legacy_request("cited-dream", [ALPHA_2]))
+    plain_request = {**_legacy_request("plain-dream", []), "artifacts": [EA.model_dump(mode="json")]}
+    await _legacy_dream(connection, "plain-dream", "failed", plain_request)
+    pending_manifest = {
+        "transform_version": "powercontext.dream.evidence.v1",
+        "artifacts": [EA.model_dump(mode="json")],
+        "memory_citations": [],
+        "sources": [],
+        "nodes": [
+            {
+                "evidence_id": "ea",
+                "kind": "experience",
+                "digest": "0" * 64,
+                "source": None,
+                "artifact": EA.model_dump(mode="json"),
+                "memory_citations": [],
+                "role": "root",
+                "historical": False,
+                "current_entry_version_id": None,
+            }
+        ],
+        "edges": [],
+        "root_groups": [],
+        "projection_digest": "0" * 64,
+        "projection_bytes": 0,
+        "incomplete": False,
+    }
+    pending_request = {**_legacy_request("pending-dream", []), "artifacts": [EA.model_dump(mode="json")]}
+    await _legacy_dream(connection, "pending-dream", "running", pending_request, pending_manifest)
+
+
+def _new_request(idempotency_key: str, *artifacts: ArtifactRef) -> CreateDreamRunRequest:
+    return CreateDreamRunRequest(operation="refine_experience", artifacts=artifacts, idempotency_key=idempotency_key)
 
 
 def test_migration_converts_exact_citations_and_archives_collection_relationships(tmp_path: Path) -> None:
@@ -841,11 +972,13 @@ def test_migration_converts_exact_citations_and_archives_collection_relationship
             assert not await _public_collection_rows(connection)
             report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
             assert report.ready, report.errors
+            for table in ("pc_artifacts", "pc_artifact_candidate_versions"):
+                columns = await connection.run_sync(lambda sync, name=table: inspect(sync).get_columns(name))
+                assert "memory_citations" not in {column["name"] for column in columns}
 
             cited = await contexts.repositories.artifacts.get(
                 connection, SCOPE, ArtifactRef(family="experience", artifact_id="cited-experience", revision=1)
             )
-            assert cited.lineage.memory_citations == ()
             assert cited.lineage.artifacts == (alpha,)
 
             whole = await contexts.repositories.artifacts.get(
@@ -854,18 +987,10 @@ def test_migration_converts_exact_citations_and_archives_collection_relationship
             assert whole.lineage.artifacts == ()
             (incoming,) = (await _archive_metadata(connection, 1))["incoming_references"]
             assert incoming["referrer"]["artifact_id"] == "collection-experience"
-            assert incoming["value"] == _collection(1).model_dump(mode="json")
+            assert incoming["value"] == _collection(1)
 
-            candidate = (
-                await connection.execute(
-                    select(
-                        ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.artifact_refs,
-                        ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.memory_citations,
-                    ).where(ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.candidate_id == "cited-candidate")
-                )
-            ).one()
-            assert json.loads(candidate.artifact_refs) == [alpha.model_dump(mode="json")]
-            assert json.loads(candidate.memory_citations) == []
+            candidate = await contexts.review(SCOPE).get_candidate("cited-candidate")
+            assert candidate.artifacts == (alpha,)
 
             handoff = await contexts.repositories.artifacts.get(
                 connection, SCOPE, ArtifactRef(family="handoff", artifact_id="legacy-handoff", revision=1)
@@ -891,13 +1016,29 @@ def test_migration_converts_exact_citations_and_archives_collection_relationship
             assert match is not None
             assert match.failure_ref.item_digest == item_digest(converted.observations[0])
 
-            dream = await DreamRepository().get(connection, SCOPE, "legacy-dream")
-            assert dream.request is None and dream.run.input_manifest is None
-            history = dream.run.historical_data
-            assert history is not None and isinstance(history["request"], dict)
-            assert history["request"]["memory_citations"] == [ALPHA_2.model_dump(mode="json")]
-            replay = await DreamRepository().find_request(connection, SCOPE, "migration-owner", DREAM_REQUEST)
-            assert replay is not None and replay.run.run_id == "legacy-dream"
+            receipt_source = (await contexts.repositories.sources.get(connection, SCOPE, RECEIPT)).value
+            assert isinstance(receipt_source, ContentSource)
+            receipt = HandoffReceipt.model_validate_json(receipt_source.content)
+            assert receipt.unavailable_evidence == (HandoffArtifactCitation(artifact_ref=alpha),)
+            assert receipt.historical_data == {
+                "format": RECEIPT_HISTORY_FORMAT,
+                "unavailable_evidence": [{"kind": "artifact", "artifact_ref": _collection(7)}],
+            }
+
+            repository = DreamRepository()
+            cited_dream = await repository.get(connection, SCOPE, "cited-dream")
+            assert cited_dream.request is None and cited_dream.run.input_manifest is None
+            history = cited_dream.run.historical_data
+            assert history is not None and history["request"] == _legacy_request("cited-dream", [ALPHA_2])
+            # A request that cited legacy entries cannot be sent again; its key keeps the accepted digest.
+            with pytest.raises(DreamError, match="idempotency_conflict"):
+                await repository.find_request(connection, SCOPE, OWNER, _new_request("cited-dream", EA))
+            replay = await repository.find_request(connection, SCOPE, OWNER, _new_request("plain-dream", EA))
+            assert replay is not None and replay.run.run_id == "plain-dream" and replay.request is None
+            pending = await repository.find_request(connection, SCOPE, OWNER, _new_request("pending-dream", EA))
+            assert pending is not None and pending.request == _new_request("pending-dream", EA)
+            assert pending.run.input_manifest is not None
+            assert pending.run.input_manifest.nodes[0].artifact == EA
 
     asyncio.run(scenario())
 
@@ -906,9 +1047,7 @@ def test_candidate_left_without_evidence_blocks_until_an_explicit_replacement(tm
     config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'blocked.db'}")
 
     async def blocked(_contexts, connection) -> None:
-        await _candidate(
-            connection, "collection-candidate", artifact_refs=[_collection(1).model_dump(mode="json")], citations=None
-        )
+        await _candidate(connection, "collection-candidate", artifact_refs=[_collection(1)], citations=None)
 
     async def scenario() -> None:
         await _seed(config, blocked)
@@ -948,31 +1087,16 @@ def test_candidate_left_without_evidence_blocks_until_an_explicit_replacement(tm
     asyncio.run(scenario())
 
 
-def _insert_handoff(connection, artifact_id: str, content: HandoffContent):
-    return connection.execute(
-        insert(ARTIFACTS_TABLE).values(
-            scope_id=SCOPE,
-            family="handoff",
-            artifact_id=artifact_id,
-            revision=1,
-            content=content.model_dump_json(by_alias=True).encode(),
-            memory_citations=None,
-        )
-    )
-
-
 def test_handoff_collection_citation_is_archived_and_removed(tmp_path: Path) -> None:
     config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'handoff-collection.db'}")
 
     async def cited(_contexts, connection) -> None:
-        statement = HandoffStatement(
-            text="Task A shipped.",
-            citations=(HandoffArtifactCitation(artifact_ref=_collection(2)), HandoffSourceCitation(source_ref=A)),
-        )
         await _insert_handoff(
             connection,
             "mixed-handoff",
-            HandoffContent(objective="Continue.", state=(statement,), disposition="complete"),
+            _handoff_content(
+                {"kind": "artifact", "artifact_ref": _collection(2)}, HandoffSourceCitation(source_ref=A).model_dump()
+            ),
         )
 
     async def scenario() -> None:
@@ -997,13 +1121,8 @@ def test_handoff_supported_only_by_a_collection_blocks_before_any_change(tmp_pat
     config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'handoff-only-collection.db'}")
 
     async def cited(_contexts, connection) -> None:
-        statement = HandoffStatement(
-            text="Task A shipped.", citations=(HandoffArtifactCitation(artifact_ref=_collection(2)),)
-        )
         await _insert_handoff(
-            connection,
-            "orphan-handoff",
-            HandoffContent(objective="Continue.", state=(statement,), disposition="complete"),
+            connection, "orphan-handoff", _handoff_content({"kind": "artifact", "artifact_ref": _collection(2)})
         )
 
     async def scenario() -> None:
@@ -1030,7 +1149,6 @@ def test_collections_citing_each_other_are_removed_regardless_of_identifier_orde
                 artifact_id=cited,
                 revision=1,
                 content=json.dumps(empty).encode(),
-                memory_citations=None,
             )
         )
         await connection.execute(
@@ -1064,15 +1182,8 @@ def test_unfinished_dream_pinning_a_rewritten_source_blocks_migration(tmp_path: 
 
     async def pinned(contexts, connection) -> None:
         await _scope_row(connection)
-        await contexts.repositories.sources.add(
-            connection,
-            SCOPE,
-            ContentSource(
-                name=OUTCOME.source_id,
-                materialization=SourceMaterialization.CAPTURED,
-                content=_outcome().model_dump_json(by_alias=True, exclude_none=False, indent=2),
-                metadata={"kind": "task-outcome", "schema": "powercontext.task-outcome.v1"},
-            ),
+        await _work_source(
+            contexts, connection, OUTCOME, "task-outcome", "powercontext.task-outcome.v1", LEGACY_OUTCOME
         )
         manifest = EvidenceManifest(
             artifacts=(EA,),
@@ -1148,5 +1259,56 @@ def test_development_projection_layout_is_recreated_and_rebuilt_after_apply(tmp_
             async with profile.database.transaction() as connection:
                 report = await verify_atomic_memory_migration(connection, index=SQLiteAtomicMemoryIndex())
                 assert report.ready, report.errors
+
+    asyncio.run(scenario())
+
+
+def test_rerun_completes_a_database_left_by_an_earlier_reference_conversion(migrated) -> None:
+    config, _internal = migrated
+    left = _legacy_receipt({"kind": "artifact", "artifact_ref": _collection(7)})
+
+    async def receipt_payload(connection) -> bytes:
+        return await connection.scalar(
+            select(SOURCES_TABLE.c.payload).where(
+                SOURCES_TABLE.c.scope_id == SCOPE, SOURCES_TABLE.c.source_id == RECEIPT.source_id
+            )
+        )
+
+    async def scenario() -> None:
+        async with (
+            open_builtin_contexts(BuiltinConfig(database=config)) as contexts,
+            contexts.database.transaction() as connection,
+        ):
+            # The earlier conversion kept emptied citation columns and whole-collection receipt evidence.
+            await add_legacy_citation_columns(connection)
+            await _work_source(
+                contexts, connection, RECEIPT, "handoff-receipt", "powercontext.handoff-receipt.v1", left
+            )
+        with pytest.raises(AtomicMemoryMigrationError, match="memory_citations"):
+            async with open_builtin_contexts(BuiltinConfig(database=config)):
+                pytest.fail("Startup must wait for the reference conversion to finish")
+
+        applied = await _migrate(config)
+        assert applied.ready, applied.errors
+        async with (
+            open_builtin_contexts(BuiltinConfig(database=config)) as contexts,
+            contexts.database.transaction() as connection,
+        ):
+            stored = (await contexts.repositories.sources.get(connection, SCOPE, RECEIPT)).value
+            assert isinstance(stored, ContentSource)
+            receipt = HandoffReceipt.model_validate_json(stored.content)
+            assert receipt.evidence_status == "unavailable" and receipt.unavailable_evidence == ()
+            assert receipt.historical_data == {
+                "format": RECEIPT_HISTORY_FORMAT,
+                "unavailable_evidence": left["unavailable_evidence"],
+            }
+            converted = await receipt_payload(connection)
+            report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
+            assert report.ready, report.errors
+
+        repeated = await _migrate(config)
+        assert repeated.ready, repeated.errors
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            assert await receipt_payload(connection) == converted
 
     asyncio.run(scenario())

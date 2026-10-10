@@ -173,7 +173,7 @@ fn encoded_base_paths_reject_escape_aliases_and_support_unicode() {
 
 #[tokio::test]
 async fn invalid_successful_write_response_keeps_dispatch_uncertainty() {
-    let (api, request) = fixture(200, r#"{"memory":{"family":"memory","artifact_id":"m","revision":9007199254740992},"entry":null}"#).await;
+    let (api, request) = fixture(200, r#"{"changed":true,"records":[{"artifact":{"family":"atomic-memory","artifact_id":"a","revision":9007199254740992},"kind":"note","text":"synthetic note","state":"active","state_version":0,"merged_into_id":null}]}"#).await;
     let error = api
         .remember("scope-a", "synthetic note")
         .await
@@ -197,16 +197,12 @@ async fn atomic_records_survive_save_search_and_exact_revision_read() {
     )
     .await;
     let saved = api.remember("scope-a", "synthetic note").await.unwrap();
-    assert!(saved.entry.is_none());
+    assert!(saved.changed);
     assert_eq!(saved.records[0].text, text);
     request.await.unwrap();
     let (api, request) = fixture(200, serde_json::json!({"mode":"text","hits":[{"memory":record,"score":1,"matched_by":["text"]}]}).to_string()).await;
     let searched = api.search("scope-a", "synthetic").await.unwrap();
-    assert!(searched.hits[0].citation.is_none());
-    assert_eq!(
-        searched.hits[0].artifact,
-        Some(saved.records[0].artifact.clone())
-    );
+    assert_eq!(searched.hits[0].artifact, saved.records[0].artifact);
     request.await.unwrap();
     let revision = serde_json::json!({"scope_id":"scope-a","family":"atomic-memory","artifact_id":"atomic/a","revision":7,"content":{"schema":"powercontext.atomic-memory.v1","kind":kind,"text":text},"sources":[{"source_type":"note","source_id":"source-a"}],"artifacts":[],"content_digest":format!("sha256:{}", "0".repeat(64))});
     let (api, request) = fixture(200, revision.to_string()).await;
@@ -230,16 +226,4 @@ async fn atomic_records_survive_save_search_and_exact_revision_read() {
         SafeError::InvalidResponse
     );
     request.await.unwrap();
-}
-
-#[test]
-fn generated_memory_entry_union_roundtrips_both_supported_forms() {
-    use powercontext_desktop::transport::wire::GetMemoryEntryResponse;
-    for value in [
-        serde_json::json!({"artifact":{"family":"atomic-memory","artifact_id":"a","revision":1},"kind":"note","text":"Atomic","state":"active","state_version":0,"merged_into_id":null}),
-        serde_json::json!({"citation":{"memory_ref":{"family":"memory","artifact_id":"m","revision":1},"entry_id":"e","entry_version_id":"v"},"version":1,"kind":"note","text":"Historical","state":"active","source_refs":[],"artifact_refs":[]}),
-    ] {
-        let decoded: GetMemoryEntryResponse = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap(), value);
-    }
 }

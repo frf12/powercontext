@@ -299,7 +299,7 @@ def test_mcp_describes_review_write_side_effects_for_host_approval() -> None:
         assert decision.openWorldHint is False
 
 
-def test_mcp_memory_reads_preserve_exact_and_legacy_target_addresses() -> None:
+def test_mcp_memory_reads_keep_legacy_target_and_exact_artifact_addresses() -> None:
     async def exact_entry_tool_schemas() -> dict[str, dict[str, Any]]:
         server = create_mcp_server(create_app())
         async with Client(server) as client:
@@ -314,7 +314,8 @@ def test_mcp_memory_reads_preserve_exact_and_legacy_target_addresses() -> None:
     assert set(schemas) == {"get_memory_entry", "get_artifact_revision"}
     properties = schemas["get_memory_entry"]["properties"]
     assert "memory_id" not in properties
-    assert set(properties["citation"]["properties"]) == {"memory_ref", "entry_id", "entry_version_id"}
+    # Exact legacy citations are rejected by the Server; the tool keeps them opaque.
+    assert properties["citation"]["type"] == "object" and "properties" not in properties["citation"]
     assert set(properties["target"]["properties"]) == {"type", "family", "artifact_id", "entry_id"}
     assert set(schemas["get_artifact_revision"]["required"]) == {"scope_id", "family", "artifact_id", "revision"}
 

@@ -152,7 +152,6 @@ async def _seed_legacy(tmp_path: Path, scope_id: str, *, revoked: bool = False, 
                 artifact_id="memory",
                 revision=1,
                 content=json.dumps(content).encode(),
-                memory_citations=None,
             )
         )
         await connection.execute(

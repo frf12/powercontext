@@ -2045,17 +2045,16 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
         "/v1/memory/entries/get": {
             "post": {
                 "tags": ["memory"],
-                "summary": "Read exact legacy history or mapped current Atomic Memory",
-                "description": "Supply exactly one citation or "
-                "target. A citation reads its exact "
-                "frozen historical entry version. A "
-                "legacy target must exist in its "
-                "frozen latest manifest, then maps "
+                "summary": "Read the current Atomic Memory mapped from a legacy target",
+                "description": "A legacy logical target maps "
                 "deterministically to current Atomic "
                 "Memory with current state. Merged "
                 "targets are returned without "
                 "automatically following their "
-                "result.",
+                "result. Exact historical citations "
+                "are unsupported; read exact Atomic "
+                "revisions through the Artifact "
+                "revision endpoint.",
                 "operationId": "get_memory_entry",
                 "requestBody": {
                     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GetMemoryEntryRequest"}}},
@@ -5178,12 +5177,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "required": ["changed", "restored", "retired", "undo_merge_results"],
             },
             "LegacyMemoryTarget": {"$ref": "#/components/schemas/MemoryEntryTagTarget"},
-            "GetMemoryEntryResponse": {
-                "oneOf": [
-                    {"$ref": "#/components/schemas/MemoryEntry"},
-                    {"$ref": "#/components/schemas/AtomicMemoryRecord"},
-                ]
-            },
+            "GetMemoryEntryResponse": {"$ref": "#/components/schemas/AtomicMemoryRecord"},
             "AtomicMemoryContentSchema": {"type": "string", "enum": ["powercontext.atomic-memory.v1"]},
             "AtomicMemorySearchMode": {"type": "string", "enum": ["text", "vector", "hybrid"]},
             "AtomicMemoryRestorationOperation": {"type": "string", "enum": ["restore", "undo_merge"]},
@@ -5412,11 +5406,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "content": {"additionalProperties": True, "type": "object"},
                     "sources": {"items": {"$ref": "#/components/schemas/SourceTypeReference"}, "type": "array"},
                     "artifacts": {"items": {"$ref": "#/components/schemas/ArtifactReference"}, "type": "array"},
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "default": [],
-                    },
                     "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                 },
                 "type": "object",
@@ -5731,11 +5720,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "type": "array",
                         "default": [],
                     },
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "default": [],
-                    },
                     "sources": {
                         "items": {"$ref": "#/components/schemas/DreamSourceReference"},
                         "type": "array",
@@ -5753,12 +5737,12 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["operation", "idempotency_key"],
                 "description": "Select 1-20 exact Experience "
-                "or Memory citations after "
-                "deduplication, with at most "
-                "32 combined references "
+                "or Atomic Memory Artifacts "
+                "after deduplication, with at "
+                "most 32 combined references "
                 "including Sources. Only "
                 "refine_experience accepts "
-                "Memory citations or a "
+                "Atomic Memory Artifacts or a "
                 "target.",
             },
             "DreamBudget": {
@@ -5810,11 +5794,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "type": "array",
                         "default": [],
                     },
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "default": [],
-                    },
                     "sources": {
                         "items": {"$ref": "#/components/schemas/DreamSourceReference"},
                         "type": "array",
@@ -5850,14 +5829,8 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "digest": {"type": "string"},
                     "source": {"$ref": "#/components/schemas/DreamSourceReference", "nullable": True},
                     "artifact": {"$ref": "#/components/schemas/ArtifactReference", "nullable": True},
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "default": [],
-                    },
                     "role": {"$ref": "#/components/schemas/DreamEvidenceRole"},
                     "historical": {"type": "boolean", "default": False},
-                    "current_entry_version_id": {"type": "string", "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
@@ -5937,26 +5910,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "ArtifactCandidate": {
                 "properties": {
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "maxItems": 32,
-                        "description": "Exact "
-                        "Memory "
-                        "entry "
-                        "provenance; "
-                        "non-empty "
-                        "only "
-                        "for "
-                        "Experience. "
-                        "Counted "
-                        "toward "
-                        "the "
-                        "combined "
-                        "evidence "
-                        "bound.",
-                        "default": [],
-                    },
                     "permissions": {
                         "$ref": "#/components/schemas/CandidatePermissions",
                         "description": "Current "
@@ -7334,14 +7287,12 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "oneOf": [
                     {"$ref": "#/components/schemas/HandoffSourceCitation"},
                     {"$ref": "#/components/schemas/HandoffArtifactCitation"},
-                    {"$ref": "#/components/schemas/HandoffMemoryCitation"},
                 ],
                 "discriminator": {
                     "propertyName": "kind",
                     "mapping": {
                         "source": "#/components/schemas/HandoffSourceCitation",
                         "artifact": "#/components/schemas/HandoffArtifactCitation",
-                        "memory": "#/components/schemas/HandoffMemoryCitation",
                     },
                 },
             },
@@ -7404,15 +7355,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["claim", "state_index", "status", "unavailable_evidence"],
-            },
-            "HandoffMemoryCitation": {
-                "properties": {
-                    "kind": {"type": "string", "enum": ["memory"]},
-                    "memory_citation": {"$ref": "#/components/schemas/MemoryCitation"},
-                },
-                "additionalProperties": False,
-                "type": "object",
-                "required": ["kind", "memory_citation"],
             },
             "HandoffOmission": {
                 "properties": {
@@ -7589,26 +7531,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "ExperienceArtifact": {
                 "properties": {
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "maxItems": 32,
-                        "description": "Exact "
-                        "Memory "
-                        "entry "
-                        "provenance; "
-                        "non-empty "
-                        "only "
-                        "for "
-                        "Experience. "
-                        "Counted "
-                        "toward "
-                        "the "
-                        "combined "
-                        "evidence "
-                        "bound.",
-                        "default": [],
-                    },
                     "artifact": {"$ref": "#/components/schemas/ArtifactReference"},
                     "content": {"$ref": "#/components/schemas/ExperienceProposal"},
                     "source_refs": {"items": {"$ref": "#/components/schemas/SourceReference"}, "type": "array"},
@@ -7706,26 +7628,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "SkillArtifact": {
                 "properties": {
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "maxItems": 32,
-                        "description": "Exact "
-                        "Memory "
-                        "entry "
-                        "provenance; "
-                        "non-empty "
-                        "only "
-                        "for "
-                        "Experience. "
-                        "Counted "
-                        "toward "
-                        "the "
-                        "combined "
-                        "evidence "
-                        "bound.",
-                        "default": [],
-                    },
                     "artifact": {"$ref": "#/components/schemas/ArtifactReference"},
                     "content": {"$ref": "#/components/schemas/SkillProposal"},
                     "source_refs": {"items": {"$ref": "#/components/schemas/SourceReference"}, "type": "array"},
@@ -8549,16 +8451,32 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "oneOf": [{"required": ["citation"]}, {"required": ["target"]}],
                 "properties": {
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
-                    "citation": {"$ref": "#/components/schemas/MemoryCitation"},
+                    "citation": {
+                        "type": "object",
+                        "description": "Legacy "
+                        "exact "
+                        "Memory "
+                        "entry "
+                        "citation. "
+                        "Requests "
+                        "that "
+                        "supply "
+                        "it "
+                        "are "
+                        "rejected "
+                        "as "
+                        "unsupported.",
+                    },
                     "target": {"$ref": "#/components/schemas/LegacyMemoryTarget"},
                 },
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["scope_id"],
-                "description": "Supply exactly one exact "
-                "historical citation or a "
-                "legacy logical target mapped "
-                "to current Atomic Memory.",
+                "description": "Supply a legacy logical "
+                "target mapped to current "
+                "Atomic Memory. A supplied "
+                "citation is rejected as "
+                "unsupported.",
                 "x-powercontext-exclusive-fields": ["citation", "target"],
             },
             "GetTopicMemoryRequest": {
@@ -8709,20 +8627,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["scope_id"],
             },
-            "MemoryEntry": {
-                "properties": {
-                    "citation": {"$ref": "#/components/schemas/MemoryCitation"},
-                    "version": {"type": "integer", "minimum": 1.0},
-                    "kind": {"type": "string"},
-                    "text": {"type": "string"},
-                    "state": {"$ref": "#/components/schemas/MemoryEntryState"},
-                    "source_refs": {"items": {"$ref": "#/components/schemas/SourceReference"}, "type": "array"},
-                    "artifact_refs": {"items": {"$ref": "#/components/schemas/ArtifactReference"}, "type": "array"},
-                },
-                "additionalProperties": False,
-                "type": "object",
-                "required": ["citation", "version", "kind", "text", "state", "source_refs", "artifact_refs"],
-            },
             "MemoryMutationResponse": {
                 "properties": {
                     "changed": {"type": "boolean"},
@@ -8731,21 +8635,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["changed", "records"],
-            },
-            "MemoryCitation": {
-                "properties": {
-                    "memory_ref": {"$ref": "#/components/schemas/ArtifactReference"},
-                    "entry_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
-                    "entry_version_id": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "minLength": 1,
-                        "pattern": "^[\\x21-\\x7E]+$",
-                    },
-                },
-                "additionalProperties": False,
-                "type": "object",
-                "required": ["memory_ref", "entry_id", "entry_version_id"],
             },
             "MemoryRevisionChanges": {
                 "properties": {
@@ -9187,26 +9076,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "ContextAssemblyMetadata": {"type": "string", "enum": ["confidence", "recall_rank"]},
             "ProposeExperienceRequest": {
                 "properties": {
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "maxItems": 32,
-                        "description": "Exact "
-                        "Memory "
-                        "entry "
-                        "provenance; "
-                        "non-empty "
-                        "only "
-                        "for "
-                        "Experience. "
-                        "Counted "
-                        "toward "
-                        "the "
-                        "combined "
-                        "evidence "
-                        "bound.",
-                        "default": [],
-                    },
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
                     "proposal": {"$ref": "#/components/schemas/ExperienceProposal"},
                     "source_refs": {
@@ -9436,7 +9305,22 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "RetireMemoryEntryRequest": {
                 "properties": {
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
-                    "citation": {"$ref": "#/components/schemas/MemoryCitation"},
+                    "citation": {
+                        "type": "object",
+                        "description": "Legacy "
+                        "exact "
+                        "Memory "
+                        "entry "
+                        "citation. "
+                        "Requests "
+                        "that "
+                        "supply "
+                        "it "
+                        "are "
+                        "rejected "
+                        "as "
+                        "unsupported.",
+                    },
                     "reason": {"type": "string", "maxLength": 512, "nullable": True},
                 },
                 "additionalProperties": False,
@@ -9456,32 +9340,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "ReviseArtifactCandidateRequest": {
                 "properties": {
-                    "memory_citations": {
-                        "items": {"$ref": "#/components/schemas/MemoryCitation"},
-                        "type": "array",
-                        "maxItems": 32,
-                        "description": "Omission "
-                        "or "
-                        "null "
-                        "retains "
-                        "the "
-                        "current "
-                        "citations; "
-                        "an "
-                        "explicit "
-                        "array "
-                        "replaces "
-                        "them, "
-                        "including "
-                        "an "
-                        "empty "
-                        "array. "
-                        "Non-empty "
-                        "only "
-                        "for "
-                        "Experience.",
-                        "nullable": True,
-                    },
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
                     "candidate_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
                     "expected_version": {"type": "integer", "minimum": 1.0},
@@ -9545,7 +9403,22 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "ReviseMemoryEntryRequest": {
                 "properties": {
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
-                    "citation": {"$ref": "#/components/schemas/MemoryCitation"},
+                    "citation": {
+                        "type": "object",
+                        "description": "Legacy "
+                        "exact "
+                        "Memory "
+                        "entry "
+                        "citation. "
+                        "Requests "
+                        "that "
+                        "supply "
+                        "it "
+                        "are "
+                        "rejected "
+                        "as "
+                        "unsupported.",
+                    },
                     "kind": {"type": "string", "maxLength": 128, "minLength": 1},
                     "text": {
                         "type": "string",
@@ -9557,17 +9430,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["scope_id", "citation", "kind", "text"],
-            },
-            "SearchMemoryHit": {
-                "properties": {
-                    "citation": {"$ref": "#/components/schemas/MemoryCitation"},
-                    "text": {"type": "string"},
-                    "score": {"type": "number", "maximum": 1.0, "minimum": 0.0},
-                    "matched_by": {"items": {"$ref": "#/components/schemas/MemoryMatchedBy"}, "type": "array"},
-                },
-                "additionalProperties": False,
-                "type": "object",
-                "required": ["citation", "text", "score", "matched_by"],
             },
             "SearchTopicMemoryHit": {
                 "properties": {
@@ -10129,12 +9991,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "mutation "
                         "precondition.",
                     },
-                    "reference": {
-                        "oneOf": [
-                            {"$ref": "#/components/schemas/ArtifactReference"},
-                            {"$ref": "#/components/schemas/MemoryCitation"},
-                        ]
-                    },
+                    "reference": {"$ref": "#/components/schemas/ArtifactReference"},
                 },
                 "additionalProperties": False,
                 "type": "object",
@@ -10583,8 +10440,6 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "enum": ["topic_fts", "topic_vector", "detail_fts", "detail_vector"],
             },
             "TopicMemoryUsedSearchMode": {"type": "string", "enum": ["fts", "hybrid"]},
-            "MemoryEntryState": {"type": "string", "enum": ["active", "inactive"]},
-            "MemoryMatchedBy": {"type": "string", "enum": ["fts", "vector"]},
             "MemorySearchMode": {"type": "string", "enum": ["auto", "fts", "vector", "hybrid"]},
             "MemoryUsedSearchMode": {"type": "string", "enum": ["fts", "vector", "hybrid"]},
             "HandoffClaim": {"type": "string", "enum": ["state", "next_action"]},

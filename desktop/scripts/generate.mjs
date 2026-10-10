@@ -34,7 +34,6 @@ const wanted = [
   "get_default_scope",
   "remember_memory",
   "search_memory",
-  "get_memory_entry",
   "get_artifact_revision",
 ];
 const operations = {};

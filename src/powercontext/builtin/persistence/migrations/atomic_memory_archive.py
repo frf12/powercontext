@@ -59,7 +59,8 @@ ARCHIVE_TABLE = Table(
     Column("metadata", _blob(), nullable=False),
 )
 
-ARTIFACT_COLUMNS = ("scope_id", "family", "artifact_id", "revision", "content", "memory_citations")
+LEGACY_CITATION_COLUMN = "memory_citations"
+ARTIFACT_COLUMNS = ("scope_id", "family", "artifact_id", "revision", "content", LEGACY_CITATION_COLUMN)
 HEAD_COLUMNS = (
     "scope_id",
     "family",
@@ -173,6 +174,19 @@ class LegacyCollection:
 
 async def table_names(connection: AsyncConnection) -> set[str]:
     return set(await connection.run_sync(lambda value: inspect(value).get_table_names()))
+
+
+async def has_column(connection: AsyncConnection, table: str, column: str) -> bool:
+    columns = await connection.run_sync(lambda value: inspect(value).get_columns(table))
+    return any(item["name"] == column for item in columns)
+
+
+async def live_artifact_columns(connection: AsyncConnection) -> tuple[str, ...]:
+    """Public Artifact columns; completion drops the legacy citation column, which then reads as absent."""
+
+    if await has_column(connection, "pc_artifacts", LEGACY_CITATION_COLUMN):
+        return ARTIFACT_COLUMNS
+    return tuple(name for name in ARTIFACT_COLUMNS if name != LEGACY_CITATION_COLUMN)
 
 
 async def rows(
@@ -301,7 +315,7 @@ async def archive_collection(connection: AsyncConnection, scope_id: str, memory_
     live = await rows(
         connection,
         "pc_artifacts",
-        ARTIFACT_COLUMNS,
+        await live_artifact_columns(connection),
         "WHERE scope_id = :scope AND family = 'memory' AND artifact_id = :memory ORDER BY revision",
         scope=scope_id,
         memory=memory_id,
@@ -321,7 +335,7 @@ async def archive_collection(connection: AsyncConnection, scope_id: str, memory_
             old["revision"] == new["revision"]
             and bytes(old["content"]) == bytes(new["content"])
             and (None if old["memory_citations"] is None else bytes(old["memory_citations"]))
-            == (None if new["memory_citations"] is None else bytes(new["memory_citations"]))
+            == (None if new.get("memory_citations") is None else bytes(new["memory_citations"]))
             for old, new in zip(archived, live, strict=False)
         )
         if not same:
@@ -350,7 +364,7 @@ async def archive_collection(connection: AsyncConnection, scope_id: str, memory_
                 artifact_id=row["artifact_id"],
                 revision=row["revision"],
                 content=bytes(row["content"]),
-                memory_citations=None if row["memory_citations"] is None else bytes(row["memory_citations"]),
+                memory_citations=None if row.get("memory_citations") is None else bytes(row["memory_citations"]),
                 metadata=_dump(metadata),
             )
         )
@@ -391,7 +405,10 @@ async def load_collections(connection: AsyncConnection, tables: set[str]) -> dic
         return result
     live: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in await rows(
-        connection, "pc_artifacts", ARTIFACT_COLUMNS, "WHERE family = 'memory' ORDER BY scope_id, artifact_id, revision"
+        connection,
+        "pc_artifacts",
+        await live_artifact_columns(connection),
+        "WHERE family = 'memory' ORDER BY scope_id, artifact_id, revision",
     ):
         live.setdefault((row["scope_id"], row["artifact_id"]), []).append(row)
     for key, revisions in live.items():
@@ -450,6 +467,7 @@ __all__ = [
     "BINDING_COLUMNS",
     "HEAD_COLUMNS",
     "IDEMPOTENCY_COLUMNS",
+    "LEGACY_CITATION_COLUMN",
     "OWNER_COLUMNS",
     "TAG_COLUMNS",
     "LegacyCollection",
@@ -459,6 +477,8 @@ __all__ = [
     "encode_row",
     "ensure_archive_table",
     "frozen_identity",
+    "has_column",
+    "live_artifact_columns",
     "load_collections",
     "load_metadata",
     "rows",

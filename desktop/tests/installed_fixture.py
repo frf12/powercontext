@@ -41,27 +41,16 @@ def fixture_compatibility_profile() -> str:
 
 
 def search_reference(hit: dict[str, Any]) -> dict[str, Any]:
-    if "memory" in hit:
-        return hit["memory"]["artifact"]
-    return hit["citation"]
+    return hit["memory"]["artifact"]
 
 
 def saved_reference(saved: dict[str, Any]) -> dict[str, Any]:
-    if "records" in saved:
-        if len(saved["records"]) != 1:
-            raise HarnessFailure("installed_saved_atomic_record_count")
-        return saved["records"][0]["artifact"]
-    return saved["entry"]["citation"]
+    if len(saved["records"]) != 1:
+        raise HarnessFailure("installed_saved_atomic_record_count")
+    return saved["records"][0]["artifact"]
 
 
 def exact_memory_text(server: httpx.Client, scope: str, reference: dict[str, Any]) -> str:
-    if "memory_ref" in reference:
-        response = server.post("/v1/memory/entries/get", json={"scope_id": scope, "citation": reference})
-        response.raise_for_status()
-        value = response.json()
-        if value["citation"] != reference:
-            raise HarnessFailure("installed_independent_exact_read_mismatch")
-        return value["text"]
     if reference["family"] != "atomic-memory":
         raise HarnessFailure("installed_unsupported_memory_reference")
     response = server.get(

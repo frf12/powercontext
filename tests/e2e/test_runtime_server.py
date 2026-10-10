@@ -74,7 +74,6 @@ from powercontext.http import (
     HandoffSourceCitation,
     ListMemoryChangesRequest,
     ListMemoryEntriesRequest,
-    MemoryCitation,
     PrepareContextRequest,
     PublishArtifactRequest,
     ReadinessStatus,
@@ -837,11 +836,11 @@ def test_sdk_memory_lifecycle_reaches_one_composed_runtime(tmp_path: Path) -> No
             forgotten_exact = await client.get_artifact_revision(
                 scope_id, ref.family, ref.artifact_id, revised.revision
             )
-            legacy = MemoryCitation.model_validate({
+            legacy = {
                 "memory_ref": {"family": "memory", "artifact_id": "legacy-collection", "revision": 1},
                 "entry_id": "legacy-entry",
                 "entry_version_id": "legacy-version",
-            })
+            }
             with pytest.raises(ServerResponseError) as inactive:
                 await client.revise_memory_entry(
                     ReviseMemoryEntryRequest(

@@ -1982,9 +1982,9 @@ paths:
   /v1/memory/entries/get:
     post:
       tags: [memory]
-      summary: Read exact legacy history or mapped current Atomic Memory
+      summary: Read the current Atomic Memory mapped from a legacy target
       description: >-
-        Supply exactly one citation or target. A citation reads its exact frozen historical entry version. A legacy target must exist in its frozen latest manifest, then maps deterministically to current Atomic Memory with current state. Merged targets are returned without automatically following their result.
+        A legacy logical target maps deterministically to current Atomic Memory with current state. Merged targets are returned without automatically following their result. Exact historical citations are unsupported; read exact Atomic revisions through the Artifact revision endpoint.
       operationId: get_memory_entry
       x-powercontext-access: {resolver: exact_memory_access}
       x-powercontext-scope-mode: current
@@ -5249,9 +5249,7 @@ components:
     LegacyMemoryTarget:
       $ref: '#/components/schemas/MemoryEntryTagTarget'
     GetMemoryEntryResponse:
-      oneOf:
-      - $ref: '#/components/schemas/MemoryEntry'
-      - $ref: '#/components/schemas/AtomicMemoryRecord'
+      $ref: '#/components/schemas/AtomicMemoryRecord'
     AtomicMemoryContentSchema:
       type: string
       enum:
@@ -5613,11 +5611,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ArtifactReference"
-        memory_citations:
-          type: array
-          default: []
-          items:
-            $ref: "#/components/schemas/MemoryCitation"
         content_digest:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
@@ -6058,11 +6051,6 @@ components:
           items:
             $ref: '#/components/schemas/ArtifactReference'
           type: array
-        memory_citations:
-          default: []
-          items:
-            $ref: '#/components/schemas/MemoryCitation'
-          type: array
         sources:
           default: []
           items:
@@ -6080,8 +6068,8 @@ components:
       - operation
       - idempotency_key
       type: object
-      description: Select 1-20 exact Experience or Memory citations after deduplication, with at most 32 combined references
-        including Sources. Only refine_experience accepts Memory citations or a target.
+      description: Select 1-20 exact Experience or Atomic Memory Artifacts after deduplication, with at most 32 combined
+        references including Sources. Only refine_experience accepts Atomic Memory Artifacts or a target.
     DreamBudget:
       additionalProperties: false
       properties:
@@ -6177,11 +6165,6 @@ components:
           items:
             $ref: '#/components/schemas/ArtifactReference'
           type: array
-        memory_citations:
-          default: []
-          items:
-            $ref: '#/components/schemas/MemoryCitation'
-          type: array
         sources:
           default: []
           items:
@@ -6229,19 +6212,11 @@ components:
         artifact:
           $ref: '#/components/schemas/ArtifactReference'
           nullable: true
-        memory_citations:
-          default: []
-          items:
-            $ref: '#/components/schemas/MemoryCitation'
-          type: array
         role:
           $ref: '#/components/schemas/DreamEvidenceRole'
         historical:
           default: false
           type: boolean
-        current_entry_version_id:
-          type: string
-          nullable: true
       required:
       - evidence_id
       - kind
@@ -6358,13 +6333,6 @@ components:
         - result_artifact
         - decision_reason
       properties:
-        memory_citations:
-          type: array
-          maxItems: 32
-          default: []
-          description: Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-          items:
-            $ref: "#/components/schemas/MemoryCitation"
         permissions:
           $ref: "#/components/schemas/CandidatePermissions"
           nullable: true
@@ -7634,13 +7602,11 @@ components:
       oneOf:
         - $ref: "#/components/schemas/HandoffSourceCitation"
         - $ref: "#/components/schemas/HandoffArtifactCitation"
-        - $ref: "#/components/schemas/HandoffMemoryCitation"
       discriminator:
         propertyName: kind
         mapping:
           source: "#/components/schemas/HandoffSourceCitation"
           artifact: "#/components/schemas/HandoffArtifactCitation"
-          memory: "#/components/schemas/HandoffMemoryCitation"
     HandoffContent:
       type: object
       additionalProperties: false
@@ -7719,16 +7685,6 @@ components:
           maxItems: 32
           items:
             $ref: "#/components/schemas/HandoffCitation"
-    HandoffMemoryCitation:
-      type: object
-      additionalProperties: false
-      required: [kind, memory_citation]
-      properties:
-        kind:
-          type: string
-          enum: [memory]
-        memory_citation:
-          $ref: "#/components/schemas/MemoryCitation"
     HandoffOmission:
       type: object
       additionalProperties: false
@@ -7940,13 +7896,6 @@ components:
       additionalProperties: false
       required: [artifact, content, source_refs, artifact_refs]
       properties:
-        memory_citations:
-          type: array
-          maxItems: 32
-          default: []
-          description: Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-          items:
-            $ref: "#/components/schemas/MemoryCitation"
         artifact:
           $ref: "#/components/schemas/ArtifactReference"
         content:
@@ -8086,13 +8035,6 @@ components:
       additionalProperties: false
       required: [artifact, content, source_refs, artifact_refs]
       properties:
-        memory_citations:
-          type: array
-          maxItems: 32
-          default: []
-          description: Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-          items:
-            $ref: "#/components/schemas/MemoryCitation"
         artifact:
           $ref: "#/components/schemas/ArtifactReference"
         content:
@@ -9205,10 +9147,11 @@ components:
           maxLength: 256
           pattern: '.*\S.*'
         citation:
-          $ref: "#/components/schemas/MemoryCitation"
+          type: object
+          description: Legacy exact Memory entry citation. Requests that supply it are rejected as unsupported.
         target:
           $ref: "#/components/schemas/LegacyMemoryTarget"
-      description: Supply exactly one exact historical citation or a legacy logical target mapped to current Atomic Memory.
+      description: Supply a legacy logical target mapped to current Atomic Memory. A supplied citation is rejected as unsupported.
     GetTopicMemoryRequest:
       type: object
       additionalProperties: false
@@ -9408,37 +9351,6 @@ components:
         include_unavailable:
           type: boolean
           default: false
-    MemoryEntry:
-      type: object
-      additionalProperties: false
-      required:
-        - citation
-        - version
-        - kind
-        - text
-        - state
-        - source_refs
-        - artifact_refs
-      properties:
-        citation:
-          $ref: "#/components/schemas/MemoryCitation"
-        version:
-          type: integer
-          minimum: 1
-        kind:
-          type: string
-        text:
-          type: string
-        state:
-          $ref: "#/components/schemas/MemoryEntryState"
-        source_refs:
-          type: array
-          items:
-            $ref: "#/components/schemas/SourceReference"
-        artifact_refs:
-          type: array
-          items:
-            $ref: "#/components/schemas/ArtifactReference"
     MemoryMutationResponse:
       type: object
       additionalProperties: false
@@ -9452,23 +9364,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AtomicMemoryRecord'
-    MemoryCitation:
-      type: object
-      additionalProperties: false
-      required: [memory_ref, entry_id, entry_version_id]
-      properties:
-        memory_ref:
-          $ref: "#/components/schemas/ArtifactReference"
-        entry_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[\x21-\x7E]+$'
-        entry_version_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[\x21-\x7E]+$'
     MemoryRevisionChanges:
       type: object
       additionalProperties: false
@@ -9904,13 +9799,6 @@ components:
       additionalProperties: false
       required: [scope_id, proposal, source_refs, artifact_refs]
       properties:
-        memory_citations:
-          type: array
-          maxItems: 32
-          default: []
-          description: Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-          items:
-            $ref: "#/components/schemas/MemoryCitation"
         scope_id:
           type: string
           minLength: 1
@@ -10100,7 +9988,8 @@ components:
           maxLength: 256
           pattern: '.*\S.*'
         citation:
-          $ref: "#/components/schemas/MemoryCitation"
+          type: object
+          description: Legacy exact Memory entry citation. Requests that supply it are rejected as unsupported.
         reason:
           type: string
           maxLength: 512
@@ -10133,13 +10022,6 @@ components:
       additionalProperties: false
       required: [scope_id, candidate_id, expected_version, proposal, source_refs, artifact_refs]
       properties:
-        memory_citations:
-          type: array
-          maxItems: 32
-          nullable: true
-          description: Omission or null retains the current citations; an explicit array replaces them, including an empty array. Non-empty only for Experience.
-          items:
-            $ref: "#/components/schemas/MemoryCitation"
         scope_id:
           type: string
           minLength: 1
@@ -10189,7 +10071,8 @@ components:
           maxLength: 256
           pattern: '.*\S.*'
         citation:
-          $ref: "#/components/schemas/MemoryCitation"
+          type: object
+          description: Legacy exact Memory entry citation. Requests that supply it are rejected as unsupported.
         kind:
           type: string
           minLength: 1
@@ -10202,23 +10085,6 @@ components:
           type: string
           maxLength: 512
           nullable: true
-    SearchMemoryHit:
-      type: object
-      additionalProperties: false
-      required: [citation, text, score, matched_by]
-      properties:
-        citation:
-          $ref: "#/components/schemas/MemoryCitation"
-        text:
-          type: string
-        score:
-          type: number
-          minimum: 0
-          maximum: 1
-        matched_by:
-          type: array
-          items:
-            $ref: "#/components/schemas/MemoryMatchedBy"
     SearchTopicMemoryHit:
       type: object
       additionalProperties: false
@@ -10718,9 +10584,7 @@ components:
           pattern: '^sha256:[0-9a-f]{64}$'
           description: Digest of canonical display labels; informational, not a mutation precondition.
         reference:
-          oneOf:
-            - $ref: '#/components/schemas/ArtifactReference'
-            - $ref: '#/components/schemas/MemoryCitation'
+          $ref: '#/components/schemas/ArtifactReference'
     ArtifactTagPage:
       type: object
       additionalProperties: false
@@ -11156,12 +11020,6 @@ components:
     TopicMemoryUsedSearchMode:
       type: string
       enum: [fts, hybrid]
-    MemoryEntryState:
-      type: string
-      enum: [active, inactive]
-    MemoryMatchedBy:
-      type: string
-      enum: [fts, vector]
     MemorySearchMode:
       type: string
       enum: [auto, fts, vector, hybrid]

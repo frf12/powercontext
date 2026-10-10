@@ -470,11 +470,6 @@ def _with_candidate_evidence_limits(source: str, model_names: tuple[str, ...]) -
         next_class = updated.find("\nclass ", start + len(class_header))
         insert_at = next_class if next_class >= 0 else len(updated.rstrip())
         validator = _CANDIDATE_EVIDENCE_VALIDATOR
-        if "    memory_citations:" in updated[start:insert_at]:
-            validator = validator.replace(
-                "len(self.source_refs) + len(self.artifact_refs)",
-                "len(self.source_refs) + len(self.artifact_refs) + len(self.memory_citations or ())",
-            )
         updated = f"{updated[:insert_at].rstrip()}\n{validator.rstrip()}\n\n{updated[insert_at:].lstrip()}"
     formatter = CodeFormatter(
         python_version=PythonVersion.PY_311,

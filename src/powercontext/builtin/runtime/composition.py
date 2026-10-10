@@ -50,9 +50,6 @@ from powercontext.builtin.artifacts.handoff import (
 from powercontext.builtin.artifacts.memory import (
     CandidatePipeline,
     DefaultMemoryEvidenceProjector,
-    MemoryCapabilities,
-    MemoryCapacityBudget,
-    MemoryCompactionPolicy,
     MemoryRerankDecision,
     MemoryReranker,
     MemoryWriteGate,
@@ -92,17 +89,12 @@ from powercontext.builtin.inference.usage import (
     UsageReportingEmbeddingModel,
     UsageReportingStructuredGenerator,
 )
+from powercontext.builtin.persistence.atomic_memory_index import AtomicMemoryIndexCapabilities
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_TABLES
-from powercontext.builtin.persistence.dream_schema import ensure_dream_schema
 from powercontext.builtin.persistence.experience_index import ensure_artifact_head_searchable_text
-from powercontext.builtin.persistence.memory_index import CompositeMemoryIndex, MemoryIndex
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import assert_atomic_memory_migration_ready
 from powercontext.builtin.persistence.oceanbase.atomic_memory_index import OceanBaseAtomicMemoryIndex
 from powercontext.builtin.persistence.oceanbase.experience_index import OceanBaseExperienceFTSIndex
-from powercontext.builtin.persistence.oceanbase.memory_index import (
-    OceanBaseMemoryFTSIndex,
-    OceanBaseMemoryVectorIndex,
-)
 from powercontext.builtin.persistence.oceanbase.profile import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.oceanbase.topic_memory_index import (
     OceanBaseTopicMemoryFTSIndex,
@@ -117,7 +109,6 @@ from powercontext.builtin.persistence.seekdb.profile import SeekDBConfig, SeekDB
 from powercontext.builtin.persistence.skill_distribution_schema import ensure_skill_distribution_schema
 from powercontext.builtin.persistence.sqlite.atomic_memory_index import SQLiteAtomicMemoryIndex
 from powercontext.builtin.persistence.sqlite.experience_index import SQLiteExperienceFTSIndex
-from powercontext.builtin.persistence.sqlite.memory_index import SQLiteMemoryFTSIndex, SQLiteMemoryVectorIndex
 from powercontext.builtin.persistence.sqlite.profile import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.sqlite.topic_memory_index import (
     SQLiteTopicMemoryFTSIndex,
@@ -651,7 +642,7 @@ async def open_builtin_runtime(
                     managed_skill_generation=contexts.managed_skill_generation,
                     artifact_dreaming=bool(configured_operations),
                     external_skill_registry=contexts.external_skill_registry,
-                    memory_search_modes=_search_modes(contexts.index.capabilities),
+                    memory_search_modes=_search_modes(contexts.atomic_memory_index.capabilities),
                     handoff_generation=contexts.handoff_generation,
                     prompts=dict(contexts.prompt_registry.capabilities),
                 ),
@@ -960,10 +951,6 @@ async def open_builtin_contexts(
     configured_token_estimator = character_token_estimator() if token_estimator is None else token_estimator
     if isinstance(database, SQLiteConfig):
         experience_index = SQLiteExperienceFTSIndex()
-        indexes: list[MemoryIndex] = [SQLiteMemoryFTSIndex()]
-        if embedding_model is not None:
-            indexes.append(SQLiteMemoryVectorIndex(embedding_model.profile))
-        index = CompositeMemoryIndex(*indexes)
         topic_indexes: list[TopicMemoryIndex] = [SQLiteTopicMemoryFTSIndex()]
         if embedding_model is not None:
             topic_indexes.append(SQLiteTopicMemoryVectorIndex(embedding_model.profile))
@@ -971,7 +958,7 @@ async def open_builtin_contexts(
         atomic_index = SQLiteAtomicMemoryIndex(None if embedding_model is None else embedding_model.profile)
         async with SQLiteProfile.open(
             database,
-            tables=BUILTIN_TABLES + index.tables + topic_index.tables + ATOMIC_MEMORY_TABLES + atomic_index.tables,
+            tables=BUILTIN_TABLES + topic_index.tables + ATOMIC_MEMORY_TABLES + atomic_index.tables,
             load_vector_extension=embedding_model is not None,
         ) as profile:
             async with profile.database.transaction() as connection:
@@ -979,7 +966,6 @@ async def open_builtin_contexts(
                 await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                 await ensure_skill_distribution_schema(connection)
                 await ensure_topic_memory_tag_schema(connection)
-                await ensure_dream_schema(connection)
                 await ensure_scope_search_schema(connection)
                 # A Topic child reuses its parent's schema. It never reads or
                 # writes Memory/Experience projections; rebuilding their FTS
@@ -990,14 +976,12 @@ async def open_builtin_contexts(
                     await atomic_index.initialize(connection)
                     await ensure_artifact_head_searchable_text(connection)
                     await assert_atomic_memory_migration_ready(connection)
-                    await index.initialize(connection)
                     await experience_index.initialize(connection)
                 await TopicMemoryRepository(index=topic_index).initialize(
                     connection, configure_retrieval_shape=not _topic_memory_worker
                 )
             contexts = RelationalContexts(
                 database=profile.database,
-                index=index,
                 topic_memory_index=topic_index,
                 atomic_memory_index=atomic_index,
                 atomic_memory_preview_signing_secret=None
@@ -1018,18 +1002,7 @@ async def open_builtin_contexts(
                 token_estimator=configured_token_estimator,
                 memory_reranker=memory_reranker,
                 decision_model=decision_model,
-                memory_write_gate=memory_write_gate,
                 memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
-                memory_capacity_budget=MemoryCapacityBudget(
-                    max_active_entries=config.runtime.memory_max_active_entries,
-                    max_manifest_entries=config.runtime.memory_max_manifest_entries,
-                    max_manifest_bytes=config.runtime.memory_max_manifest_bytes,
-                ),
-                memory_compaction=MemoryCompactionPolicy(
-                    enabled=config.runtime.memory_compaction_enabled,
-                    min_tombstone_revisions=config.runtime.memory_compaction_min_tombstone_revisions,
-                ),
-                memory_max_history_revisions=config.runtime.memory_max_history_revisions,
                 prompt_registry=prompt_registry,
                 prompt_demonstrators=prompt_demonstrators,
                 handoff_verification_keys=handoff_verification_keys,
@@ -1051,16 +1024,12 @@ async def open_builtin_contexts(
                 await contexts.aclose_usage_recorder()
         return
     experience_index = OceanBaseExperienceFTSIndex()
-    indexes = [OceanBaseMemoryFTSIndex()]
-    if embedding_model is not None:
-        indexes.append(OceanBaseMemoryVectorIndex(embedding_model.profile))
-    index = CompositeMemoryIndex(*indexes)
     topic_indexes: list[TopicMemoryIndex] = [OceanBaseTopicMemoryFTSIndex()]
     if embedding_model is not None:
         topic_indexes.append(OceanBaseTopicMemoryVectorIndex(embedding_model.profile))
     topic_index = CompositeTopicMemoryIndex(*topic_indexes)
     atomic_index = OceanBaseAtomicMemoryIndex(None if embedding_model is None else embedding_model.profile)
-    tables = BUILTIN_TABLES + index.tables + topic_index.tables + ATOMIC_MEMORY_TABLES + atomic_index.tables
+    tables = BUILTIN_TABLES + topic_index.tables + ATOMIC_MEMORY_TABLES + atomic_index.tables
     if isinstance(database, OceanBaseConfig):
         profile_context = OceanBaseProfile.open(database, tables=tables)
     elif isinstance(database, SeekDBConfig):
@@ -1073,21 +1042,18 @@ async def open_builtin_contexts(
             await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
             await ensure_skill_distribution_schema(connection)
             await ensure_topic_memory_tag_schema(connection)
-            await ensure_dream_schema(connection)
             await ensure_scope_search_schema(connection)
             if not _topic_memory_worker:
                 await _initialize_atomic_memory_authority(connection)
                 await atomic_index.initialize(connection)
                 await ensure_artifact_head_searchable_text(connection)
                 await assert_atomic_memory_migration_ready(connection)
-                await index.initialize(connection)
                 await experience_index.initialize(connection)
             await TopicMemoryRepository(index=topic_index).initialize(
                 connection, configure_retrieval_shape=not _topic_memory_worker
             )
         contexts = RelationalContexts(
             database=profile.database,
-            index=index,
             topic_memory_index=topic_index,
             atomic_memory_index=atomic_index,
             atomic_memory_preview_signing_secret=None
@@ -1108,18 +1074,7 @@ async def open_builtin_contexts(
             token_estimator=configured_token_estimator,
             memory_reranker=memory_reranker,
             decision_model=decision_model,
-            memory_write_gate=memory_write_gate,
             memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
-            memory_capacity_budget=MemoryCapacityBudget(
-                max_active_entries=config.runtime.memory_max_active_entries,
-                max_manifest_entries=config.runtime.memory_max_manifest_entries,
-                max_manifest_bytes=config.runtime.memory_max_manifest_bytes,
-            ),
-            memory_compaction=MemoryCompactionPolicy(
-                enabled=config.runtime.memory_compaction_enabled,
-                min_tombstone_revisions=config.runtime.memory_compaction_min_tombstone_revisions,
-            ),
-            memory_max_history_revisions=config.runtime.memory_max_history_revisions,
             prompt_registry=prompt_registry,
             prompt_demonstrators=prompt_demonstrators,
             handoff_verification_keys=handoff_verification_keys,
@@ -1953,7 +1908,7 @@ def _external_skill_provider(settings: ExternalSkillsConfig) -> ExternalSkillPro
     return AgentSkillProvider(host_id=settings.host_id, targets=settings.agent_targets)
 
 
-def _search_modes(capabilities: MemoryCapabilities) -> tuple[MemorySearchMode, ...]:
+def _search_modes(capabilities: AtomicMemoryIndexCapabilities) -> tuple[MemorySearchMode, ...]:
     modes: list[MemorySearchMode] = []
     if capabilities.fts or capabilities.hybrid:
         modes.append("auto")

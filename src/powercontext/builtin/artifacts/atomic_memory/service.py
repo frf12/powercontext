@@ -616,7 +616,7 @@ class AtomicMemoryService:
     @staticmethod
     def _draft(content: AtomicMemoryContent, lineage: ArtifactLineage | None) -> AtomicMemoryDraft:
         evidence = lineage or ArtifactLineage()
-        if evidence.memory_citations or evidence.publication_source is not None:
+        if evidence.publication_source is not None:
             raise AtomicMemoryRelationError("Atomic Memory accepts direct Sources and exact in-Scope Artifacts")  # noqa: TRY003
         try:
             text = normalize_text(content.text)

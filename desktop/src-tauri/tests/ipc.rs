@@ -161,7 +161,6 @@ fn memory_commands_reject_untrusted_callers_before_accessing_the_connection() {
         .invoke_handler(tauri::generate_handler![
             commands::remember_memory,
             commands::search_memory,
-            commands::memory_entry,
             commands::atomic_memory_entry,
             commands::cancel_memory_reads
         ])
@@ -171,16 +170,11 @@ fn memory_commands_reject_untrusted_callers_before_accessing_the_connection() {
         "generation": 0,
         "text": "synthetic permission test",
         "query": "synthetic",
-        "artifact": {"family":"atomic-memory", "artifact_id":"test", "revision":1},
-        "citation": {
-            "memory_ref": {"family":"memory", "artifact_id":"test", "revision":1},
-            "entry_id":"test", "entry_version_id":"v1"
-        }
+        "artifact": {"family":"atomic-memory", "artifact_id":"test", "revision":1}
     });
     for command in [
         "remember_memory",
         "search_memory",
-        "memory_entry",
         "atomic_memory_entry",
         "cancel_memory_reads",
     ] {

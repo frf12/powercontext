@@ -22,19 +22,15 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from powercontext.artifacts import ArtifactRef, MemoryCitation
+from powercontext.artifacts import ArtifactRef
 from powercontext.sources import SourceRef
 
 if TYPE_CHECKING:
     from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
     from powercontext.builtin.tags import ArtifactTagSet, TagFilter, TagQuery, TagQueryPage, TagTarget
 
-BaseArtifactFamily = Literal[
-    "memory", "atomic-memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"
-]
-ArtifactReadFamily = Literal[
-    "memory", "atomic-memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"
-]
+BaseArtifactFamily = Literal["atomic-memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"]
+ArtifactReadFamily = Literal["atomic-memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"]
 
 
 class _RecordModel(BaseModel):
@@ -88,7 +84,6 @@ class ArtifactRecord(_RecordModel):
     content: dict[str, JsonValue]
     sources: tuple[SourceRef, ...]
     artifacts: tuple[ArtifactRef, ...]
-    memory_citations: tuple[MemoryCitation, ...] = ()
     content_digest: str
 
 

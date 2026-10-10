@@ -928,8 +928,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Read exact legacy history or mapped current Atomic Memory
-         * @description Supply exactly one citation or target. A citation reads its exact frozen historical entry version. A legacy target must exist in its frozen latest manifest, then maps deterministically to current Atomic Memory with current state. Merged targets are returned without automatically following their result.
+         * Read the current Atomic Memory mapped from a legacy target
+         * @description A legacy logical target maps deterministically to current Atomic Memory with current state. Merged targets are returned without automatically following their result. Exact historical citations are unsupported; read exact Atomic revisions through the Artifact revision endpoint.
          */
         post: operations["get_memory_entry"];
         delete?: never;
@@ -2234,7 +2234,7 @@ export interface components {
             undo_merge_results: string[];
         };
         LegacyMemoryTarget: components["schemas"]["MemoryEntryTagTarget"];
-        GetMemoryEntryResponse: components["schemas"]["MemoryEntry"] | components["schemas"]["AtomicMemoryRecord"];
+        GetMemoryEntryResponse: components["schemas"]["AtomicMemoryRecord"];
         /** @enum {string} */
         AtomicMemoryContentSchema: "powercontext.atomic-memory.v1";
         /** @enum {string} */
@@ -2382,8 +2382,6 @@ export interface components {
             };
             sources: components["schemas"]["SourceTypeReference"][];
             artifacts: components["schemas"]["ArtifactReference"][];
-            /** @default [] */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             content_digest: string;
         };
         ArtifactReference: {
@@ -2530,13 +2528,11 @@ export interface components {
             /** @default 20 */
             limit: number;
         };
-        /** @description Select 1-20 exact Experience or Memory citations after deduplication, with at most 32 combined references including Sources. Only refine_experience accepts Memory citations or a target. */
+        /** @description Select 1-20 exact Experience or Atomic Memory Artifacts after deduplication, with at most 32 combined references including Sources. Only refine_experience accepts Atomic Memory Artifacts or a target. */
         CreateDreamRunRequest: {
             operation: components["schemas"]["DreamOperation"];
             /** @default [] */
             artifacts: components["schemas"]["ArtifactReference"][];
-            /** @default [] */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             /** @default [] */
             sources: components["schemas"]["DreamSourceReference"][];
             target?: components["schemas"]["ArtifactReference"];
@@ -2580,8 +2576,6 @@ export interface components {
             /** @default [] */
             artifacts: components["schemas"]["ArtifactReference"][];
             /** @default [] */
-            memory_citations: components["schemas"]["MemoryCitation"][];
-            /** @default [] */
             sources: components["schemas"]["DreamSourceReference"][];
             /** @default [] */
             nodes: components["schemas"]["DreamEvidenceNode"][];
@@ -2601,12 +2595,9 @@ export interface components {
             digest: string;
             source?: components["schemas"]["DreamSourceReference"];
             artifact?: components["schemas"]["ArtifactReference"];
-            /** @default [] */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             role: components["schemas"]["DreamEvidenceRole"];
             /** @default false */
             historical: boolean;
-            current_entry_version_id?: string | null;
         };
         DreamRootEvidenceGroup: {
             group_id: string;
@@ -2649,11 +2640,6 @@ export interface components {
             next_cursor?: string | null;
         };
         ArtifactCandidate: {
-            /**
-             * @description Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-             * @default []
-             */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             /** @description Current Principal permissions in enforced mode; advisory and checked again on mutation. */
             permissions?: components["schemas"]["CandidatePermissions"];
             candidate_id: string;
@@ -3154,7 +3140,7 @@ export interface components {
             current_position: number;
             draft: components["schemas"]["HandoffDraft"];
         };
-        HandoffCitation: components["schemas"]["HandoffSourceCitation"] | components["schemas"]["HandoffArtifactCitation"] | components["schemas"]["HandoffMemoryCitation"];
+        HandoffCitation: components["schemas"]["HandoffSourceCitation"] | components["schemas"]["HandoffArtifactCitation"];
         HandoffContent: {
             generation?: components["schemas"]["HandoffGenerationMetadata"];
             schema: components["schemas"]["HandoffSchema"];
@@ -3177,14 +3163,6 @@ export interface components {
             state_index: number | null;
             status: components["schemas"]["HandoffEvidenceStatus"];
             unavailable_evidence: components["schemas"]["HandoffCitation"][];
-        };
-        HandoffMemoryCitation: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "memory";
-            memory_citation: components["schemas"]["MemoryCitation"];
         };
         HandoffOmission: {
             text: string;
@@ -3261,11 +3239,6 @@ export interface components {
             reason: string | null;
         };
         ExperienceArtifact: {
-            /**
-             * @description Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-             * @default []
-             */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             artifact: components["schemas"]["ArtifactReference"];
             content: components["schemas"]["ExperienceProposal"];
             source_refs: components["schemas"]["SourceReference"][];
@@ -3308,11 +3281,6 @@ export interface components {
             top_revisions: components["schemas"]["RecurrenceStreak"][];
         };
         SkillArtifact: {
-            /**
-             * @description Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-             * @default []
-             */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             artifact: components["schemas"]["ArtifactReference"];
             content: components["schemas"]["SkillProposal"];
             source_refs: components["schemas"]["SourceReference"][];
@@ -3672,10 +3640,11 @@ export interface components {
             budget: components["schemas"]["MemoryCapacityBudget"];
             exceeded: components["schemas"]["MemoryCapacityDimension"][];
         };
-        /** @description Supply exactly one exact historical citation or a legacy logical target mapped to current Atomic Memory. */
+        /** @description Supply a legacy logical target mapped to current Atomic Memory. A supplied citation is rejected as unsupported. */
         GetMemoryEntryRequest: {
             scope_id: string;
-            citation?: components["schemas"]["MemoryCitation"];
+            /** @description Legacy exact Memory entry citation. Requests that supply it are rejected as unsupported. */
+            citation?: Record<string, never>;
             target?: components["schemas"]["LegacyMemoryTarget"];
         } & (unknown | unknown);
         GetTopicMemoryRequest: {
@@ -3754,23 +3723,9 @@ export interface components {
             /** @default false */
             include_unavailable: boolean;
         };
-        MemoryEntry: {
-            citation: components["schemas"]["MemoryCitation"];
-            version: number;
-            kind: string;
-            text: string;
-            state: components["schemas"]["MemoryEntryState"];
-            source_refs: components["schemas"]["SourceReference"][];
-            artifact_refs: components["schemas"]["ArtifactReference"][];
-        };
         MemoryMutationResponse: {
             changed: boolean;
             records: components["schemas"]["AtomicMemoryRecord"][];
-        };
-        MemoryCitation: {
-            memory_ref: components["schemas"]["ArtifactReference"];
-            entry_id: string;
-            entry_version_id: string;
         };
         MemoryRevisionChanges: {
             memory_ref: components["schemas"]["ArtifactReference"];
@@ -3987,11 +3942,6 @@ export interface components {
         /** @enum {string} */
         ContextAssemblyMetadata: "confidence" | "recall_rank";
         ProposeExperienceRequest: {
-            /**
-             * @description Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.
-             * @default []
-             */
-            memory_citations: components["schemas"]["MemoryCitation"][];
             scope_id: string;
             proposal: components["schemas"]["ExperienceProposal"];
             /** @description Exact Source evidence. Counted with artifact_refs toward a combined maximum of 32 references. */
@@ -4059,7 +4009,8 @@ export interface components {
         };
         RetireMemoryEntryRequest: {
             scope_id: string;
-            citation: components["schemas"]["MemoryCitation"];
+            /** @description Legacy exact Memory entry citation. Requests that supply it are rejected as unsupported. */
+            citation: Record<string, never>;
             reason?: string | null;
         };
         RejectArtifactCandidateRequest: {
@@ -4069,8 +4020,6 @@ export interface components {
             reason: string;
         };
         ReviseArtifactCandidateRequest: {
-            /** @description Omission or null retains the current citations; an explicit array replaces them, including an empty array. Non-empty only for Experience. */
-            memory_citations?: components["schemas"]["MemoryCitation"][] | null;
             scope_id: string;
             candidate_id: string;
             expected_version: number;
@@ -4084,17 +4033,12 @@ export interface components {
         };
         ReviseMemoryEntryRequest: {
             scope_id: string;
-            citation: components["schemas"]["MemoryCitation"];
+            /** @description Legacy exact Memory entry citation. Requests that supply it are rejected as unsupported. */
+            citation: Record<string, never>;
             kind: string;
             /** @description Must not exceed 8192 UTF-8 bytes after normalization. */
             text: string;
             reason?: string | null;
-        };
-        SearchMemoryHit: {
-            citation: components["schemas"]["MemoryCitation"];
-            text: string;
-            score: number;
-            matched_by: components["schemas"]["MemoryMatchedBy"][];
         };
         SearchTopicMemoryHit: {
             artifact: components["schemas"]["ArtifactReference"];
@@ -4345,7 +4289,7 @@ export interface components {
             tags: string[];
             /** @description Digest of canonical display labels; informational, not a mutation precondition. */
             tag_digest: string;
-            reference: components["schemas"]["ArtifactReference"] | components["schemas"]["MemoryCitation"];
+            reference: components["schemas"]["ArtifactReference"];
         };
         ArtifactTagPage: {
             items: components["schemas"]["TaggedTarget"][];
@@ -4525,10 +4469,6 @@ export interface components {
         TopicMemoryMatchedBy: "topic_fts" | "topic_vector" | "detail_fts" | "detail_vector";
         /** @enum {string} */
         TopicMemoryUsedSearchMode: "fts" | "hybrid";
-        /** @enum {string} */
-        MemoryEntryState: "active" | "inactive";
-        /** @enum {string} */
-        MemoryMatchedBy: "fts" | "vector";
         /** @enum {string} */
         MemorySearchMode: "auto" | "fts" | "vector" | "hybrid";
         /** @enum {string} */

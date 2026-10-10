@@ -1023,10 +1023,8 @@ class PowerContextClient:
 
         return await self._request(LIST_MEMORY_ENTRIES, request)
 
-    async def get_memory_entry(
-        self, request: GetMemoryEntryRequest
-    ) -> atomic_models.MemoryEntry | atomic_models.AtomicMemoryRecord:
-        """Read an exact historical citation or its mapped current Atomic Memory target."""
+    async def get_memory_entry(self, request: GetMemoryEntryRequest) -> atomic_models.AtomicMemoryRecord:
+        """Read the current Atomic Memory mapped from a legacy collection and entry target."""
         response = await self._request(GET_MEMORY_ENTRY, request)
         return response.root
 

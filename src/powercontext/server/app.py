@@ -74,7 +74,6 @@ from powercontext.builtin.artifacts.handoff import (
 from powercontext.builtin.artifacts.memory.errors import (
     CapabilityNotSupportedError,
     InvalidMemoryCandidateError,
-    InvalidMemoryCitationError,
     InvalidMemoryEvidenceError,
     MemoryCapacityExceededError,
     MemoryEntryInactiveError,
@@ -342,6 +341,9 @@ from powercontext.builtin.tags import (
 )
 from powercontext.builtin.tags import (
     TagFilter as RuntimeTagFilter,
+)
+from powercontext.builtin.tags import (
+    TaggableArtifactFamily as RuntimeTaggableArtifactFamily,
 )
 from powercontext.builtin.work import (
     AcknowledgeHandoff as RuntimeAcknowledgeHandoff,
@@ -2550,8 +2552,7 @@ async def get_artifact_tags(
     application: Annotated[ServerApplication, Depends(_require_application)],
     if_none_match: Annotated[str | None, Header(alias="If-None-Match", min_length=1)] = None,
 ) -> ArtifactTagSet | Response:
-    _reject_legacy_memory_tags(family)
-    target = ArtifactTagTarget(family=family.value, artifact_id=artifact_id)
+    target = ArtifactTagTarget(family=_tag_family(family), artifact_id=artifact_id)
     result = await application.records.for_scope(scope_id).get_tags(target)
     return _tag_response(result, response, if_none_match=if_none_match)
 
@@ -2566,8 +2567,7 @@ async def replace_artifact_tags(
     application: Annotated[ServerApplication, Depends(_require_application)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> ArtifactTagSet:
-    _reject_legacy_memory_tags(family)
-    target = ArtifactTagTarget(family=family.value, artifact_id=artifact_id)
+    target = ArtifactTagTarget(family=_tag_family(family), artifact_id=artifact_id)
     if family.value == "atomic-memory":
         await _authorize_atomic_tag_write(http_request, scope_id, artifact_id, "replace_artifact_tags")
     result = await application.records.for_scope(scope_id).replace_tags(
@@ -2582,9 +2582,10 @@ async def replace_artifact_tags(
     return ArtifactTagSet.model_validate(result.model_dump(mode="json"))
 
 
-def _reject_legacy_memory_tags(family: TaggableArtifactFamily) -> None:
+def _tag_family(family: TaggableArtifactFamily) -> RuntimeTaggableArtifactFamily:
     if family is TaggableArtifactFamily.MEMORY:
         raise BaseOperationNotSupportedError("artifact_family", "memory", "collection tags")
+    return family.value
 
 
 async def get_memory_entry_tags(
@@ -2740,7 +2741,6 @@ def _artifact_revision_response(value: RuntimeArtifactRecord) -> ArtifactRevisio
         content=value.content,
         sources=[mapping.source_type_reference(ref) for ref in value.sources],
         artifacts=[mapping.artifact_reference(ref) for ref in value.artifacts],
-        memory_citations=[mapping.transport_citation(ref) for ref in value.memory_citations],
         content_digest=value.content_digest,
     )
 
@@ -5276,6 +5276,13 @@ def _map_service_error(error: Exception) -> tuple[int, str, str, dict[str, Any] 
     if isinstance(error, BaseOperationNotSupportedError):
         if error.kind == "artifact_family" and error.name == "memory":
             alternatives, instruction = {
+                "citation read": (
+                    [
+                        "GET /v1/scopes/{scope_id}/artifacts/atomic-memory/{artifact_id}/revisions/{revision}",
+                        "POST /v1/memory/entries/get",
+                    ],
+                    "Read the exact Atomic Artifact revision, or resolve the legacy logical identity with target.",
+                ),
                 "citation revise": (
                     ["PUT /v1/scopes/{scope_id}/artifacts/atomic-memory/{artifact_id}"],
                     "Read the Atomic Artifact and use its content ETag for the replacement precondition.",
@@ -5289,9 +5296,9 @@ def _map_service_error(error: Exception) -> tuple[int, str, str, dict[str, Any] 
                     "Atomic Memory has no collection capacity budget; this query has no equivalent.",
                 ),
                 "continuous collection changes": (
-                    ["GET /v1/scopes/{scope_id}/artifacts/memory/{artifact_id}/revisions/{revision}"],
-                    "Only preserved exact legacy revisions contain historical collection changes; "
-                    "there is no continuous changes stream after migration.",
+                    [],
+                    "Legacy collection history is archived offline; there is no continuous changes stream after "
+                    "migration.",
                 ),
                 "collection compaction": (
                     [],
@@ -5678,7 +5685,6 @@ def _map_memory_error(error: Exception) -> tuple[int, str, str, dict[str, Any] |
         error,
         (
             InvalidMemoryCandidateError,
-            InvalidMemoryCitationError,
             InvalidMemoryEvidenceError,
         ),
     ):

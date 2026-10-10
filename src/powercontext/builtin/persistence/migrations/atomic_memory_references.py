@@ -28,10 +28,10 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import rfc8785
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -45,22 +45,32 @@ from powercontext.builtin.artifacts.experience.recurrence import (
     selection_key,
     verdict_key,
 )
-from powercontext.builtin.artifacts.handoff.models import HandoffContent
-from powercontext.builtin.dream.models import DreamRecord
+from powercontext.builtin.artifacts.handoff.models import HandoffContent, HandoffSourceCitation
+from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamRecord
 from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
 from powercontext.builtin.persistence.codec import dump_model
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.migrations.atomic_memory_archive import (
+    LEGACY_CITATION_COLUMN,
     LegacyCollection,
     archive_collection,
     archive_incoming_reference,
+    has_column,
     rows,
     table_names,
 )
-from powercontext.builtin.work.models import CurrentWorkHandoff, HandoffReceipt, TaskOutcome, WorkContract
+from powercontext.builtin.work.models import (
+    CurrentWorkHandoff,
+    HandoffReceipt,
+    TaskCheck,
+    TaskOutcome,
+    WorkClaim,
+    WorkContract,
+)
 
 DECISIONS_FORMAT = "powercontext.atomic-memory-reference-decisions.v1"
 DREAM_HISTORY_FORMAT = "powercontext.dream-history.v1"
+RECEIPT_HISTORY_FORMAT = "powercontext.handoff-receipt-history.v1"
 _WORK_MODELS: dict[str, type[BaseModel]] = {
     "work-contract": WorkContract,
     "handoff-boundary": CurrentWorkHandoff,
@@ -72,6 +82,60 @@ _LEGACY_ENTRY_FOREIGN_KEYS = {
     "pc_memory_entry_versions": ("scope_id", "family", "memory_artifact_id", "created_in_revision"),
     "pc_memory_entry_heads": ("scope_id", "family", "memory_artifact_id", "head_revision"),
 }
+_LEGACY_CITATION_TABLES = ("pc_artifacts", "pc_artifact_candidate_versions")
+
+
+class _LegacyValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class _LegacyArtifactRef(_LegacyValue):
+    family: str
+    artifact_id: str
+    revision: int
+
+
+class _LegacyArtifactCitation(_LegacyValue):
+    kind: Literal["artifact"] = "artifact"
+    artifact_ref: _LegacyArtifactRef
+
+
+class _LegacyEntryCitation(_LegacyValue):
+    memory_ref: _LegacyArtifactRef
+    entry_id: str
+    entry_version_id: str
+
+
+class _LegacyMemoryCitation(_LegacyValue):
+    kind: Literal["memory"] = "memory"
+    memory_citation: _LegacyEntryCitation
+
+
+_LegacyCitation = Annotated[
+    HandoffSourceCitation | _LegacyArtifactCitation | _LegacyMemoryCitation, Field(discriminator="kind")
+]
+
+
+class _LegacyWorkClaim(WorkClaim):
+    """Frozen decoder of a Task Outcome observation that may still cite legacy Memory."""
+
+    evidence: tuple[_LegacyCitation, ...] = ()
+
+
+class _LegacyTaskCheck(TaskCheck):
+    """Frozen decoder of a Task Outcome check that may still cite legacy Memory."""
+
+    evidence: tuple[_LegacyCitation, ...] = ()
+
+
+def _legacy_item_digests(outcome: Mapping[str, Any]) -> dict[tuple[str, int], str]:
+    """Digest each stored Task Outcome item exactly as the ledger recorded it before conversion."""
+
+    digests: dict[tuple[str, int], str] = {}
+    for kind, name, model in (("observation", "observations", _LegacyWorkClaim), ("check", "checks", _LegacyTaskCheck)):
+        for index, item in enumerate(outcome.get(name, ())):
+            digests[(kind, index)] = item_digest(model.model_validate_json(_compact(item)))
+    return digests
 
 
 @dataclass(frozen=True)
@@ -142,6 +206,7 @@ class _Context:
     collections: dict[tuple[str, str], LegacyCollection]
     decisions: dict[tuple[str, str, int], CandidateDecision]
     write: bool
+    citation_tables: frozenset[str] = frozenset()
     errors: list[str] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
     used_decisions: set[tuple[str, str, int]] = field(default_factory=set)
@@ -374,6 +439,8 @@ def _artifact_label(key: Mapping[str, Any]) -> str:
 
 
 async def _artifact_memory_citations(context: _Context, units: _Units) -> None:
+    if "pc_artifacts" not in context.citation_tables:
+        return
     keys = await _keys(
         units,
         "SELECT scope_id, family, artifact_id, revision FROM pc_artifacts WHERE family <> 'memory' "
@@ -620,17 +687,35 @@ async def _rewrite_recurrence(
     return updated
 
 
-def _outcome_digests(before: TaskOutcome, after: TaskOutcome) -> dict[tuple[str, int], tuple[str, str]]:
+def _outcome_digests(before: dict[tuple[str, int], str], after: TaskOutcome) -> dict[tuple[str, int], tuple[str, str]]:
     changed: dict[tuple[str, int], tuple[str, str]] = {}
-    for kind, old_items, new_items in (
-        ("observation", before.observations, after.observations),
-        ("check", before.checks, after.checks),
-    ):
-        for index, (old, new) in enumerate(zip(old_items, new_items, strict=True)):
-            digests = (item_digest(old), item_digest(new))
-            if digests[0] != digests[1]:
-                changed[(kind, index)] = digests
+    current = [
+        *((("observation", index), item) for index, item in enumerate(after.observations)),
+        *((("check", index), item) for index, item in enumerate(after.checks)),
+    ]
+    if set(before) != {position for position, _item in current}:
+        raise ValueError("Task Outcome conversion changed its items")  # noqa: TRY003
+    for position, item in current:
+        digests = (before[position], item_digest(item))
+        if digests[0] != digests[1]:
+            changed[position] = digests
     return changed
+
+
+def _receipt_history(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Move unavailable evidence that cited a whole collection into the receipt's history."""
+
+    evidence = receipt.get("unavailable_evidence") or []
+    legacy = [citation for citation in evidence if _collection_citation(citation) is not None]
+    if not legacy:
+        return receipt
+    if receipt.get("historical_data") is not None:
+        raise ValueError("receipt already holds historical data")  # noqa: TRY003
+    return {
+        **receipt,
+        "unavailable_evidence": [citation for citation in evidence if _collection_citation(citation) is None],
+        "historical_data": {"format": RECEIPT_HISTORY_FORMAT, "unavailable_evidence": legacy},
+    }
 
 
 async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901 - One Source rewrite with its ledger.
@@ -640,7 +725,7 @@ async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901
         "AND payload LIKE '%\"memory%'",
     )
 
-    async def convert(connection: AsyncConnection, key: Mapping[str, Any]) -> None:
+    async def convert(connection: AsyncConnection, key: Mapping[str, Any]) -> None:  # noqa: C901 - One Source rewrite with its ledger.
         stored = await connection.scalar(
             text(
                 "SELECT payload FROM pc_sources WHERE scope_id = :scope_id AND source_type = :source_type "
@@ -657,6 +742,8 @@ async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901
         # A receipt's unavailable evidence records what was missing; it asserts no support to drop.
         dropped: list[tuple[str, dict[str, Any]]] | None = None if model is HandoffReceipt else []
         converted = await _convert_citations(context, connection, key["scope_id"], original, None, dropped)
+        if model is HandoffReceipt:
+            converted = _receipt_history(converted)
         if model is TaskOutcome:
             produced = []
             for index, ref in enumerate(converted.get("produced_artifacts", ())):
@@ -680,7 +767,6 @@ async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901
             converted["produced_artifacts"] = produced
         if converted == original:
             return
-        before = model.model_validate_json(value["content"])
         after = model.model_validate_json(_compact(converted))
         await _archive_dropped(
             context, connection, key["scope_id"], dropped or [], {"carrier": "work_source", "source": dict(key)}
@@ -696,8 +782,8 @@ async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901
             ),
             {**key, "payload": rfc8785.dumps({**envelope, "value": value})},
         )
-        if isinstance(before, TaskOutcome) and isinstance(after, TaskOutcome):
-            changed = _outcome_digests(before, after)
+        if isinstance(after, TaskOutcome):
+            changed = _outcome_digests(_legacy_item_digests(original), after)
             if changed:
                 context.count("recurrence_rows", await _rewrite_recurrence(connection, key, changed))
 
@@ -709,10 +795,15 @@ def _candidate_label(key: Mapping[str, Any]) -> str:
 
 
 async def _candidates(context: _Context, units: _Units) -> None:
+    cited = "pc_artifact_candidate_versions" in context.citation_tables
     keys = await _keys(
         units,
-        "SELECT scope_id, candidate_id, version FROM pc_artifact_candidate_versions WHERE family <> 'memory' AND "
-        "((memory_citations IS NOT NULL AND LENGTH(memory_citations) > 2) OR artifact_refs LIKE '%\"memory\"%')",
+        "SELECT scope_id, candidate_id, version FROM pc_artifact_candidate_versions WHERE family <> 'memory' AND "  # noqa: S608
+        + (
+            "((memory_citations IS NOT NULL AND LENGTH(memory_citations) > 2) OR artifact_refs LIKE '%\"memory\"%')"
+            if cited
+            else "artifact_refs LIKE '%\"memory\"%'"
+        ),
     )
 
     async def convert(connection: AsyncConnection, key: Mapping[str, Any]) -> None:
@@ -720,13 +811,14 @@ async def _candidates(context: _Context, units: _Units) -> None:
             await rows(
                 connection,
                 "pc_artifact_candidate_versions",
-                ("source_refs", "artifact_refs", "memory_citations"),
+                ("source_refs", "artifact_refs", *((LEGACY_CITATION_COLUMN,) if cited else ())),
                 "WHERE scope_id = :scope_id AND candidate_id = :candidate_id AND version = :version",
                 **key,
             )
         )[0]
         refs = json.loads(bytes(row["artifact_refs"]))
-        citations = [] if row["memory_citations"] is None else json.loads(bytes(row["memory_citations"]))
+        stored = row.get(LEGACY_CITATION_COLUMN)
+        citations = [] if stored is None else json.loads(bytes(stored))
         collection_refs = [(index, ref) for index, ref in enumerate(refs) if ref["family"] == "memory"]
         atomic = [await context.atomic_ref(connection, key["scope_id"], item) for item in citations]
         evidence = _unique([*(ref for ref in refs if ref["family"] != "memory"), *atomic])
@@ -775,10 +867,11 @@ async def _candidates(context: _Context, units: _Units) -> None:
             )
         await connection.execute(
             text(
-                "UPDATE pc_artifact_candidate_versions SET artifact_refs = :refs, memory_citations = :citations "
-                "WHERE scope_id = :scope_id AND candidate_id = :candidate_id AND version = :version"
+                "UPDATE pc_artifact_candidate_versions SET artifact_refs = :refs"  # noqa: S608
+                + (", memory_citations = :citations" if cited else "")
+                + " WHERE scope_id = :scope_id AND candidate_id = :candidate_id AND version = :version"
             ),
-            {**key, "refs": _compact(evidence), "citations": None if row["memory_citations"] is None else b"[]"},
+            {**key, "refs": _compact(evidence), "citations": None if stored is None else b"[]"},
         )
 
     await _each(context, units, keys, _candidate_label, convert)
@@ -818,7 +911,7 @@ def _dream_inputs(value: Any, artifacts: set[tuple[str, str, int]], sources: set
 
 
 async def _dream_inputs_change(  # noqa: C901 - One check over each kind of pinned input.
-    connection: AsyncConnection, scope_id: str, payload: Mapping[str, Any]
+    connection: AsyncConnection, scope_id: str, payload: Mapping[str, Any], *, cited: bool
 ) -> bool:
     """Whether conversion changes any digest or lineage pinned by an unfinished Dream run."""
 
@@ -836,14 +929,17 @@ async def _dream_inputs_change(  # noqa: C901 - One check over each kind of pinn
             identity,
         ):
             return True
+        columns = "content, memory_citations" if cited else "content"
         row = (
-            await connection.execute(text(f"SELECT content, memory_citations FROM pc_artifacts {where}"), identity)  # noqa: S608
-        ).one_or_none()
+            (await connection.execute(text(f"SELECT {columns} FROM pc_artifacts {where}"), identity))  # noqa: S608
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             continue
-        if row.memory_citations is not None and json.loads(bytes(row.memory_citations)):
+        if row.get(LEGACY_CITATION_COLUMN) is not None and json.loads(bytes(row[LEGACY_CITATION_COLUMN])):
             return True
-        if family == "handoff" and _holds_memory_reference(json.loads(bytes(row.content))):
+        if family == "handoff" and _holds_memory_reference(json.loads(bytes(row["content"]))):
             return True
     for source_type, source_id in sorted(sources):
         stored = await connection.scalar(
@@ -858,6 +954,46 @@ async def _dream_inputs_change(  # noqa: C901 - One check over each kind of pinn
         ):
             return True
     return False
+
+
+def _without_entry_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop the always-empty entry citation fields from an executable Dream request and its manifest."""
+
+    def without(value: Any, names: frozenset[str]) -> Any:
+        return {name: item for name, item in value.items() if name not in names} if isinstance(value, dict) else value
+
+    request = without(payload.get("request"), frozenset({"memory_citations"}))
+    run = payload["run"]
+    manifest = without(run.get("input_manifest"), frozenset({"memory_citations"}))
+    if isinstance(manifest, dict) and isinstance(manifest.get("nodes"), list):
+        node_fields = frozenset({"memory_citations", "current_entry_version_id"})
+        manifest = {**manifest, "nodes": [without(node, node_fields) for node in manifest["nodes"]]}
+    if run.get("input_manifest") is not None:
+        run = {**run, "input_manifest": manifest}
+    return {**payload, "request": request, "run": run}
+
+
+async def _align_request_digest(
+    context: _Context, connection: AsyncConnection, key: Mapping[str, Any], stored: str, request: Mapping[str, Any]
+) -> None:
+    """Keep an idempotent retry of a historical run matching once requests no longer carry entry citations.
+
+    A request that cited legacy entries cannot be sent again, so it keeps its accepted digest.
+    """
+
+    if request.get("memory_citations"):
+        return
+    digest = CreateDreamRunRequest.model_validate({
+        name: value for name, value in request.items() if name != "memory_citations"
+    }).digest()
+    if digest == stored:
+        return
+    context.count("dream_request_digests")
+    if context.write:
+        await connection.execute(
+            text("UPDATE pc_dream_runs SET request_digest = :digest WHERE scope_id = :scope_id AND run_id = :run_id"),
+            {**key, "digest": digest},
+        )
 
 
 async def _dream_runs(context: _Context, units: _Units) -> None:
@@ -875,12 +1011,35 @@ async def _dream_runs(context: _Context, units: _Units) -> None:
         )[0]
         payload = json.loads(bytes(row["payload"]))
         if row["status"] not in _TERMINAL_DREAM:
-            if await _dream_inputs_change(connection, key["scope_id"], payload):
+            cited = "pc_artifacts" in context.citation_tables
+            if await _dream_inputs_change(connection, key["scope_id"], payload, cited=cited):
                 raise ValueError(  # noqa: TRY003
                     "an unfinished Dream run pins evidence this migration rewrites; let it finish first"
                 )
+            current = _without_entry_fields(payload)
+            if current == payload:
+                return
+            record = DreamRecord.model_validate(current)
+            if record.request is None:
+                raise ValueError("an unfinished Dream run has no request")  # noqa: TRY003
+            context.count("dream_run_formats")
+            if context.write:
+                await connection.execute(
+                    text(
+                        "UPDATE pc_dream_runs SET payload = :payload, request_digest = :digest "
+                        "WHERE scope_id = :scope_id AND run_id = :run_id"
+                    ),
+                    {
+                        **key,
+                        "payload": dump_model(record, kind="dream", name="record"),
+                        "digest": record.request.digest(),
+                    },
+                )
             return
         if payload.get("request") is None:
+            history = payload["run"].get("historical_data") or {}
+            if history.get("format") == DREAM_HISTORY_FORMAT:
+                await _align_request_digest(context, connection, key, row["request_digest"], history["request"])
             return
         run = payload["run"]
         history = {
@@ -900,6 +1059,7 @@ async def _dream_runs(context: _Context, units: _Units) -> None:
                 text("UPDATE pc_dream_runs SET payload = :payload WHERE scope_id = :scope_id AND run_id = :run_id"),
                 {**key, "payload": dump_model(record, kind="dream", name="record")},
             )
+        await _align_request_digest(context, connection, key, row["request_digest"], history["request"])
 
     await _each(context, units, keys, lambda key: f"Dream run {key['scope_id']}/{key['run_id']}", convert)
 
@@ -926,14 +1086,15 @@ async def _unsupported(context: _Context, units: _Units, tables: set[str]) -> No
                 )
 
 
-async def _decision_applied(units: _Units, decision: CandidateDecision) -> bool:
+async def _decision_applied(context: _Context, units: _Units, decision: CandidateDecision) -> bool:
     """A committed replacement lets the same decision file be reused for a rerun."""
 
+    cited = "pc_artifact_candidate_versions" in context.citation_tables
     async with units.unit() as connection:
         found = await rows(
             connection,
             "pc_artifact_candidate_versions",
-            ("artifact_refs", "memory_citations"),
+            ("artifact_refs", *((LEGACY_CITATION_COLUMN,) if cited else ())),
             "WHERE scope_id = :scope_id AND candidate_id = :candidate_id AND version = :version",
             scope_id=decision.scope_id,
             candidate_id=decision.candidate_id,
@@ -941,7 +1102,7 @@ async def _decision_applied(units: _Units, decision: CandidateDecision) -> bool:
         )
     if not found:
         return False
-    citations = found[0]["memory_citations"]
+    citations = found[0].get(LEGACY_CITATION_COLUMN)
     return json.loads(bytes(found[0]["artifact_refs"])) == list(decision.artifact_refs) and (
         citations is None or json.loads(bytes(citations)) == []
     )
@@ -956,10 +1117,11 @@ async def convert_references(
 ) -> tuple[dict[str, int], tuple[str, ...]]:
     """Plan (with ``connection``) or apply (with ``database``) every legacy reference conversion."""
 
-    context = _Context(collections, decisions, write=database is not None)
     units = _Units(database, connection)
     async with units.unit() as current:
         tables = await table_names(current)
+        citation_tables = frozenset(await legacy_citation_columns(current, tables))
+    context = _Context(collections, decisions, write=database is not None, citation_tables=citation_tables)
     await _unsupported(context, units, tables)
     if "pc_artifact_candidate_versions" in tables:
         await _candidates(context, units)
@@ -974,10 +1136,27 @@ async def convert_references(
     if "pc_sources" in tables:
         await _work_sources(context, units)
     for key in sorted(set(decisions) - context.used_decisions):
-        if not await _decision_applied(units, decisions[key]):
+        if not await _decision_applied(context, units, decisions[key]):
             context.errors.append(f"decision {key} matches no blocked Candidate evidence")
     context.counts["blocked_references"] = sum("supply a replace decision" in error for error in context.errors)
     return context.counts, tuple(context.errors)
+
+
+async def legacy_citation_columns(connection: AsyncConnection, tables: set[str]) -> list[str]:
+    """Public tables that still declare the legacy entry citation column."""
+
+    return [
+        table
+        for table in _LEGACY_CITATION_TABLES
+        if table in tables and await has_column(connection, table, LEGACY_CITATION_COLUMN)
+    ]
+
+
+async def drop_legacy_citation_columns(connection: AsyncConnection) -> None:
+    """Remove the emptied legacy citation columns; every citation was converted and accepted first."""
+
+    for table in await legacy_citation_columns(connection, await table_names(connection)):
+        await connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {LEGACY_CITATION_COLUMN}"))
 
 
 async def _foreign_key_names(connection: AsyncConnection, table: str) -> list[str | None]:
@@ -1096,8 +1275,9 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
 ) -> list[str]:
     """Report public legacy objects; ``thorough`` also scans business payloads for typed legacy references.
 
-    Before removal (``collections_removed=False``) the archived collections and
-    their own lineage may still be public; every other reference must be gone.
+    Before removal (``collections_removed=False``) the archived collections,
+    their own lineage and the emptied legacy citation columns may still be
+    public; every other reference must be gone.
     """
 
     issues: list[str] = []
@@ -1119,17 +1299,25 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
     foreign_keys = await legacy_foreign_keys(connection, tables)
     if foreign_keys:
         issues.append("legacy entry tables still reference public Artifacts: " + ", ".join(foreign_keys))
+    citation_tables = await legacy_citation_columns(connection, tables)
+    if collections_removed and citation_tables:
+        issues.append(
+            "public tables still declare legacy memory_citations: " + ", ".join(citation_tables) + "; run apply"
+        )
     if not thorough:
         return issues
+    cited = "(memory_citations IS NOT NULL AND LENGTH(memory_citations) > 2) OR "
     checks = {
         "pc_artifacts": (
-            "SELECT COUNT(*) FROM pc_artifacts WHERE (memory_citations IS NOT NULL AND LENGTH(memory_citations) > 2) "
-            "OR (family = 'handoff' AND content LIKE '%memory_citation%')",
+            "SELECT COUNT(*) FROM pc_artifacts WHERE "  # noqa: S608
+            + (cited if "pc_artifacts" in citation_tables else "")
+            + "(family = 'handoff' AND content LIKE '%memory_citation%')",
             "Artifacts still hold legacy Memory citations",
         ),
         "pc_artifact_candidate_versions": (
-            "SELECT COUNT(*) FROM pc_artifact_candidate_versions WHERE (memory_citations IS NOT NULL "
-            "AND LENGTH(memory_citations) > 2) OR artifact_refs LIKE '%\"memory\"%'",
+            "SELECT COUNT(*) FROM pc_artifact_candidate_versions WHERE "  # noqa: S608
+            + (cited if "pc_artifact_candidate_versions" in citation_tables else "")
+            + "artifact_refs LIKE '%\"memory\"%'",
             "Candidates still hold legacy Memory references",
         ),
         "pc_dream_runs": (
@@ -1138,6 +1326,11 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
             "terminal Dream runs still use the executable legacy format",
         ),
     }
+    if "pc_dream_runs" in tables and await count(
+        "SELECT COUNT(*) FROM pc_dream_runs WHERE status NOT IN ('succeeded', 'failed') "
+        "AND payload LIKE '%memory_citations%'"
+    ):
+        issues.append("unfinished Dream runs still carry legacy entry citation fields")
     for table, (sql, message) in checks.items():
         if table in tables and await count(sql):
             issues.append(message)
@@ -1160,9 +1353,9 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
             if model is None:
                 continue
             content = value["content"]
-            if "memory_citation" in content or (
-                model is not HandoffReceipt and _holds_collection_citation(json.loads(content))
-            ):
+            # A receipt keeps the collections it could not resolve only in its explicit history.
+            current = {name: item for name, item in json.loads(content).items() if name != "historical_data"}
+            if "memory_citation" in content or _holds_collection_citation(current):
                 issues.append("structured Work Sources still hold legacy Memory citations")
                 break
     return issues
@@ -1171,8 +1364,10 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
 __all__ = [
     "DECISIONS_FORMAT",
     "DREAM_HISTORY_FORMAT",
+    "RECEIPT_HISTORY_FORMAT",
     "CandidateDecision",
     "convert_references",
+    "drop_legacy_citation_columns",
     "drop_legacy_foreign_keys",
     "load_decisions",
     "remove_legacy_collections",

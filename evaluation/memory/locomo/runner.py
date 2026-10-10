@@ -1250,8 +1250,6 @@ async def _lineage_source_ids(
         record = await application.get_artifact_revision(current.family, current.artifact_id, current.revision)
         if (record.family, record.artifact_id, record.revision) != identity:
             raise RuntimeError("Artifact read returned another evidence revision")  # noqa: TRY003
-        if record.memory_citations:
-            raise RuntimeError("LoCoMo Atomic provenance does not support legacy entry-selector citations")  # noqa: TRY003
         records[identity] = record
         visiting.add(identity)
         pending.append((current, True))

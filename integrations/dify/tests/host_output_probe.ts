@@ -52,9 +52,6 @@ for (const name of Object.keys(schemas)) {
 }
 const selectors = [
   ['pc_prepare_context',['result','content'],'string'],
-  ['pc_memory_get',['result','citation'],'object'],
-  ['pc_memory_get',['result','citation','entry_id'],'string'],
-  ['pc_memory_get',['result','citation','memory_ref','revision'],'number'],
   ['pc_memory_get',['result','artifact_id'],'string'],
   ['pc_memory_get',['result','content','text'],'string'],
   ['pc_memory_get',['result','etag'],'string'],

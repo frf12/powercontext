@@ -172,9 +172,6 @@ pub struct ArtifactRevision {
     pub r#content: serde_json::Value,
     pub r#sources: Vec<SourceTypeReference>,
     pub r#artifacts: Vec<ArtifactReference>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional = nullable)]
-    pub r#memory_citations: Option<Vec<MemoryCitation>>,
     pub r#content_digest: String,
 }
 
@@ -292,66 +289,8 @@ pub struct ExtractionStatus {
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
-pub struct GetMemoryEntryRequest {
-    pub r#scope_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional = nullable)]
-    pub r#citation: Option<MemoryCitation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional = nullable)]
-    pub r#target: Option<LegacyMemoryTarget>,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[serde(untagged)]
-pub enum GetMemoryEntryResponse {
-    MemoryEntry(MemoryEntry),
-    AtomicMemoryRecord(AtomicMemoryRecord),
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
 pub struct HealthResponse {
     pub r#status: String,
-}
-
-pub type LegacyMemoryTarget = MemoryEntryTagTarget;
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-pub struct MemoryCitation {
-    pub r#memory_ref: ArtifactReference,
-    pub r#entry_id: String,
-    pub r#entry_version_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-pub struct MemoryEntry {
-    pub r#citation: MemoryCitation,
-    pub r#version: i64,
-    pub r#kind: String,
-    pub r#text: String,
-    pub r#state: MemoryEntryState,
-    pub r#source_refs: Vec<SourceReference>,
-    pub r#artifact_refs: Vec<ArtifactReference>,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-pub enum MemoryEntryState {
-    #[serde(rename = "active")]
-    Active,
-    #[serde(rename = "inactive")]
-    Inactive,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-pub struct MemoryEntryTagTarget {
-    pub r#type: String,
-    pub r#family: String,
-    pub r#artifact_id: String,
-    pub r#entry_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
@@ -489,13 +428,6 @@ pub struct SearchMemoryResponse {
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
-pub struct SourceReference {
-    pub r#name: String,
-    pub r#source_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
 pub struct SourceTypeReference {
     pub r#source_type: String,
     pub r#source_id: String,
@@ -541,14 +473,7 @@ pub fn declarations(config: &ts_rs::Config) -> Vec<String> {
         <ExtractionFailure as ts_rs::TS>::decl(config),
         <ExtractionObservation as ts_rs::TS>::decl(config),
         <ExtractionStatus as ts_rs::TS>::decl(config),
-        <GetMemoryEntryRequest as ts_rs::TS>::decl(config),
-        <GetMemoryEntryResponse as ts_rs::TS>::decl(config),
         <HealthResponse as ts_rs::TS>::decl(config),
-        format!("type LegacyMemoryTarget = {};", <MemoryEntryTagTarget as ts_rs::TS>::name(config)),
-        <MemoryCitation as ts_rs::TS>::decl(config),
-        <MemoryEntry as ts_rs::TS>::decl(config),
-        <MemoryEntryState as ts_rs::TS>::decl(config),
-        <MemoryEntryTagTarget as ts_rs::TS>::decl(config),
         <MemoryMutationResponse as ts_rs::TS>::decl(config),
         <MemorySearchMode as ts_rs::TS>::decl(config),
         <PreparedContextSchema as ts_rs::TS>::decl(config),
@@ -562,7 +487,6 @@ pub fn declarations(config: &ts_rs::Config) -> Vec<String> {
         <ScopeQueryField as ts_rs::TS>::decl(config),
         <SearchMemoryRequest as ts_rs::TS>::decl(config),
         <SearchMemoryResponse as ts_rs::TS>::decl(config),
-        <SourceReference as ts_rs::TS>::decl(config),
         <SourceTypeReference as ts_rs::TS>::decl(config),
         <TagFilter as ts_rs::TS>::decl(config),
         <TagMatch as ts_rs::TS>::decl(config),

@@ -67,7 +67,6 @@ from powercontext.builtin.runtime import (
     HandoffContent,
     HandoffDraft,
     HandoffEvidenceCheck,
-    HandoffMemoryCitation,
     HandoffOmission,
     HandoffResolution,
     HandoffSourceCitation,
@@ -75,7 +74,6 @@ from powercontext.builtin.runtime import (
     InvalidRuntimeRequestError,
     MemoryChange,
     MemoryFlushResult,
-    MemoryHit,
     PrepareContextRequest,
     PreparedContext,
     PreparedHandoff,
@@ -113,9 +111,6 @@ from powercontext.builtin.runtime import (
     ListArtifactCandidatesRequest as RuntimeListArtifactCandidatesRequest,
 )
 from powercontext.builtin.runtime import ListExternalSkillsRequest as RuntimeListExternalSkillsRequest
-from powercontext.builtin.runtime import (
-    MemoryCitation as RuntimeMemoryCitation,
-)
 from powercontext.builtin.runtime import (
     ProposeExperienceRequest as RuntimeProposeExperienceRequest,
 )
@@ -209,7 +204,6 @@ from powercontext.http import (
     ListExternalSkillsResponse,
     ListMemoryEntriesResponse,
     ManagedSkillLibraryEntry,
-    MemoryMatchedBy,
     MemoryMutationResponse,
     PreparedContextSchema,
     PreparedContextStatus,
@@ -227,7 +221,6 @@ from powercontext.http import (
     ScanExternalSkillsResponse,
     ScopedStats,
     SearchArtifactsResponse,
-    SearchMemoryHit,
     SearchMemoryResponse,
     SearchTopicMemoryHit,
     SearchTopicMemoryRequest,
@@ -283,9 +276,6 @@ from powercontext.http import (
 from powercontext.http import HandoffGenerationEnvelope as TransportHandoffGenerationEnvelope
 from powercontext.http import HandoffGenerationMetadata as TransportHandoffGenerationMetadata
 from powercontext.http import (
-    HandoffMemoryCitation as TransportHandoffMemoryCitation,
-)
-from powercontext.http import (
     HandoffOmission as TransportHandoffOmission,
 )
 from powercontext.http import (
@@ -296,9 +286,6 @@ from powercontext.http import (
 )
 from powercontext.http import (
     HandoffStatement as TransportHandoffStatement,
-)
-from powercontext.http import (
-    MemoryCitation as TransportMemoryCitation,
 )
 from powercontext.http import (
     PrepareContextRequest as TransportPrepareContextRequest,
@@ -570,7 +557,6 @@ def propose_experience_request(value: ProposeExperienceRequest) -> RuntimePropos
         proposal=experience_content(value.proposal),
         sources=tuple(runtime_source_reference(source) for source in value.source_refs),
         artifacts=tuple(runtime_artifact_reference(artifact) for artifact in value.artifact_refs),
-        memory_citations=tuple(runtime_citation(citation) for citation in value.memory_citations or ()),
         target=None if value.target is None else runtime_artifact_reference(value.target),
         reason=value.reason,
     )
@@ -648,11 +634,6 @@ def revise_candidate_request(value: ReviseArtifactCandidateRequest) -> RuntimeRe
         proposal=reviewed_content(value.proposal),
         sources=tuple(runtime_source_reference(source) for source in value.source_refs),
         artifacts=tuple(runtime_artifact_reference(artifact) for artifact in value.artifact_refs),
-        memory_citations=(
-            None
-            if value.memory_citations is None
-            else tuple(runtime_citation(citation) for citation in value.memory_citations or ())
-        ),
         target=None if value.target is None else runtime_artifact_reference(value.target),
         reason=value.reason,
     )
@@ -847,7 +828,6 @@ def candidate_response(value: RuntimeArtifactCandidate[Any]) -> ArtifactCandidat
         proposal=reviewed_proposal(value.proposal),
         source_refs=[source_reference(source) for source in value.sources],
         artifact_refs=[artifact_reference(artifact) for artifact in value.artifacts],
-        memory_citations=[transport_citation(citation) for citation in value.memory_citations],
         target=None if value.target is None else artifact_reference(value.target),
         reason=value.reason,
         result_artifact=None if value.result_artifact is None else artifact_reference(value.result_artifact),
@@ -875,7 +855,6 @@ def experience_response(value: Experience) -> ExperienceArtifact:
         content=experience_proposal(value.content),
         source_refs=[source_reference(source) for source in value.lineage.sources],
         artifact_refs=[artifact_reference(artifact) for artifact in value.lineage.artifacts],
-        memory_citations=[transport_citation(citation) for citation in value.lineage.memory_citations],
     )
 
 
@@ -885,7 +864,6 @@ def skill_response(value: Skill) -> SkillArtifact:
         content=skill_proposal(value.content),
         source_refs=[source_reference(source) for source in value.lineage.sources],
         artifact_refs=[artifact_reference(artifact) for artifact in value.lineage.artifacts],
-        memory_citations=[],
     )
 
 
@@ -1078,34 +1056,12 @@ def runtime_source_type_reference(value: SourceTypeReference) -> SourceRef:
     return SourceRef(source_type=value.source_type, source_id=value.source_id)
 
 
-def runtime_citation(value: TransportMemoryCitation) -> RuntimeMemoryCitation:
-    return RuntimeMemoryCitation(
-        memory_ref=ArtifactRef(
-            family=value.memory_ref.family,
-            artifact_id=value.memory_ref.artifact_id,
-            revision=value.memory_ref.revision,
-        ),
-        entry_id=value.entry_id,
-        entry_version_id=value.entry_version_id,
-    )
-
-
-def transport_citation(value: RuntimeMemoryCitation) -> TransportMemoryCitation:
-    return TransportMemoryCitation(
-        memory_ref=artifact_reference(value.memory_ref),
-        entry_id=value.entry_id,
-        entry_version_id=value.entry_version_id,
-    )
-
-
 def runtime_handoff_citation(value: TransportHandoffCitation) -> RuntimeHandoffCitation:
     citation = value.root
     if isinstance(citation, TransportHandoffSourceCitation):
         return HandoffSourceCitation(source_ref=runtime_source_reference(citation.source_ref))
     if isinstance(citation, TransportHandoffArtifactCitation):
         return HandoffArtifactCitation(artifact_ref=runtime_artifact_reference(citation.artifact_ref))
-    if isinstance(citation, TransportHandoffMemoryCitation):
-        return HandoffMemoryCitation(memory_citation=runtime_citation(citation.memory_citation))
     raise TypeError(f"unsupported Handoff citation: {type(citation).__name__}")  # noqa: TRY003
 
 
@@ -1119,11 +1075,6 @@ def handoff_citation(value: RuntimeHandoffCitation) -> TransportHandoffCitation:
         citation = TransportHandoffArtifactCitation(
             kind="artifact",
             artifact_ref=artifact_reference(value.artifact_ref),
-        )
-    elif isinstance(value, HandoffMemoryCitation):
-        citation = TransportHandoffMemoryCitation(
-            kind="memory",
-            memory_citation=transport_citation(value.memory_citation),
         )
     else:
         raise TypeError(f"unsupported Handoff citation: {type(value).__name__}")  # noqa: TRY003
@@ -1201,19 +1152,4 @@ def entry_change(value: MemoryChange) -> EntryChange:
         from_entry_version_id=value.from_entry_version_id,
         to_entry_version_id=value.to_entry_version_id,
         reason=value.reason,
-    )
-
-
-def search_hit(value: MemoryHit) -> SearchMemoryHit:
-    return SearchMemoryHit(
-        citation=transport_citation(
-            RuntimeMemoryCitation(
-                memory_ref=value.memory_ref,
-                entry_id=value.entry_id,
-                entry_version_id=value.entry_version_id,
-            )
-        ),
-        text=value.text,
-        score=value.score,
-        matched_by=[MemoryMatchedBy(channel) for channel in value.matched_by],
     )

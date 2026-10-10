@@ -17,8 +17,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   DesktopState,
-  MemoryCitation,
-  MemoryEntry,
   AtomicMemoryDetail,
   ArtifactReference,
   MemorySearchHit,
@@ -159,7 +157,7 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
       {outcome && (
         <p role={outcome.record.status === "succeeded" ? "status" : "alert"}>
           {outcome.record.status === "succeeded"
-            ? outcome.result?.entry || outcome.result?.records.length
+            ? outcome.result?.records.length
               ? t.success
               : t.noEntry
             : outcome.record.status === "unknown"
@@ -178,9 +176,7 @@ export function MemoryWorkspace(props: Props) {
   const readButton = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<MemorySearchHit[] | null>(null);
-  const [entry, setEntry] = useState<MemoryEntry | AtomicMemoryDetail | null>(
-    null,
-  );
+  const [entry, setEntry] = useState<AtomicMemoryDetail | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<"search" | "detail" | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -217,7 +213,7 @@ export function MemoryWorkspace(props: Props) {
         void desktopApi.cancelMemory(active.generation).catch(() => {});
     };
   }, [active?.generation]);
-  async function read(reference?: MemoryCitation | ArtifactReference) {
+  async function read(reference?: ArtifactReference) {
     if (!active?.scope) return;
     const generation = active.generation;
     const ticket = ++sequence.current;
@@ -231,10 +227,7 @@ export function MemoryWorkspace(props: Props) {
       await pendingCancel.current;
       if (ticket !== sequence.current || generation !== current.current) return;
       if (reference) {
-        const result =
-          "memory_ref" in reference
-            ? await desktopApi.entry(generation, reference)
-            : await desktopApi.atomicEntry(generation, reference);
+        const result = await desktopApi.atomicEntry(generation, reference);
         if (ticket === sequence.current && generation === current.current)
           setEntry(result);
       } else {
@@ -267,13 +260,7 @@ export function MemoryWorkspace(props: Props) {
     if (!entry) return;
     try {
       await navigator.clipboard.writeText(
-        reference
-          ? JSON.stringify(
-              "artifact" in entry ? entry.artifact : entry.citation,
-              null,
-              2,
-            )
-          : entry.text,
+        reference ? JSON.stringify(entry.artifact, null, 2) : entry.text,
       );
       setCopied(t.copied);
     } catch {
@@ -369,8 +356,7 @@ export function MemoryWorkspace(props: Props) {
           {hits && hits.length > 0 && (
             <ul className="memory-hits">
               {hits.map((hit) => {
-                const reference = hit.artifact ?? hit.citation;
-                const key = JSON.stringify(reference);
+                const key = JSON.stringify(hit.artifact);
                 const title = hit.text.split("\n", 1)[0] || hit.text;
                 return (
                   <li key={key}>
@@ -395,7 +381,7 @@ export function MemoryWorkspace(props: Props) {
                           aria-pressed={selected === key}
                           onClick={(event) => {
                             readButton.current = event.currentTarget;
-                            if (reference) void read(reference);
+                            void read(hit.artifact);
                           }}
                         >
                           {busy === "detail" && selected === key
@@ -417,20 +403,7 @@ export function MemoryWorkspace(props: Props) {
               <h2 ref={readerHeading} tabIndex={-1}>
                 {t.detail}
               </h2>
-              <span>
-                <span className="badge">{entry.kind}</span>{" "}
-                {"state" in entry && (
-                  <span
-                    className={
-                      entry.state === "active"
-                        ? "badge success"
-                        : "badge subtle"
-                    }
-                  >
-                    {entry.state === "active" ? t.badgeActive : t.badgeInactive}
-                  </span>
-                )}
-              </span>
+              <span className="badge">{entry.kind}</span>
             </div>
             <div className="plain-text reader-body" tabIndex={0}>
               {entry.text}
@@ -440,30 +413,17 @@ export function MemoryWorkspace(props: Props) {
                 {t.scopeBelong} <strong>{active.scope.title}</strong>
               </p>
             )}
-            <div className="citation-block">
+            <div className="reference-block">
               <h3>{t.reference}</h3>
-              <dl className="citation-summary">
-                {"artifact" in entry ? (
-                  <>
-                    <dt>Artifact family</dt>
-                    <dd>{entry.artifact.family}</dd>
-                    <dt>Artifact ID</dt>
-                    <dd>{entry.artifact.artifact_id}</dd>
-                    <dt>Revision</dt>
-                    <dd>{entry.artifact.revision}</dd>
-                  </>
-                ) : (
-                  <>
-                    <dt>Memory revision</dt>
-                    <dd>{entry.citation.memory_ref.revision}</dd>
-                    <dt>Entry ID</dt>
-                    <dd>{entry.citation.entry_id}</dd>
-                    <dt>Entry version</dt>
-                    <dd>{entry.citation.entry_version_id}</dd>
-                  </>
-                )}
+              <dl className="reference-summary">
+                <dt>Artifact family</dt>
+                <dd>{entry.artifact.family}</dd>
+                <dt>Artifact ID</dt>
+                <dd>{entry.artifact.artifact_id}</dd>
+                <dt>Revision</dt>
+                <dd>{entry.artifact.revision}</dd>
               </dl>
-              <p className="small">{t.citationNote}</p>
+              <p className="small">{t.referenceNote}</p>
               <button
                 className="primary-outline"
                 onClick={() => void copy(true)}
@@ -487,11 +447,7 @@ export function MemoryWorkspace(props: Props) {
             <details>
               <summary>{t.referenceFull}</summary>
               <pre className="plain-text">
-                {JSON.stringify(
-                  "artifact" in entry ? entry.artifact : entry.citation,
-                  null,
-                  2,
-                )}
+                {JSON.stringify(entry.artifact, null, 2)}
               </pre>
             </details>
             <details>
@@ -500,7 +456,7 @@ export function MemoryWorkspace(props: Props) {
                 <ul>
                   {entry.source_refs.map((source) => (
                     <li key={source.source_id}>
-                      {source.name} <code>{source.source_id}</code>
+                      {source.source_type} <code>{source.source_id}</code>
                     </li>
                   ))}
                 </ul>

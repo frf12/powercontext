@@ -24,7 +24,7 @@ import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import rfc8785
 from sqlalchemy import ColumnElement, and_, delete, func, insert, literal, select, tuple_, update
@@ -80,31 +80,6 @@ def tag_predicate(
         .scalar_subquery()
     )
     return count == len(tag_filter.keys) if tag_filter.match == "all" else count > 0
-
-
-def memory_tag_sql(alias: Literal["f", "m"]) -> str:
-    """A parameterized predicate for native FTS/vector SQL (aliases are internal)."""
-
-    return """
-      AND (SELECT COUNT(*) FROM pc_artifact_tags AS tags
-           WHERE tags.scope_id = m.scope_id
-             AND tags.family = 'memory'
-             AND tags.artifact_id = m.memory_artifact_id
-             AND tags.target_type = 'memory_entry'
-             AND tags.target_id = m.entry_id
-             AND tags.tag_key_hash IN :tag_hashes
-             AND tags.tag_key IN :tag_keys) >= :tag_minimum
-    """.replace("m.", alias + ".")
-
-
-def memory_tag_parameters(tag_filter: TagFilter | None) -> dict[str, Any]:
-    if tag_filter is None:
-        return {}
-    return {
-        "tag_keys": tag_filter.keys,
-        "tag_hashes": _key_hashes(tag_filter),
-        "tag_minimum": len(tag_filter.keys) if tag_filter.match == "all" else 1,
-    }
 
 
 def _key_hashes(tag_filter: TagFilter) -> tuple[bytes, ...]:

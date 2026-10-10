@@ -396,8 +396,6 @@ class RelationalRecordService:
 
     async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord:
         self._require_family(family)
-        if family == "memory":
-            raise BaseOperationNotSupportedError("artifact_family", family, "latest collection read")
         async with self._database.transaction() as connection:
             try:
                 artifact = await self._artifacts.latest(connection, scope_id, family, artifact_id)
@@ -493,7 +491,7 @@ class RelationalRecordService:
         return ArtifactRevisionPage(items=items, next_cursor=next_cursor)
 
     async def logical_artifacts(self, scope_id: str, /) -> tuple[LogicalArtifactRecord, ...]:
-        """Catalog current logical identities; legacy collections remain exact-history only."""
+        """Catalog current logical identities."""
         async with self._database.transaction() as connection:
             artifacts = (
                 await connection.execute(
@@ -518,8 +516,6 @@ class RelationalRecordService:
         tag_filter: TagFilter | None = None,
     ) -> ArtifactRecordPage:
         self._require_family(family)
-        if family == "memory":
-            raise BaseOperationNotSupportedError("artifact_family", family, "collection list")
         _require_limit(limit)
         reader = self._topic_memory_list_reader
         if reader is not None and family == reader.family:
@@ -697,6 +693,8 @@ class RelationalRecordService:
             raise InvalidBaseAccessRequestError("source_type", "must be content")
 
     def _require_family(self, family: str) -> None:
+        if family == "memory":
+            raise BaseOperationNotSupportedError("artifact_family", family, "legacy Memory collection read")
         if family not in self._artifacts.families:
             raise InvalidBaseAccessRequestError("family", "must be a registered Artifact family")
 
@@ -780,7 +778,6 @@ def _artifact_record(
         content=content,
         sources=artifact.lineage.sources,
         artifacts=artifact.lineage.artifacts,
-        memory_citations=artifact.lineage.memory_citations,
         content_digest=_content_digest(content),
     )
 
