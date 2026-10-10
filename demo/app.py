@@ -70,7 +70,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(min_length=1)
     memory_on: bool = True
 
 
@@ -155,6 +155,20 @@ async def startup(app: FastAPI) -> None:
         f"[demo] powercontext 就绪 {pc.base_url} "
         f"generation={pc.inference.generation_model} embedding={pc.inference.embedding_model}"
     )
+    generation = pc.inference.generation_model
+    base = pc.inference.generation_base_url
+    # openai: 前缀映射到 Responses API (/responses), DeepSeek/vLLM 等 Chat Completions
+    # 兼容端点并不提供该接口, 提取每回合都会失败; openai-chat: 才是 chat/completions
+    if (
+        generation is not None
+        and generation.startswith("openai:")
+        and base is not None
+        and urllib.parse.urlparse(str(base)).hostname != "api.openai.com"
+    ):
+        print(
+            f"[demo] 警告: generation 模型 {generation} 搭配 {base} 会调用 Responses API, "
+            "多数 OpenAI 兼容端点不支持; 记忆提取请改用 openai-chat: 前缀"
+        )
     # app.state.http 是外部 LLM 客户端, 保留 trust_env 默认值
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
     # loopback 客户端显式 trust_env=False, 避免本机代理劫持 127.0.0.1 请求;

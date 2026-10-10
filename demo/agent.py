@@ -16,15 +16,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 from powercontext.client import PowerContextClient
-from powercontext.http import CreateSourceRequest, FlushMemoryRequest, SearchMemoryHit, SearchMemoryRequest
+from powercontext.http import (
+    CreateSourceRequest,
+    FlushMemoryRequest,
+    FlushMemoryResponse,
+    SearchMemoryHit,
+    SearchMemoryRequest,
+)
 
 from .config import DemoConfig
+
+# 持有在途写入任务的引用, 防止事件循环只握弱引用时任务被垃圾回收
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 PERSONA = (
     "你是「小忆」，一个温暖健谈的中文 AI 助手，正在一个线下的记忆能力体验活动中陪用户聊天。"
@@ -107,11 +117,25 @@ async def run_chat_turn(
 
     # After the turn: with memory on, capture the exchange and trigger extraction.
     if memory_on and last_user and reply:
+        # 写入放进独立任务并 shield: 访客在 done 后立刻刷新页面会取消本生成器,
+        # 但这轮对话的记忆不能丢, 让写入在后台继续跑完
+        write_task = asyncio.create_task(_capture_and_flush(client, scope_id, last_user, "".join(reply)))
+        _BACKGROUND_TASKS.add(write_task)
+        write_task.add_done_callback(_BACKGROUND_TASKS.discard)
         try:
-            await client.create_source(
-                scope_id, CreateSourceRequest(content=f"用户：{last_user}\n助手：{''.join(reply)}")
-            )
-            flush = await client.flush_memory(FlushMemoryRequest(scope_id=scope_id))
+            flush = await asyncio.shield(write_task)
             yield {"type": "flushed", "processed_source_count": flush.processed_source_count}
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             yield {"type": "write_error", "message": str(exc)}
+
+
+async def _capture_and_flush(
+    client: PowerContextClient,
+    scope_id: str,
+    last_user: str,
+    reply: str,
+) -> FlushMemoryResponse:
+    await client.create_source(scope_id, CreateSourceRequest(content=f"用户：{last_user}\n助手：{reply}"))
+    return await client.flush_memory(FlushMemoryRequest(scope_id=scope_id))
