@@ -32,7 +32,7 @@ from typing import Annotated, Any, Literal
 
 import rfc8785
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.artifacts.experience.recurrence import (
@@ -48,6 +48,13 @@ from powercontext.builtin.artifacts.experience.recurrence import (
 from powercontext.builtin.artifacts.handoff.models import HandoffContent, HandoffSourceCitation
 from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamRecord
 from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
+from powercontext.builtin.persistence.atomic_memory_readiness import (
+    LEGACY_ENTRY_FOREIGN_KEYS,
+    atomic_memory_readiness_issues,
+    legacy_citation_columns,
+    legacy_entry_foreign_key_names,
+    legacy_foreign_keys,
+)
 from powercontext.builtin.persistence.codec import dump_model
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.migrations.atomic_memory_archive import (
@@ -55,7 +62,6 @@ from powercontext.builtin.persistence.migrations.atomic_memory_archive import (
     LegacyCollection,
     archive_collection,
     archive_incoming_reference,
-    has_column,
     rows,
     table_names,
 )
@@ -77,11 +83,6 @@ _WORK_MODELS: dict[str, type[BaseModel]] = {
     "task-outcome": TaskOutcome,
 }
 _TERMINAL_DREAM = frozenset({"succeeded", "failed"})
-_LEGACY_ENTRY_FOREIGN_KEYS = {
-    "pc_memory_entry_versions": ("scope_id", "family", "memory_artifact_id", "created_in_revision"),
-    "pc_memory_entry_heads": ("scope_id", "family", "memory_artifact_id", "head_revision"),
-}
-_LEGACY_CITATION_TABLES = ("pc_artifacts", "pc_artifact_candidate_versions")
 
 
 class _LegacyValue(BaseModel):
@@ -1139,40 +1140,11 @@ async def convert_references(
     return context.counts, tuple(context.errors)
 
 
-async def legacy_citation_columns(connection: AsyncConnection, tables: set[str]) -> list[str]:
-    """Public tables that still declare the legacy entry citation column."""
-
-    return [
-        table
-        for table in _LEGACY_CITATION_TABLES
-        if table in tables and await has_column(connection, table, LEGACY_CITATION_COLUMN)
-    ]
-
-
 async def drop_legacy_citation_columns(connection: AsyncConnection) -> None:
     """Remove the emptied legacy citation columns; every citation was converted and accepted first."""
 
     for table in await legacy_citation_columns(connection, await table_names(connection)):
         await connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {LEGACY_CITATION_COLUMN}"))
-
-
-async def _foreign_key_names(connection: AsyncConnection, table: str) -> list[str | None]:
-    columns = _LEGACY_ENTRY_FOREIGN_KEYS[table]
-
-    def read(value: Any) -> list[str | None]:
-        return [
-            item.get("name")
-            for item in inspect(value).get_foreign_keys(table)
-            if item["referred_table"] == "pc_artifacts" and tuple(item["constrained_columns"]) == columns
-        ]
-
-    return await connection.run_sync(read)
-
-
-async def legacy_foreign_keys(connection: AsyncConnection, tables: set[str]) -> list[str]:
-    return [
-        table for table in _LEGACY_ENTRY_FOREIGN_KEYS if table in tables and await _foreign_key_names(connection, table)
-    ]
 
 
 async def drop_legacy_foreign_keys(connection: AsyncConnection) -> None:
@@ -1184,7 +1156,7 @@ async def drop_legacy_foreign_keys(connection: AsyncConnection) -> None:
         return
     if connection.dialect.name == "mysql":
         for table in pending:
-            for name in await _foreign_key_names(connection, table):
+            for name in await legacy_entry_foreign_key_names(connection, table):
                 await connection.execute(text(f"ALTER TABLE {table} DROP FOREIGN KEY {name}"))
         return
     # Removing a foreign key does not change SQLite's stored row format, so the
@@ -1197,7 +1169,7 @@ async def drop_legacy_foreign_keys(connection: AsyncConnection) -> None:
         )
         await connection.execute(
             text("UPDATE sqlite_master SET sql = :sql WHERE type = 'table' AND name = :name"),
-            {"sql": _without_artifact_foreign_key(str(created), _LEGACY_ENTRY_FOREIGN_KEYS[table]), "name": table},
+            {"sql": _without_artifact_foreign_key(str(created), LEGACY_ENTRY_FOREIGN_KEYS[table]), "name": table},
         )
     await connection.execute(text(f"PRAGMA schema_version = {version + 1}"))
     await connection.execute(text("PRAGMA writable_schema = OFF"))
@@ -1277,32 +1249,14 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
     public; every other reference must be gone.
     """
 
-    issues: list[str] = []
+    issues = await atomic_memory_readiness_issues(connection, tables, collections_removed=collections_removed)
+    if not thorough:
+        return issues
 
     async def count(sql: str) -> int:
         return int(await connection.scalar(text(sql), {"historical": '%"request":null%'}) or 0)
 
-    if (
-        collections_removed
-        and "pc_artifacts" in tables
-        and await count("SELECT COUNT(*) FROM pc_artifacts WHERE family = 'memory'")
-    ):
-        issues.append("legacy Memory collections remain in public Artifact tables; run apply")
-    referrers = "" if collections_removed else " AND family <> 'memory'"
-    if "pc_artifact_lineage_artifacts" in tables and await count(
-        "SELECT COUNT(*) FROM pc_artifact_lineage_artifacts WHERE upstream_family = 'memory'" + referrers  # noqa: S608
-    ):
-        issues.append("public lineage still references legacy Memory collections; run apply")
-    foreign_keys = await legacy_foreign_keys(connection, tables)
-    if foreign_keys:
-        issues.append("legacy entry tables still reference public Artifacts: " + ", ".join(foreign_keys))
     citation_tables = await legacy_citation_columns(connection, tables)
-    if collections_removed and citation_tables:
-        issues.append(
-            "public tables still declare legacy memory_citations: " + ", ".join(citation_tables) + "; run apply"
-        )
-    if not thorough:
-        return issues
     cited = "(memory_citations IS NOT NULL AND LENGTH(memory_citations) > 2) OR "
     checks = {
         "pc_artifacts": (

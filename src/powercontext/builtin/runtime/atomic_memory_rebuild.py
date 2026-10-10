@@ -42,11 +42,11 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     load_atomic_memory_tags,
 )
 from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
+from powercontext.builtin.persistence.atomic_memory_readiness import atomic_memory_readiness_issues
 from powercontext.builtin.persistence.atomic_memory_schema import ATOMIC_MEMORY_STATES_TABLE
 from powercontext.builtin.persistence.database import AsyncDatabase
-from powercontext.builtin.persistence.migrations.atomic_memory_v1 import verify_atomic_memory_migration_authority
 from powercontext.builtin.persistence.oceanbase.atomic_memory_index import OceanBaseAtomicMemoryIndex
-from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE
+from powercontext.builtin.persistence.tables import ARTIFACT_HEADS_TABLE, ARTIFACTS_TABLE
 
 
 class AtomicMemoryProjectionRebuildReport(BaseModel):
@@ -71,11 +71,9 @@ async def _require_authority(connection: AsyncConnection) -> None:
         raise AtomicMemoryIndexError(
             "authority-schema", "Atomic Memory authority is absent; complete initialization and history migration first"
         )
-    report = await verify_atomic_memory_migration_authority(connection)
-    if not report.ready:
-        raise AtomicMemoryIndexError(
-            "migration-pending", "Atomic Memory history migration is not ready: " + "; ".join(report.errors)
-        )
+    issues = await atomic_memory_readiness_issues(connection, tables)
+    if issues:
+        raise AtomicMemoryIndexError("migration-pending", "Atomic Memory migration is not ready: " + "; ".join(issues))
     heads, states = ARTIFACT_HEADS_TABLE, ATOMIC_MEMORY_STATES_TABLE
     relation = and_(heads.c.scope_id == states.c.scope_id, heads.c.artifact_id == states.c.artifact_id)
     missing_state = await connection.scalar(
@@ -90,6 +88,30 @@ async def _require_authority(connection: AsyncConnection) -> None:
     )
     if missing_state is not None or missing_head is not None:
         raise AtomicMemoryIndexError("authority-orphan", "Atomic Memory has an orphan head or Family state")
+    artifacts = ARTIFACTS_TABLE
+    identity = and_(
+        artifacts.c.scope_id == heads.c.scope_id,
+        artifacts.c.family == heads.c.family,
+        artifacts.c.artifact_id == heads.c.artifact_id,
+    )
+    missing_history_head = await connection.scalar(
+        select(artifacts.c.artifact_id)
+        .where(artifacts.c.family == AtomicMemory.family, ~exists(select(heads.c.artifact_id).where(identity)))
+        .limit(1)
+    )
+    if missing_history_head is not None:
+        raise AtomicMemoryIndexError("authority-orphan", "Atomic Memory history has no head")
+    latest_revision = select(func.max(artifacts.c.revision)).where(identity).scalar_subquery()
+    inconsistent_head = await connection.scalar(
+        select(heads.c.artifact_id)
+        .where(
+            heads.c.family == AtomicMemory.family,
+            (latest_revision.is_(None)) | (heads.c.revision != latest_revision),
+        )
+        .limit(1)
+    )
+    if inconsistent_head is not None:
+        raise AtomicMemoryIndexError("authority-head", "Atomic Memory head does not select its latest revision")
 
 
 async def _identity_batch(

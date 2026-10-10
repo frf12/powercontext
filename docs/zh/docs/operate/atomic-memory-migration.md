@@ -179,12 +179,13 @@ API、宿主、Worker、自动重启和输入写入，然后使用目标部署�
 powercontext server atomic-memory-rebuild-projection --env-file .env --maintenance-confirmed
 ```
 
-命令要求旧历史迁移已完成，且权威 head、正文和 Family 状态有效。它只重建 active 的 current 行，
-清除非 active 或孤立的 current 行；head、正文 revision、生命周期状态、保留历史及 Source/处理进度
-保持原身份和原值。它不能修复或绕过缺失的旧历史导入。
+命令检查公共表中的旧对象、旧列和外键已清理，且 Atomic 的 head、正文和状态有效。它只重建 active 的
+current 行，清除非 active 或孤立的 current 行；head、正文 revision、生命周期状态、保留历史及
+Source/处理进度保持原身份和原值。重建不读取归档或旧 entry 表；旧历史是否已完整导入，由停服迁移的
+`verify` 负责核验，投影重建不能补做缺失的历史导入。
 
 每条 active 正文在写事务外准备向量。提交前锁定并重新核对精确 revision、state_version 和部署
-profile，再在同一个事务中读取最新正式标签和不可变的 Owner。关闭向量时保留正文与全文检索，
+profile，再在同一个事务中读取最新正式标签。关闭向量时保留正文与全文检索，
 清除 embedding、profile 和输入摘要。SQLite 的全文辅助索引使用稳定的 Scope/Artifact 身份 token，
 不依赖 `VACUUM` 可能改变的 rowid。
 

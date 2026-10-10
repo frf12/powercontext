@@ -206,14 +206,16 @@ Use the target deployment configuration:
 powercontext server atomic-memory-rebuild-projection --env-file .env --maintenance-confirmed
 ```
 
-This command requires completed legacy history migration and valid authoritative heads, content and Family
-states. It rebuilds only active current rows and removes nonactive or orphan current rows. Heads, content
-revisions, lifecycle states, retained history and Source/processing progress keep their exact identities and
-values. It cannot repair or bypass missing legacy history imports.
+This command checks that legacy objects, columns and foreign keys have been removed from public storage and
+that Atomic heads, content and states are valid. It rebuilds only active current rows and removes nonactive
+or orphan current rows. Heads, content revisions, lifecycle states, retained history and Source/processing
+progress keep their exact identities and values. Rebuilding reads neither the archive nor legacy entry tables.
+The offline migration `verify` command checks whether legacy history was imported completely; projection
+rebuilding cannot supply missing history.
 
 Each active body's embedding is prepared outside the write transaction. Before publishing, the command
 locks and rechecks its exact revision, state version and deployment profile, then loads the latest formal
-tags and immutable Owner in that transaction. With vectors disabled, it retains body/full-text
+tags in that transaction. With vectors disabled, it retains body/full-text
 data and clears embedding, profile and input hashes. SQLite refreshes its derived FTS helper using stable
 Scope/Artifact identity tokens, independent of rowids changed by `VACUUM`.
 
