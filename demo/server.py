@@ -23,6 +23,7 @@ import socket
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -39,8 +40,25 @@ from powercontext.server.settings import (
 )
 from pydantic import ValidationError
 
+try:
+    from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol as _LoopbackHttpProtocol
+except ImportError:  # pragma: no cover
+    from uvicorn.protocols.http.h11_impl import H11Protocol as _LoopbackHttpProtocol
+
 _ENV_PREFIX = "POWERCONTEXT_SERVER_INFERENCE_"
 _LOGGER = logging.getLogger(__name__)
+
+# uvicorn 0.51 在连接建立时读共享的 uvicorn.access logger 的 hasHandlers() 决定是否打
+# 访问日志, 内嵌服务在这里配置 access_log=False 或日志级别都会波及主服务的日志;
+# 改用专用协议类在连接级关闭访问日志, 全局 logger 不受任何影响
+
+
+class _SilentAccessHttpProtocol(_LoopbackHttpProtocol):
+    """Loopback 专用 HTTP 协议: 内嵌服务的内部 API 调用不产生访问日志。"""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.access_log = False
 
 
 def inference_from_env() -> InferenceConfig:
@@ -96,7 +114,9 @@ class EmbeddedPowerContext:
         listener.bind(("127.0.0.1", 0))
         self._listener = listener
         self.base_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
-        server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False, lifespan="on"))
+        server = uvicorn.Server(
+            uvicorn.Config(app, log_config=None, log_level=None, http=_SilentAccessHttpProtocol, lifespan="on")
+        )
         self._server = server
         self._thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
         self._thread.start()
