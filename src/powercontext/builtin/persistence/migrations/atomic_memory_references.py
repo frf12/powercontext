@@ -273,17 +273,49 @@ async def _replace_lineage_refs(
         )
 
 
+_DROPPED = object()
+
+
+def _collection_citation(value: Any) -> dict[str, Any] | None:
+    if (
+        isinstance(value, dict)
+        and value.get("kind") == "artifact"
+        and isinstance(value.get("artifact_ref"), dict)
+        and value["artifact_ref"].get("family") == "memory"
+    ):
+        return value["artifact_ref"]
+    return None
+
+
+def _holds_collection_citation(value: Any) -> bool:
+    if _collection_citation(value) is not None:
+        return True
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return any(_holds_collection_citation(item) for item in items)
+
+
 async def _convert_citations(
     context: _Context,
     connection: AsyncConnection,
     scope_id: str,
     value: Any,
     collected: list[tuple[dict[str, Any], dict[str, Any]]] | None = None,
+    dropped: list[tuple[str, dict[str, Any]]] | None = None,
+    path: str = "",
 ) -> Any:
-    """Replace every typed ``kind=memory`` citation with an exact Atomic ArtifactRef citation."""
+    """Replace every ``kind=memory`` citation with its exact Atomic revision.
+
+    With ``dropped``, a citation of a whole collection is removed: from a list,
+    or by setting a single optional citation to null. The model validation that
+    follows rejects a claim left without the evidence it requires.
+    """
 
     if isinstance(value, list):
-        return [await _convert_citations(context, connection, scope_id, item, collected) for item in value]
+        converted = [
+            await _convert_citations(context, connection, scope_id, item, collected, dropped, f"{path}/{index}")
+            for index, item in enumerate(value)
+        ]
+        return [item for item in converted if item is not _DROPPED]
     if not isinstance(value, dict):
         return value
     if value.get("kind") == "memory" and "memory_citation" in value:
@@ -292,9 +324,29 @@ async def _convert_citations(
         if collected is not None:
             collected.append((citation["memory_ref"], atomic))
         return {"kind": "artifact", "artifact_ref": atomic}
-    return {
-        key: await _convert_citations(context, connection, scope_id, item, collected) for key, item in value.items()
-    }
+    collection = _collection_citation(value)
+    if collection is not None and dropped is not None:
+        dropped.append((path, collection))
+        return _DROPPED
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        converted = await _convert_citations(context, connection, scope_id, item, collected, dropped, f"{path}/{key}")
+        result[key] = None if converted is _DROPPED else converted
+    return result
+
+
+async def _archive_dropped(
+    context: _Context,
+    connection: AsyncConnection,
+    scope_id: str,
+    dropped: list[tuple[str, dict[str, Any]]],
+    location: dict[str, Any],
+) -> None:
+    context.count("archived_collection_relationships", len(dropped))
+    if not context.write:
+        return
+    for path, ref in dropped:
+        await archive_incoming_reference(connection, scope_id, ref, {**location, "path": path, "value": ref})
 
 
 async def _keys(units: _Units, sql: str) -> list[dict[str, Any]]:
@@ -415,7 +467,8 @@ async def _handoffs(context: _Context, units: _Units) -> None:
     keys = await _keys(
         units,
         "SELECT scope_id, family, artifact_id, revision FROM pc_artifacts WHERE family = 'handoff' "
-        "AND content LIKE '%memory_citation%' UNION SELECT DISTINCT scope_id, family, artifact_id, revision "
+        "AND (content LIKE '%memory_citation%' OR content LIKE '%\"memory\"%') "
+        "UNION SELECT DISTINCT scope_id, family, artifact_id, revision "
         "FROM pc_artifact_lineage_artifacts WHERE family = 'handoff' AND upstream_family = 'memory'",
     )
 
@@ -430,12 +483,16 @@ async def _handoffs(context: _Context, units: _Units) -> None:
         content = json.loads(bytes(stored))
         scope_id = await _publication_root_scope(connection, key)
         direct: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        dropped: list[tuple[str, dict[str, Any]]] = []
         converted = dict(content)
         for name, value in content.items():
             # Omissions explain what was left out; only direct statement evidence belongs in lineage.
             collected = direct if name in {"state", "next_action"} else None
-            converted[name] = await _convert_citations(context, connection, scope_id, value, collected)
+            converted[name] = await _convert_citations(
+                context, connection, scope_id, value, collected, dropped, f"/{name}"
+            )
         payload = dump_model(HandoffContent.model_validate_json(_compact(converted)), kind="artifact", name="handoff")
+        await _archive_dropped(context, connection, scope_id, dropped, {"carrier": "handoff", "referrer": dict(key)})
         refs: list[dict[str, Any]] = []
         for ordinal, ref in enumerate(await _lineage_refs(connection, key)):
             if ref["family"] != "memory":
@@ -597,7 +654,9 @@ async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901
         if model is None:
             return
         original = json.loads(value["content"])
-        converted = await _convert_citations(context, connection, key["scope_id"], original)
+        # A receipt's unavailable evidence records what was missing; it asserts no support to drop.
+        dropped: list[tuple[str, dict[str, Any]]] | None = None if model is HandoffReceipt else []
+        converted = await _convert_citations(context, connection, key["scope_id"], original, None, dropped)
         if model is TaskOutcome:
             produced = []
             for index, ref in enumerate(converted.get("produced_artifacts", ())):
@@ -623,6 +682,9 @@ async def _work_sources(context: _Context, units: _Units) -> None:  # noqa: C901
             return
         before = model.model_validate_json(value["content"])
         after = model.model_validate_json(_compact(converted))
+        await _archive_dropped(
+            context, connection, key["scope_id"], dropped or [], {"carrier": "work_source", "source": dict(key)}
+        )
         context.count("work_sources")
         if not context.write:
             return
@@ -722,14 +784,80 @@ async def _candidates(context: _Context, units: _Units) -> None:
     await _each(context, units, keys, _candidate_label, convert)
 
 
-def _dream_has_legacy_references(payload: Mapping[str, Any]) -> bool:
-    request = payload.get("request") or {}
-    manifest = (payload.get("run") or {}).get("input_manifest") or {}
-    return (
-        bool(request.get("memory_citations"))
-        or bool(manifest.get("memory_citations"))
-        or any(node.get("memory_citations") for node in manifest.get("nodes", ()))
-    )
+def _holds_memory_reference(value: Any) -> bool:
+    """Whether conversion rewrites this value: an entry citation or any reference to a collection."""
+
+    if isinstance(value, dict):
+        if value.get("kind") == "memory" and "memory_citation" in value:
+            return True
+        if value.get("family") == "memory" and "artifact_id" in value:
+            return True
+        return any(_holds_memory_reference(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_holds_memory_reference(item) for item in value)
+    return False
+
+
+def _dream_inputs(value: Any, artifacts: set[tuple[str, str, int]], sources: set[tuple[str, str]]) -> bool:
+    """Collect every pinned Artifact and Source; return whether an entry citation is pinned."""
+
+    if isinstance(value, dict):
+        if {"family", "artifact_id"} <= value.keys() and type(value.get("revision")) is int:
+            artifacts.add((str(value["family"]), str(value["artifact_id"]), value["revision"]))
+        if set(value) == {"source_type", "source_id"}:
+            sources.add((str(value["source_type"]), str(value["source_id"])))
+        cited = bool(value.get("memory_citations"))
+        items = list(value.values())
+    elif isinstance(value, list):
+        cited, items = False, value
+    else:
+        return False
+    for item in items:
+        cited = _dream_inputs(item, artifacts, sources) or cited
+    return cited
+
+
+async def _dream_inputs_change(  # noqa: C901 - One check over each kind of pinned input.
+    connection: AsyncConnection, scope_id: str, payload: Mapping[str, Any]
+) -> bool:
+    """Whether conversion changes any digest or lineage pinned by an unfinished Dream run."""
+
+    artifacts: set[tuple[str, str, int]] = set()
+    sources: set[tuple[str, str]] = set()
+    if _dream_inputs([payload.get("request"), (payload.get("run") or {}).get("input_manifest")], artifacts, sources):
+        return True
+    for family, artifact_id, revision in sorted(artifacts):
+        if family == "memory":
+            return True
+        identity = {"scope": scope_id, "family": family, "id": artifact_id, "revision": revision}
+        where = "WHERE scope_id = :scope AND family = :family AND artifact_id = :id AND revision = :revision"
+        if await connection.scalar(
+            text(f"SELECT COUNT(*) FROM pc_artifact_lineage_artifacts {where} AND upstream_family = 'memory'"),  # noqa: S608
+            identity,
+        ):
+            return True
+        row = (
+            await connection.execute(text(f"SELECT content, memory_citations FROM pc_artifacts {where}"), identity)  # noqa: S608
+        ).one_or_none()
+        if row is None:
+            continue
+        if row.memory_citations is not None and json.loads(bytes(row.memory_citations)):
+            return True
+        if family == "handoff" and _holds_memory_reference(json.loads(bytes(row.content))):
+            return True
+    for source_type, source_id in sorted(sources):
+        stored = await connection.scalar(
+            text("SELECT payload FROM pc_sources WHERE scope_id = :scope AND source_type = :type AND source_id = :id"),
+            {"scope": scope_id, "type": source_type, "id": source_id},
+        )
+        if stored is None:
+            continue
+        value = json.loads(bytes(stored)).get("value") or {}
+        if str((value.get("metadata") or {}).get("kind")) in _WORK_MODELS and _holds_memory_reference(
+            json.loads(value["content"])
+        ):
+            return True
+    return False
 
 
 async def _dream_runs(context: _Context, units: _Units) -> None:
@@ -747,8 +875,10 @@ async def _dream_runs(context: _Context, units: _Units) -> None:
         )[0]
         payload = json.loads(bytes(row["payload"]))
         if row["status"] not in _TERMINAL_DREAM:
-            if _dream_has_legacy_references(payload):
-                raise ValueError("an unfinished Dream run holds legacy Memory references; let it finish first")  # noqa: TRY003
+            if await _dream_inputs_change(connection, key["scope_id"], payload):
+                raise ValueError(  # noqa: TRY003
+                    "an unfinished Dream run pins evidence this migration rewrites; let it finish first"
+                )
             return
         if payload.get("request") is None:
             return
@@ -796,6 +926,27 @@ async def _unsupported(context: _Context, units: _Units, tables: set[str]) -> No
                 )
 
 
+async def _decision_applied(units: _Units, decision: CandidateDecision) -> bool:
+    """A committed replacement lets the same decision file be reused for a rerun."""
+
+    async with units.unit() as connection:
+        found = await rows(
+            connection,
+            "pc_artifact_candidate_versions",
+            ("artifact_refs", "memory_citations"),
+            "WHERE scope_id = :scope_id AND candidate_id = :candidate_id AND version = :version",
+            scope_id=decision.scope_id,
+            candidate_id=decision.candidate_id,
+            version=decision.version,
+        )
+    if not found:
+        return False
+    citations = found[0]["memory_citations"]
+    return json.loads(bytes(found[0]["artifact_refs"])) == list(decision.artifact_refs) and (
+        citations is None or json.loads(bytes(citations)) == []
+    )
+
+
 async def convert_references(
     collections: dict[tuple[str, str], LegacyCollection],
     decisions: dict[tuple[str, str, int], CandidateDecision],
@@ -822,10 +973,9 @@ async def convert_references(
         await _collection_lineage(context, units)
     if "pc_sources" in tables:
         await _work_sources(context, units)
-    context.errors.extend(
-        f"decision {key} matches no blocked Candidate evidence"
-        for key in sorted(set(decisions) - context.used_decisions)
-    )
+    for key in sorted(set(decisions) - context.used_decisions):
+        if not await _decision_applied(units, decisions[key]):
+            context.errors.append(f"decision {key} matches no blocked Candidate evidence")
     context.counts["blocked_references"] = sum("supply a replace decision" in error for error in context.errors)
     return context.counts, tuple(context.errors)
 
@@ -899,19 +1049,27 @@ def _without_artifact_foreign_key(created: str, columns: tuple[str, ...]) -> str
 async def remove_legacy_collections(
     database: AsyncDatabase, collections: dict[tuple[str, str], LegacyCollection]
 ) -> int:
-    """Delete archived collections and their owned public rows; legacy entry tables stay unused."""
+    """Delete archived collections and their owned public rows; legacy entry tables stay unused.
 
-    removed = 0
+    Collections may cite each other, so every collection's own lineage is
+    removed before any collection row, independent of identifier order.
+    """
+
+    owned = "WHERE scope_id = :scope AND family = 'memory' AND artifact_id = :id"
+    live: list[tuple[str, str]] = []
     for scope_id, memory_id in sorted(collections):
+        identity = {"scope": scope_id, "id": memory_id}
         async with database.transaction() as connection:
-            if not await connection.scalar(
-                text(
-                    "SELECT COUNT(*) FROM pc_artifacts WHERE scope_id = :scope AND family = 'memory' AND artifact_id = :id"
-                ),
-                {"scope": scope_id, "id": memory_id},
-            ):
+            if not await connection.scalar(text(f"SELECT COUNT(*) FROM pc_artifacts {owned}"), identity):  # noqa: S608
                 continue
+            # The archive keeps the lineage and is compared only by revision bodies, so a rerun reuses it.
             await archive_collection(connection, scope_id, memory_id)
+            for table in ("pc_artifact_lineage_sources", "pc_artifact_lineage_artifacts"):
+                await connection.execute(text(f"DELETE FROM {table} {owned}"), identity)  # noqa: S608
+        live.append((scope_id, memory_id))
+    removed = 0
+    for scope_id, memory_id in live:
+        async with database.transaction() as connection:
             identity = {"scope": scope_id, "id": memory_id}
             remaining = await connection.scalar(
                 text(
@@ -922,13 +1080,7 @@ async def remove_legacy_collections(
             )
             if remaining:
                 raise ValueError(f"{scope_id}/{memory_id}: legacy grants were not retargeted")  # noqa: TRY003
-            owned = "WHERE scope_id = :scope AND family = 'memory' AND artifact_id = :id"
-            for table in (
-                "pc_artifact_lineage_sources",
-                "pc_artifact_lineage_artifacts",
-                "pc_artifact_tags",
-                "pc_artifact_heads",
-            ):
+            for table in ("pc_artifact_tags", "pc_artifact_heads"):
                 await connection.execute(text(f"DELETE FROM {table} {owned}"), identity)  # noqa: S608
             await connection.execute(
                 text(f"DELETE FROM pc_access_owners {owned} AND owner_kind = 'artifact'"),  # noqa: S608
@@ -940,19 +1092,28 @@ async def remove_legacy_collections(
 
 
 async def residual_issues(  # noqa: C901 - One flat list of independent residual checks.
-    connection: AsyncConnection, tables: set[str], *, thorough: bool
+    connection: AsyncConnection, tables: set[str], *, thorough: bool, collections_removed: bool = True
 ) -> list[str]:
-    """Report public legacy objects; ``thorough`` also scans business payloads for typed legacy references."""
+    """Report public legacy objects; ``thorough`` also scans business payloads for typed legacy references.
+
+    Before removal (``collections_removed=False``) the archived collections and
+    their own lineage may still be public; every other reference must be gone.
+    """
 
     issues: list[str] = []
 
     async def count(sql: str) -> int:
         return int(await connection.scalar(text(sql), {"historical": '%"request":null%'}) or 0)
 
-    if "pc_artifacts" in tables and await count("SELECT COUNT(*) FROM pc_artifacts WHERE family = 'memory'"):
+    if (
+        collections_removed
+        and "pc_artifacts" in tables
+        and await count("SELECT COUNT(*) FROM pc_artifacts WHERE family = 'memory'")
+    ):
         issues.append("legacy Memory collections remain in public Artifact tables; run apply")
+    referrers = "" if collections_removed else " AND family <> 'memory'"
     if "pc_artifact_lineage_artifacts" in tables and await count(
-        "SELECT COUNT(*) FROM pc_artifact_lineage_artifacts WHERE upstream_family = 'memory'"
+        "SELECT COUNT(*) FROM pc_artifact_lineage_artifacts WHERE upstream_family = 'memory'" + referrers  # noqa: S608
     ):
         issues.append("public lineage still references legacy Memory collections; run apply")
     foreign_keys = await legacy_foreign_keys(connection, tables)
@@ -980,15 +1141,28 @@ async def residual_issues(  # noqa: C901 - One flat list of independent residual
     for table, (sql, message) in checks.items():
         if table in tables and await count(sql):
             issues.append(message)
+    if "pc_artifacts" in tables:
+        for row in await rows(
+            connection, "pc_artifacts", ("content",), "WHERE family = 'handoff' AND content LIKE '%\"memory\"%'"
+        ):
+            if _holds_collection_citation(json.loads(bytes(row["content"]))):
+                issues.append("Handoffs still cite whole legacy Memory collections")
+                break
     if "pc_sources" in tables:
         for row in await rows(
             connection,
             "pc_sources",
             ("payload",),
-            "WHERE source_type = 'content' AND payload LIKE '%memory_citation%'",
+            "WHERE source_type = 'content' AND payload LIKE '%memory%'",
         ):
             value = json.loads(bytes(row["payload"]))["value"]
-            if str((value.get("metadata") or {}).get("kind")) in _WORK_MODELS:
+            model = _WORK_MODELS.get(str((value.get("metadata") or {}).get("kind")))
+            if model is None:
+                continue
+            content = value["content"]
+            if "memory_citation" in content or (
+                model is not HandoffReceipt and _holds_collection_citation(json.loads(content))
+            ):
                 issues.append("structured Work Sources still hold legacy Memory citations")
                 break
     return issues

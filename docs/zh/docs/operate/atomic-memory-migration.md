@@ -6,7 +6,8 @@ title: 迁移到 Atomic Memory
 `powercontext.memory.v1-to-atomic-memory.v1`；它冻结旧内容格式、版本链、身份规则及导入编码，
 通过现有配置连接数据库，不启动 Runtime 或 Worker。迁移完成后，旧 Memory 集合只保存在离线归档表
 `pc_memory_artifact_archive` 中，不再出现在公共 Artifact 表、检索或任何在线读取路径里。
-普通服务启动会核验导入结果、当前数据，并确认公共表中已没有旧集合。
+普通服务启动只做轻量残留检查：公共表中没有旧集合、没有指向旧集合的 lineage，旧 entry 表到公共表的
+外键已解除。它不读取归档表或旧 entry 表；逐条完整核验由 `verify` 执行。
 
 ## 执行顺序
 
@@ -91,15 +92,21 @@ apply 按以下顺序执行，每一步都可以在中断后重复：
    Work Source（包括 Handoff 回执）中 `kind: memory` 的 citation 改为 `kind: artifact`，
    Handoff 的 lineage 和发布摘要随之更新；Task Outcome 条目摘要变化时，同步重算 recurrence 账本的键。
 4. 指向整个旧集合的关系没有单条 Atomic 对应。迁移先把它的原位置和原值记入被引用集合 revision 的
-   归档 `incoming_references`，再从在线 lineage、Candidate `artifact_refs` 或 Task Outcome
-   `produced_artifacts` 中移除。
+   归档 `incoming_references`，再从在线 lineage、Candidate `artifact_refs`、Task Outcome
+   `produced_artifacts`，以及 Handoff 正文和 Work claim/check 中以 `kind: artifact` 引用整个集合的
+   citation 中移除。Handoff 回执的 `unavailable_evidence` 记录当时不可用的证据，不表达支持关系，
+   其中的集合引用保持原值。
 5. 已结束的 Dream 运行改为历史格式：原请求、输入清单和请求摘要移入 `historical_data`，
    不再作为可执行请求读取；同一幂等键的重放仍按原请求摘要判定。
-6. 解除保留的旧 entry 表到公共 Artifact 表的外键，然后删除公共表中的旧集合、集合 head、标签、
-   Owner 和集合自身的 lineage。旧 entry 表保留但不再使用。
+6. 解除保留的旧 entry 表到公共 Artifact 表的外键，然后在旧集合仍在公共表时完整验收：导入历史、
+   当前投影、授权转换以及全部引用转换都必须通过，否则不删除任何集合。
+7. 先删除所有旧集合自身的 lineage，再删除公共表中的旧集合、集合 head、标签和 Owner，集合之间的
+   相互引用不会因标识排序阻断清理。旧 entry 表保留但不再使用。最后检查公共表中没有残留。
 
-以下情况在改写任何数据前阻断，并在 plan 中列出：未结束的 Dream 运行仍引用旧 Memory；
+以下情况在改写任何数据前阻断，并在 plan 中列出：未结束的 Dream 运行固定的输入会被本次迁移改变，
+包括旧 entry citation、旧集合，以及正文或 lineage 将被改写的 Artifact 和 Work Source；
 旧 Memory Family 的 Candidate 或发布记录；引用无法对应到导入后的精确 Atomic revision；
+Handoff 陈述或 verified 的 Work claim/check 移除集合引用后不再有证据；
 某个 Candidate 版本删除集合引用后没有任何 Source 或 Artifact 依据。
 
 最后一种情况需要操作者通过 `--decisions` 提供决策文件，为每个被阻断的 Candidate 版本指定替代依据：
@@ -128,6 +135,8 @@ powercontext server atomic-memory-migrate --action apply --env-file .env --maint
 
 当前只支持 `replace`。替代依据必须是已存在的精确 Artifact revision，不能是旧 Memory 集合；
 决策必须一一对应被阻断的版本，多余或重复的决策同样报错。原引用仍记入归档，并标明使用了替代依据。
+部分成功后或全部完成后，可以用同一命令和同一决策文件重跑：已生效的决策按 Candidate 版本当前的
+替代依据核对，一致即视为完成，不一致才报冲突。
 
 旧 lineage_only Source 保留原目标，仍可溯源但不进入模型输入。迁移不改变旧 Source 的绑定，
 也不生成替代历史时间。
@@ -189,9 +198,12 @@ active 行，不使用进度表续跑。`--batch-size` 控制每批读取的身�
 `legacy_collection_payload_bytes` 和 `atomic_content_payload_bytes` 是正文 payload 字节数，不包含索引、
 权限记录、数据库页和复制开销；实际并存空间应由数据库监控记录。
 
-计划及启动就绪检查读取保留的全部旧历史和 Source/任务快照，首版将这些记录保存在进程内。
+plan、apply 和 verify 读取保留的全部旧历史和 Source/任务快照，首版将这些记录保存在进程内。
 这会随历史规模增加读取量和内存消耗。应在备份副本上记录读量、内存峰值、embedding 调用量和总停服
-时长，再安排正式维护窗口；这里不声称已经验证生产规模成本。
+时长，再安排正式维护窗口；这里不声称已经验证生产规模成本。普通启动的残留检查只统计公共表中的
+旧对象，不读取旧历史，工作量取决于这些表的数据量和执行计划。
 
-旧开发版本中包含读取授权副本的 current 表会在初始化时被明确拒绝。停服后执行上述投影重建命令，
-它只重建这张派生表，并从正式记录恢复活跃记忆，保留精确 Artifact 的所有权和分享授权。
+本分支开发过程中创建的 current 表（含读取授权副本或 Owner 列）不属于任何发布版本，初始化时会被
+明确拒绝。迁移尚未完成时，apply 会删除并重建这张派生表，结果报告提示随后执行投影重建；迁移已完成
+时，停服后直接执行上述投影重建命令。两种方式都只重建这张派生表，并从正式记录恢复活跃记忆，
+不改变 Artifact 历史、Family 状态和授权记录。

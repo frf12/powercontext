@@ -109,7 +109,9 @@ def test_sqlite_startup_rejects_unmigrated_memory_with_legacy_artifact_head_colu
             owners = connection.execute("SELECT * FROM pc_access_owners").fetchall()
 
         for _ in range(2):
-            with pytest.raises(AtomicMemoryMigrationError, match="mapped head or Family state is missing"):
+            with pytest.raises(
+                AtomicMemoryMigrationError, match="legacy Memory collections remain in public Artifact tables"
+            ):
                 async with open_builtin_contexts(config):
                     pytest.fail("Legacy Memory must complete offline conversion before normal startup")
 

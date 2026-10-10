@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import insert, select, tuple_
+from sqlalchemy import insert, select, text, tuple_
 
 from powercontext.artifacts import ArtifactRef, MemoryCitation
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
@@ -47,11 +47,13 @@ from powercontext.builtin.artifacts.handoff.models import (
     HandoffArtifactCitation,
     HandoffContent,
     HandoffMemoryCitation,
+    HandoffSourceCitation,
     HandoffStatement,
 )
 from powercontext.builtin.artifacts.memory import MemoryService
 from powercontext.builtin.artifacts.memory.canonical import canonical_json, entry_content_hash, normalize_refs
 from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamRecord, DreamRun
+from powercontext.builtin.evidence.models import EvidenceManifest, EvidenceNode
 from powercontext.builtin.evidence.resolver import EvidenceResolver, evidence_id
 from powercontext.builtin.evidence.selection import select_evidence
 from powercontext.builtin.inference import GenerationResult, character_token_estimator
@@ -81,6 +83,7 @@ from powercontext.builtin.persistence.tables import (
     SOURCES_TABLE,
 )
 from powercontext.builtin.runtime import BuiltinConfig, RuntimeConfig, open_builtin_contexts
+from powercontext.builtin.runtime.atomic_memory_rebuild import rebuild_atomic_memory_projection
 from powercontext.builtin.sources.content import ContentSource, ContentSourceInternal, ContentSourceTarget
 from powercontext.builtin.work.models import TaskOutcome, WorkClaim
 from powercontext.server.authz import ArtifactOwnerRelation, MemoryEntrySelector, PrincipalRef, ResourceRef
@@ -721,6 +724,20 @@ async def _candidate(connection, candidate_id: str, *, artifact_refs: list[Any],
     )
 
 
+async def _scope_row(connection) -> None:
+    await connection.execute(
+        insert(SCOPES_TABLE).values(
+            scope_id=SCOPE,
+            title="Migration evidence",
+            summary="Legacy reference fixture.",
+            scope_id_search=SCOPE,
+            title_search="migration evidence",
+            summary_search="legacy reference fixture",
+            version=1,
+        )
+    )
+
+
 async def _legacy_references(contexts, connection) -> None:
     await contexts.repositories.artifacts.create(
         connection,
@@ -765,17 +782,7 @@ async def _legacy_references(contexts, connection) -> None:
     await connection.execute(
         insert(ARTIFACT_HEADS_TABLE).values(scope_id=SCOPE, family="handoff", artifact_id="legacy-handoff", revision=1)
     )
-    await connection.execute(
-        insert(SCOPES_TABLE).values(
-            scope_id=SCOPE,
-            title="Migration evidence",
-            summary="Legacy reference fixture.",
-            scope_id_search=SCOPE,
-            title_search="migration evidence",
-            summary_search="legacy reference fixture",
-            version=1,
-        )
-    )
+    await _scope_row(connection)
     outcome = _outcome()
     stored = await contexts.repositories.sources.add(
         connection,
@@ -935,5 +942,211 @@ def test_candidate_left_without_evidence_blocks_until_an_explicit_replacement(tm
             assert isinstance(refs, bytes) and json.loads(refs) == [EA.model_dump(mode="json")]
             (incoming,) = (await _archive_metadata(connection, 1))["incoming_references"]
             assert incoming["carrier"] == "candidate" and incoming["decision"] == "replace"
+        rerun = await _migrate(config, decisions)
+        assert rerun.ready, rerun.errors
+
+    asyncio.run(scenario())
+
+
+def _insert_handoff(connection, artifact_id: str, content: HandoffContent):
+    return connection.execute(
+        insert(ARTIFACTS_TABLE).values(
+            scope_id=SCOPE,
+            family="handoff",
+            artifact_id=artifact_id,
+            revision=1,
+            content=content.model_dump_json(by_alias=True).encode(),
+            memory_citations=None,
+        )
+    )
+
+
+def test_handoff_collection_citation_is_archived_and_removed(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'handoff-collection.db'}")
+
+    async def cited(_contexts, connection) -> None:
+        statement = HandoffStatement(
+            text="Task A shipped.",
+            citations=(HandoffArtifactCitation(artifact_ref=_collection(2)), HandoffSourceCitation(source_ref=A)),
+        )
+        await _insert_handoff(
+            connection,
+            "mixed-handoff",
+            HandoffContent(objective="Continue.", state=(statement,), disposition="complete"),
+        )
+
+    async def scenario() -> None:
+        await _seed_and_migrate(config, cited)
+        async with (
+            open_builtin_contexts(BuiltinConfig(database=config)) as contexts,
+            contexts.database.transaction() as connection,
+        ):
+            handoff = await contexts.repositories.artifacts.get(
+                connection, SCOPE, ArtifactRef(family="handoff", artifact_id="mixed-handoff", revision=1)
+            )
+            assert handoff.content.state[0].citations == (HandoffSourceCitation(source_ref=A),)
+            (incoming,) = (await _archive_metadata(connection, 2))["incoming_references"]
+            assert incoming["carrier"] == "handoff" and incoming["path"] == "/state/0/citations/0"
+            report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
+            assert report.ready, report.errors
+
+    asyncio.run(scenario())
+
+
+def test_handoff_supported_only_by_a_collection_blocks_before_any_change(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'handoff-only-collection.db'}")
+
+    async def cited(_contexts, connection) -> None:
+        statement = HandoffStatement(
+            text="Task A shipped.", citations=(HandoffArtifactCitation(artifact_ref=_collection(2)),)
+        )
+        await _insert_handoff(
+            connection,
+            "orphan-handoff",
+            HandoffContent(objective="Continue.", state=(statement,), disposition="complete"),
+        )
+
+    async def scenario() -> None:
+        await _seed(config, cited)
+        refused = await _migrate(config)
+        assert not refused.ready
+        assert any("orphan-handoff" in error for error in refused.errors), refused.errors
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            assert await _public_collection_rows(connection) == [1, 2]
+
+    asyncio.run(scenario())
+
+
+def test_collections_citing_each_other_are_removed_regardless_of_identifier_order(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'collection-chain.db'}")
+    cited = "a-cited-memory"
+
+    async def chain(_contexts, connection) -> None:
+        empty = {"schema": "powercontext.memory.v1", "manifest": {"format": "flat-v1", "entries": []}, "changes": []}
+        await connection.execute(
+            insert(ARTIFACTS_TABLE).values(
+                scope_id=SCOPE,
+                family="memory",
+                artifact_id=cited,
+                revision=1,
+                content=json.dumps(empty).encode(),
+                memory_citations=None,
+            )
+        )
+        await connection.execute(
+            insert(ARTIFACT_HEADS_TABLE).values(scope_id=SCOPE, family="memory", artifact_id=cited, revision=1)
+        )
+        await connection.execute(
+            insert(ARTIFACT_LINEAGE_ARTIFACTS_TABLE).values(
+                scope_id=SCOPE,
+                family="memory",
+                artifact_id=COLLECTION,
+                revision=1,
+                ordinal=2,
+                upstream_family="memory",
+                upstream_artifact_id=cited,
+                upstream_revision=1,
+            )
+        )
+
+    async def scenario() -> None:
+        await _seed_and_migrate(config, chain)
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            assert not await _public_collection_rows(connection)
+            lineage = (await _archive_metadata(connection, 1))["lineage"]["artifacts"]
+            assert {row["upstream_artifact_id"] for row in lineage} == {EA.artifact_id, EB.artifact_id, cited}
+
+    asyncio.run(scenario())
+
+
+def test_unfinished_dream_pinning_a_rewritten_source_blocks_migration(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'unfinished-dream.db'}")
+
+    async def pinned(contexts, connection) -> None:
+        await _scope_row(connection)
+        await contexts.repositories.sources.add(
+            connection,
+            SCOPE,
+            ContentSource(
+                name=OUTCOME.source_id,
+                materialization=SourceMaterialization.CAPTURED,
+                content=_outcome().model_dump_json(by_alias=True, exclude_none=False, indent=2),
+                metadata={"kind": "task-outcome", "schema": "powercontext.task-outcome.v1"},
+            ),
+        )
+        manifest = EvidenceManifest(
+            artifacts=(EA,),
+            sources=(OUTCOME,),
+            nodes=(EvidenceNode(evidence_id="outcome", kind="source", digest="0" * 64, source=OUTCOME, role="root"),),
+            projection_digest="0" * 64,
+            projection_bytes=0,
+        )
+        await DreamRepository().create(
+            connection,
+            DreamRecord(
+                run=DreamRun(
+                    scope_id=SCOPE,
+                    run_id="pending-dream",
+                    operation="refine_experience",
+                    status="running",
+                    accepted_at=datetime(2026, 1, 2, tzinfo=UTC),
+                    input_manifest=manifest,
+                ),
+                request=CreateDreamRunRequest(
+                    operation="refine_experience", artifacts=(EA,), idempotency_key="pending-dream"
+                ),
+                principal_id="migration-owner",
+            ),
+        )
+
+    async def scenario() -> None:
+        await _seed(config, pinned)
+        refused = await _migrate(config)
+        assert not refused.ready
+        assert any("pending-dream" in error and "finish" in error for error in refused.errors), refused.errors
+
+    asyncio.run(scenario())
+
+
+def test_runtime_start_does_not_read_the_archive_or_legacy_entry_tables(migrated) -> None:
+    config, _internal = migrated
+
+    async def scenario() -> None:
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            await connection.execute(text(f"DROP TABLE {ARCHIVE_TABLE.name}"))
+            await connection.execute(text(f"DROP TABLE {MEMORY_ENTRY_VERSIONS_TABLE.name}"))
+        async with open_builtin_contexts(BuiltinConfig(database=config)) as contexts:
+            record = await contexts.atomic_memory.for_scope(SCOPE).get(_atomic("alpha", 2).artifact_id)
+            assert record.artifact.as_ref() == _atomic("alpha", 2)
+
+    asyncio.run(scenario())
+
+
+def test_development_projection_layout_is_recreated_and_rebuilt_after_apply(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'development-projection.db'}")
+
+    async def development_layout(_contexts, connection) -> None:
+        await connection.execute(text("DROP TABLE pc_atomic_memory_current"))
+        await connection.execute(text("DROP TABLE IF EXISTS pc_atomic_memory_current_fts"))
+        await connection.execute(
+            text(
+                "CREATE TABLE pc_atomic_memory_current (scope_id VARCHAR NOT NULL, artifact_id VARCHAR NOT NULL, "
+                "owner_type VARCHAR NOT NULL, owner_id VARCHAR NOT NULL, PRIMARY KEY (scope_id, artifact_id))"
+            )
+        )
+
+    async def scenario() -> None:
+        await _seed(config, development_layout)
+        applied = await _migrate(config)
+        assert not applied.ready
+        assert len(applied.errors) == 1 and "atomic-memory-rebuild-projection" in applied.errors[0]
+        async with SQLiteProfile.open(config, tables=()) as profile:
+            rebuilt = await rebuild_atomic_memory_projection(
+                profile.database, SQLiteAtomicMemoryIndex(), maintenance_confirmed=True
+            )
+            assert rebuilt.ready, rebuilt.errors
+            async with profile.database.transaction() as connection:
+                report = await verify_atomic_memory_migration(connection, index=SQLiteAtomicMemoryIndex())
+                assert report.ready, report.errors
 
     asyncio.run(scenario())

@@ -41,6 +41,29 @@ from powercontext.builtin.persistence.tables import ARTIFACT_TAGS_TABLE
 from powercontext.builtin.tags import TagFilter
 
 AtomicMemorySearchMode = Literal["fts", "vector", "hybrid"]
+# Columns of unreleased development layouts; their tables are derived and rebuilt rather than migrated.
+_OBSOLETE_PROJECTION_COLUMNS = frozenset({"read_grants", "owner_type", "owner_id"})
+
+
+async def _projection_columns(connection: AsyncConnection, table: Table) -> set[str]:
+    def read(sync: Any) -> set[str]:
+        inspector = inspect(sync)
+        if not inspector.has_table(table.name):
+            return set()
+        return {column["name"] for column in inspector.get_columns(table.name)}
+
+    return await connection.run_sync(read)
+
+
+async def drop_obsolete_atomic_memory_projection(connection: AsyncConnection, table: Table) -> bool:
+    """Drop a development-layout current table so initialization recreates it; authority stays unchanged."""
+
+    if not await _projection_columns(connection, table) & _OBSOLETE_PROJECTION_COLUMNS:
+        return False
+    await connection.run_sync(lambda sync: table.drop(sync))
+    if connection.dialect.name == "sqlite":
+        await connection.exec_driver_sql(f"DROP TABLE IF EXISTS {table.name}_fts")
+    return True
 
 
 class AtomicMemoryIndexError(RuntimeError):
@@ -413,10 +436,7 @@ class RelationalAtomicMemoryIndex:
         return vector
 
     async def require_current_schema(self, connection: AsyncConnection) -> None:
-        columns = await connection.run_sync(
-            lambda sync: {column["name"] for column in inspect(sync).get_columns(self.table.name)}
-        )
-        if "read_grants" in columns:
+        if await _projection_columns(connection, self.table) & _OBSOLETE_PROJECTION_COLUMNS:
             raise AtomicMemoryIndexError(
                 "current-schema",
                 "Atomic Memory uses an obsolete development projection schema. Stop writers and run "

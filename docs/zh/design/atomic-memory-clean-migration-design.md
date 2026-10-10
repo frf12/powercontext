@@ -347,7 +347,7 @@ pc_dream_runs.payload.run.candidate
 | 历史载体 | 迁移后的表示 |
 | --- | --- |
 | 全部旧格式终态 Dream | 保留 run ID、状态、时间、结果等普通元数据；原 request、input manifest 及其原摘要移入 `historical_data`。旧字段即使为空也完成格式转换，不要求旧 request 通过新的请求模型校验 |
-| 历史 HandoffReceipt | `unavailable_evidence` 中的旧 citation 是精确 entry 引用，按第 6 节与其他 Work Source 一样转换为 Atomic 引用；回执状态和证据列表保持有效，不需要历史格式 |
+| 历史 HandoffReceipt | `unavailable_evidence` 中的旧 citation 是精确 entry 引用，按第 6 节与其他 Work Source 一样转换为 Atomic 引用；回执状态和证据列表保持有效，不需要历史格式。以 `kind: artifact` 引用整个集合的条目没有 Atomic 对应，在移除 Memory Family 注册的版本中移入 `historical_data`，不留在强类型字段中 |
 | ContentSource 的旧 `internal.target` | 只标记 lineage_only 写入回执的目标，运行时不据此读取旧 Memory，按原值保留 |
 
 上述历史数据写入各载体现有的 JSON 载荷，不新增历史表，也不为 Handoff statement、Work claim/check 或 Candidate 增加历史条目变体。失去必需证据的业务条目按第 5.2 节阻断升级。当前业务输入拒绝把这些无类型历史数据当作有效证据。
@@ -471,7 +471,10 @@ RFC 1771 的迁移执行器目前只管理四张 Artifact 表的结构版本，�
 2. 建立归档表，按集合归档并核验，然后完成 A 的导入。
 3. 核对 Source 进度和待处理任务未变后，执行 B 的引用转换、集合关系归档删除和 Dream 历史格式改写。
 4. 解除两个旧 entry 表指向 `pc_artifacts` 的外键，不新建归档外键。新建数据库的表定义也不再包含这两个外键。
-5. 执行 C 移出公共表中的旧对象，最终 verify 通过后放行。
+5. 旧集合仍在公共表时完整验收导入历史、当前投影、授权转换和全部引用转换；未通过则不移出任何集合。
+6. 执行 C 移出公共表中的旧对象，再做残留检查后放行。
+
+旧集合移出以第 5 步验收通过为前提，所以普通启动只需检查公共表残留即可确认迁移完成，不重复全量验收。
 
 两张公共表的 `memory_citations` 列在转换后只保存空列表，在移除运行时该字段的版本中一起删除。
 
@@ -518,7 +521,7 @@ head 已存在不表示 current 已发布。元数据提交后退出，重跑仍
 2. 清除所有旧 Memory 自身拥有的公共 lineage，避免旧集合相互引用阻碍移出。
 3. 按集合移除已归档的旧 tags、Owner 等公共元数据；迁到 Atomic 的授权保留并继续生效。
 4. 移除旧 Memory 的公共 head，最后移除 `pc_artifacts.family=memory` 的全部 revision。
-5. 核验公共表中无旧 Memory 对象、旧外键或活动引用；归档完整，新权威和投影一致，完成最终 verify。
+5. 核验公共表中无旧 Memory 对象、指向旧集合的 lineage 或旧外键。新权威、投影和引用转换已在移出前验收，这里不重复。
 
 不删除归档、旧 entry versions/heads 或旧专用索引，不向它们继续双写。公共表移出按批提交，失败重跑时通过归档与旧版本表重建所需对应关系；公共对象不存在且归档完整是已移出的状态，不是丢失数据。
 

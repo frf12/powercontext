@@ -7,7 +7,9 @@ The versioned task `powercontext.memory.v1-to-atomic-memory.v1` freezes the lega
 identity rules, version chains and import encoding. It connects using deployment settings without starting
 a Runtime or Worker. After migration, legacy Memory collections exist only in the offline archive table
 `pc_memory_artifact_archive`; they leave the public Artifact tables, search and every online read path.
-Normal service startup verifies imported and current data and that no legacy collection remains public.
+Normal service startup runs only a light residual check: no legacy collection or lineage to one remains in the
+public tables, and the legacy entry tables no longer reference them. It reads neither the archive nor the
+legacy entry tables; complete per-entry verification is the job of `verify`.
 
 ## Run the maintenance task
 
@@ -100,17 +102,26 @@ Apply runs these steps in order; each can be repeated after an interruption:
    recomputed when a Task Outcome item digest changes.
 4. A relationship to a whole collection has no single Atomic counterpart. Its original location and value
    are recorded in the referenced collection revision's archived `incoming_references` before it is removed
-   from online lineage, Candidate `artifact_refs` or Task Outcome `produced_artifacts`.
+   from online lineage, Candidate `artifact_refs`, Task Outcome `produced_artifacts`, and `kind: artifact`
+   citations of a whole collection in Handoff content and Work claims or checks. A Handoff receipt's
+   `unavailable_evidence` records evidence that was unavailable rather than support, so collection references
+   there keep their original value.
 5. Finished Dream runs move to a historical format: the original request, input manifest and request digest
    move to `historical_data` and are no longer read as an executable request. Replaying the same idempotency
    key is still judged by the original request digest.
-6. The retained legacy entry tables are detached from public Artifact rows, then the collections, their
-   heads, tags, Owners and own lineage are deleted from public tables. Legacy entry tables stay unused.
+6. The retained legacy entry tables are detached from public Artifact rows. While the collections are still
+   public, the import history, current projection, grant conversion and every reference conversion are
+   accepted; any failure stops before a collection is removed.
+7. The lineage owned by every legacy collection is deleted first, then the collections, their heads, tags
+   and Owners, so collections that cite each other never block removal through identifier order. Legacy entry
+   tables stay unused. A final residual check confirms nothing legacy remains public.
 
-These conditions block before any data is rewritten and are listed by plan: an unfinished Dream run that
-still references legacy Memory; a legacy Memory Family Candidate or publication; a reference that does not
-resolve to an exact imported Atomic revision; and a Candidate version left without any Source or Artifact
-evidence once its collection references are removed.
+These conditions block before any data is rewritten and are listed by plan: an unfinished Dream run whose
+pinned inputs this migration changes, including legacy entry citations, legacy collections, and Artifacts or
+Work Sources whose content or lineage is rewritten; a legacy Memory Family Candidate or publication; a
+reference that does not resolve to an exact imported Atomic revision; a Handoff statement or verified Work
+claim or check left without evidence once collection citations are removed; and a Candidate version left
+without any Source or Artifact evidence once its collection references are removed.
 
 The last case requires a decision file, passed with `--decisions`, that names replacement evidence for each
 blocked Candidate version:
@@ -139,7 +150,9 @@ powercontext server atomic-memory-migrate --action apply --env-file .env --maint
 
 Only `replace` is supported. Replacement evidence must be existing exact Artifact revisions and cannot be a
 legacy Memory collection. Decisions must match blocked versions one to one; extra or duplicate decisions are
-errors. The original reference is still archived and marked as replaced.
+errors. The original reference is still archived and marked as replaced. After partial or complete success,
+rerun the same command with the same decision file: an applied decision is checked against the Candidate
+version's current replacement evidence, counts as complete when it matches, and conflicts only otherwise.
 
 Historical lineage_only Sources retain their original targets and remain provenance without entering model
 input. The task neither rebinds old Sources nor invents timestamps.
@@ -211,11 +224,14 @@ entries, `archived_collections`, `removed_collections` and reference conversion 
 counts exclude indexes, access records, database pages and replication; record actual coexistence storage
 through database monitoring.
 
-Planning and startup verification read retained history and Source/task snapshots, materializing those
-records in memory. Read cost and peak memory grow with history. Record read volume, peak memory, embedding
-calls and downtime on a backup copy before scheduling production maintenance. Production scale costs have
-not been established by this implementation.
+Plan, apply and verify read retained history and Source/task snapshots, materializing those records in
+memory. Read cost and peak memory grow with history. Record read volume, peak memory, embedding calls and
+downtime on a backup copy before scheduling production maintenance. Production scale costs have not been
+established by this implementation. The startup residual check only counts legacy objects in public tables
+and reads no retained history; its cost depends on those tables and the execution plan.
 
-An obsolete development current table containing copied read grants is rejected at initialization. With writers
-stopped, run the projection rebuild command above. It recreates only that derived table, rebuilds active rows
-from retained authority, and preserves exact Artifact ownership and sharing grants.
+A current table created during development of this branch (with copied read grants or Owner columns) belongs
+to no release and is rejected at initialization. Before migration completes, apply drops and recreates that
+derived table and its report asks for a projection rebuild; after migration, stop writers and run the
+projection rebuild command above. Either way only that derived table is rebuilt from retained authority;
+Artifact history, Family state and grant records are unchanged.

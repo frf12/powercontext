@@ -52,6 +52,7 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     PreparedAtomicMemoryProjection,
     atomic_memory_embedding_input_hash,
     atomic_memory_profile_fingerprint,
+    drop_obsolete_atomic_memory_projection,
 )
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import PersistenceError
@@ -1231,6 +1232,7 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
     async with database.transaction() as connection:
         await connection.run_sync(lambda value: _STATE_METADATA.create_all(value, tables=[_STATES], checkfirst=True))
         await ensure_archive_table(connection)
+        rebuilt_projection = await drop_obsolete_atomic_memory_projection(connection, index.table)
         await index.initialize(connection)
     archived = 0
     for scope_id, memory_id in sorted(inventory.collections):
@@ -1308,15 +1310,34 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
         raise AtomicMemoryMigrationError(reference_errors)
     async with database.transaction() as connection:
         await drop_legacy_foreign_keys(connection)
+    # Removal is the only completion evidence the startup gate reads, so the
+    # import, references and projection are accepted before any collection leaves.
+    async with database.transaction() as connection:
+        report = await _verify_atomic_memory_migration(
+            connection,
+            index=index,
+            check_projection=not rebuilt_projection,
+            thorough=True,
+            collections_removed=False,
+        )
+    if not report.ready:
+        raise AtomicMemoryMigrationError(report.errors)
     try:
         removed = await remove_legacy_collections(database, dict(archived_inventory.collections))
     except ValueError as error:
         raise AtomicMemoryMigrationError((str(error),)) from error
     async with database.transaction() as connection:
-        report = await verify_atomic_memory_migration(connection, index=index)
+        residual = await residual_issues(connection, await _tables(connection), thorough=False)
+    if rebuilt_projection:
+        residual.append(
+            "the obsolete development projection was recreated empty; run "
+            "powercontext server atomic-memory-rebuild-projection --maintenance-confirmed"
+        )
     return report.model_copy(
         update={
             "action": "apply",
+            "ready": not residual,
+            "errors": tuple(residual),
             "counts": {
                 **report.counts,
                 **{f"reference_{name}": value for name, value in reference_counts.items()},
@@ -1353,12 +1374,13 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
     index: AtomicMemoryIndex | None = None,
     check_projection: bool,
     thorough: bool,
+    collections_removed: bool = True,
 ) -> AtomicMemoryMigrationReport:
 
     inventory = await _inventory(connection)
     errors = list(inventory.errors)
     tables = await _tables(connection)
-    errors.extend(await residual_issues(connection, tables, thorough=thorough))
+    errors.extend(await residual_issues(connection, tables, thorough=thorough, collections_removed=collections_removed))
     required = {"pc_atomic_memory_states"}
     if check_projection:
         required.add("pc_atomic_memory_current")
@@ -1509,14 +1531,17 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
     )
 
 
-async def assert_atomic_memory_migration_ready(
-    connection: AsyncConnection, *, index: AtomicMemoryIndex | None = None
-) -> None:
-    """Read-only startup gate, independent of the processing schema marker."""
+async def assert_atomic_memory_migration_ready(connection: AsyncConnection) -> None:
+    """Read-only startup gate: a light residual check that never reads archived or legacy history.
 
-    report = await verify_atomic_memory_migration(connection, index=index, thorough=False)
-    if not report.ready:
-        raise AtomicMemoryMigrationError(report.errors)
+    Apply removes public collections only after accepting import, reference
+    conversion and projection, so their absence is the completion evidence.
+    Full per-entry verification remains ``atomic-memory-migrate verify``.
+    """
+
+    errors = await residual_issues(connection, await _tables(connection), thorough=False)
+    if errors:
+        raise AtomicMemoryMigrationError(tuple(errors))
 
 
 __all__ = [

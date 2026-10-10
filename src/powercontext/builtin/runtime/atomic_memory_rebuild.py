@@ -38,6 +38,7 @@ from powercontext.builtin.persistence.atomic_memory_index import (
     atomic_memory_embedding_input,
     atomic_memory_embedding_input_hash,
     atomic_memory_profile_fingerprint,
+    drop_obsolete_atomic_memory_projection,
     load_atomic_memory_tags,
 )
 from powercontext.builtin.persistence.atomic_memory_index_schema import ATOMIC_MEMORY_PROJECTION_FORMAT
@@ -220,16 +221,7 @@ async def verify_atomic_memory_current(
 
 async def _initialize_rebuild(connection: AsyncConnection, index: AtomicMemoryIndex) -> None:
     await _require_authority(connection)
-    if await connection.run_sync(lambda sync: inspect(sync).has_table(index.table.name)):
-        columns = await connection.run_sync(
-            lambda sync: {column["name"] for column in inspect(sync).get_columns(index.table.name)}
-        )
-        if "read_grants" in columns:
-            # Only this unreleased, rebuildable development projection changes.
-            # Authority, retained history and formal grants stay in their tables.
-            await connection.run_sync(lambda sync: index.table.drop(sync))
-            if connection.dialect.name == "sqlite":
-                await connection.exec_driver_sql("DROP TABLE IF EXISTS pc_atomic_memory_current_fts")
+    await drop_obsolete_atomic_memory_projection(connection, index.table)
     try:
         await index.initialize(connection)
     except AtomicMemoryIndexError as error:

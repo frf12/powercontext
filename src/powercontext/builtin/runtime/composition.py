@@ -989,7 +989,7 @@ async def open_builtin_contexts(
                     await _initialize_atomic_memory_authority(connection)
                     await atomic_index.initialize(connection)
                     await ensure_artifact_head_searchable_text(connection)
-                    await assert_atomic_memory_migration_ready(connection, index=atomic_index)
+                    await assert_atomic_memory_migration_ready(connection)
                     await index.initialize(connection)
                     await experience_index.initialize(connection)
                 await TopicMemoryRepository(index=topic_index).initialize(
@@ -1079,7 +1079,7 @@ async def open_builtin_contexts(
                 await _initialize_atomic_memory_authority(connection)
                 await atomic_index.initialize(connection)
                 await ensure_artifact_head_searchable_text(connection)
-                await assert_atomic_memory_migration_ready(connection, index=atomic_index)
+                await assert_atomic_memory_migration_ready(connection)
                 await index.initialize(connection)
                 await experience_index.initialize(connection)
             await TopicMemoryRepository(index=topic_index).initialize(
