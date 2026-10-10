@@ -51,11 +51,7 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
     HandoffReportConfig,
     InferenceConfig,
-    MemorySearchPage,
-    ScopedMemoryApplication,
-)
-from powercontext.builtin.runtime import (
-    SearchMemoryRequest as RuntimeSearchMemoryRequest,
+    ScopedAtomicMemoryApplication,
 )
 from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.errors import RevisionConflictError
@@ -932,16 +928,10 @@ def test_memory_search_returns_revision_conflict_as_http_409(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    async def conflicting_search(
-        _self: ScopedMemoryApplication,
-        _request: RuntimeSearchMemoryRequest,
-        /,
-        *,
-        atomic_context=None,
-    ) -> MemorySearchPage:
+    async def conflicting_search(_self: ScopedAtomicMemoryApplication, _query: str, **_kwargs: object) -> None:
         raise RevisionConflictError("stale", "current")
 
-    monkeypatch.setattr(ScopedMemoryApplication, "search", conflicting_search)
+    monkeypatch.setattr(ScopedAtomicMemoryApplication, "search", conflicting_search)
     app = create_server_app(settings=_server_settings(tmp_path / "runtime.db"))
 
     with TestClient(app) as transport:
@@ -1086,10 +1076,10 @@ def test_runtime_server_keeps_unstructured_memory_errors_private(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    async def invalid_remember(_self: ScopedMemoryApplication, _request: object, /, *, atomic_context=None) -> None:
+    async def invalid_create(_self: ScopedAtomicMemoryApplication, _contents: object, /, *, context=None) -> None:
         raise InvalidMemoryCandidateError("canonical", "private implementation detail")
 
-    monkeypatch.setattr(ScopedMemoryApplication, "remember", invalid_remember)
+    monkeypatch.setattr(ScopedAtomicMemoryApplication, "create", invalid_create)
     app = create_server_app(settings=_server_settings(tmp_path / "runtime.db"))
 
     with TestClient(app) as transport:

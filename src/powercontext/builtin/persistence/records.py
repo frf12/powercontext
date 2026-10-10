@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory.errors import AtomicMemoryConflictError
-from powercontext.builtin.artifacts.memory import MemoryCitation, MemoryEntryVersion, MemoryService
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
 from powercontext.builtin.persistence.database import AsyncDatabase
@@ -44,7 +43,6 @@ from powercontext.builtin.persistence.family_management import (
     FamilyManagementWriterRegistry,
     PreparingFamilyManagementWriter,
 )
-from powercontext.builtin.persistence.memory import RelationalMemoryBackend
 from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
 from powercontext.builtin.persistence.sources import SourceRepository, StoredSource
 from powercontext.builtin.persistence.tables import (
@@ -493,18 +491,6 @@ class RelationalRecordService:
             else None
         )
         return ArtifactRevisionPage(items=items, next_cursor=next_cursor)
-
-    async def current_memory_entry(self, scope_id: str, artifact_id: str, entry_id: str, /) -> MemoryEntryVersion:
-        """Resolve only one entry body, including entries in base-API Memory artifacts."""
-        backend = RelationalMemoryBackend(database=self._database, scope_id=scope_id, artifacts=self._artifacts)
-        memory = await backend.latest(artifact_id)
-        entry = next((value for value in memory.content.manifest.entries if value.entry_id == entry_id), None)
-        if entry is None:
-            raise BaseValueNotFoundError("artifact", (scope_id, artifact_id, entry_id))
-        citation = MemoryCitation(
-            memory_ref=memory.as_ref(), entry_id=entry_id, entry_version_id=entry.entry_version_id
-        )
-        return await MemoryService(backend=backend).validate_citation(citation)
 
     async def logical_artifacts(self, scope_id: str, /) -> tuple[LogicalArtifactRecord, ...]:
         """Catalog current logical identities; legacy collections remain exact-history only."""

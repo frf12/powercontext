@@ -23,6 +23,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 from powercontext.artifacts import ArtifactRef
+from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
     AtomicMemoryExtractionInput,
@@ -49,7 +50,6 @@ from powercontext.builtin.artifacts.experience.recurrence import (
     signature_key,
 )
 from powercontext.builtin.artifacts.handoff import Handoff, HandoffArtifactCitation, HandoffContent, HandoffStatement
-from powercontext.builtin.artifacts.memory import MemoryEntryInput
 from powercontext.builtin.inference import GenerationResult, character_token_estimator
 from powercontext.builtin.persistence import RecurrenceRepository
 from powercontext.builtin.persistence.artifacts import ArtifactRepository, RepositoryArtifactDraft
@@ -61,7 +61,6 @@ from powercontext.builtin.runtime import (
     CaptureSource,
     PrepareContextRequest,
     ProposeExperienceRequest,
-    RememberMemoryRequest,
     StatisticsPeriod,
     open_builtin_runtime,
 )
@@ -125,10 +124,11 @@ def test_scoped_statistics_reports_current_inventory_and_recall_reduction() -> N
             captured = await runtime.sources.for_scope(scope_id).capture(
                 CaptureSource(source_id="task-1", content="Remember the contract.", metadata={})
             )
-            await runtime.memory.for_scope(scope_id).flush()
-            await runtime.memory.for_scope(scope_id).remember(
-                RememberMemoryRequest(entries=(MemoryEntryInput(kind="project_note", text="Keep kinds open."),))
-            )
+            assert runtime.atomic_memory is not None
+            await runtime.atomic_memory.for_scope(scope_id).flush()
+            await runtime.atomic_memory.for_scope(scope_id).create((
+                AtomicMemoryContent(kind="project_note", text="Keep kinds open."),
+            ))
             candidate = await runtime.experience.for_scope(scope_id).propose(
                 ProposeExperienceRequest(
                     proposal=ExperienceContent(
@@ -243,9 +243,10 @@ def test_statistics_uses_the_same_all_exact_and_subtree_selection() -> None:
                 ScopeDraft(title="Other", summary="Other result", idempotency_key="other")
             )
             for scope_id in (root.scope_id, child.scope_id, other.scope_id):
-                await runtime.memory.for_scope(scope_id).remember(
-                    RememberMemoryRequest(entries=(MemoryEntryInput(kind="fact", text=f"Fact for {scope_id}."),))
-                )
+                assert runtime.atomic_memory is not None
+                await runtime.atomic_memory.for_scope(scope_id).create((
+                    AtomicMemoryContent(kind="fact", text=f"Fact for {scope_id}."),
+                ))
 
             all_statistics = await runtime.statistics.overview(
                 ScopeSelection(mode="all"),
@@ -538,12 +539,11 @@ async def _seed_selection(runtime: BuiltinRuntime, count: int, /) -> tuple[str, 
     scope_ids = []
     for index in range(count):
         scope_id = await _create_scope(runtime, f"selection-{count}-{index}")
-        await runtime.memory.for_scope(scope_id).remember(
-            RememberMemoryRequest(
-                entries=tuple(
-                    MemoryEntryInput(kind="fact", text=f"Scope {index} keeps fact {entry}.")
-                    for entry in range(index + 1)
-                )
+        assert runtime.atomic_memory is not None
+        await runtime.atomic_memory.for_scope(scope_id).create(
+            tuple(
+                AtomicMemoryContent(kind="fact", text=f"Scope {index} keeps fact {entry}.")
+                for entry in range(index + 1)
             )
         )
         scope_ids.append(scope_id)

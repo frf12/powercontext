@@ -325,13 +325,11 @@ def test_mcp_bridge_reuses_logical_request_id_and_is_marked_internal(caplog) -> 
             del scope_id
             return self
 
-        async def list(self, *, include_inactive=False, limit=50, cursor=None, tag_filter=None, atomic_context=None):
-            assert atomic_context is None
+        async def list(self, *, states=("active",), limit=50, cursor=None, tag_filter=None, context=None):
+            assert context is None
             return AtomicMemoryPage(items=())
 
-    app = create_app(
-        application=SimpleNamespace(memory=MemoryApplication(), sources=object(), atomic_memory=SimpleNamespace())
-    )
+    app = create_app(application=SimpleNamespace(sources=object(), atomic_memory=MemoryApplication()))
     requests: list[tuple[str, str, bool]] = []
 
     @app.middleware("http")
@@ -384,13 +382,11 @@ def test_mcp_access_log_counts_the_logical_tool_call_without_the_bridge(caplog) 
             del scope_id
             return self
 
-        async def list(self, *, include_inactive=False, limit=50, cursor=None, tag_filter=None, atomic_context=None):
-            assert atomic_context is None
+        async def list(self, *, states=("active",), limit=50, cursor=None, tag_filter=None, context=None):
+            assert context is None
             return AtomicMemoryPage(items=())
 
-    app = create_app(
-        application=SimpleNamespace(memory=MemoryApplication(), sources=object(), atomic_memory=SimpleNamespace())
-    )
+    app = create_app(application=SimpleNamespace(sources=object(), atomic_memory=MemoryApplication()))
     app.add_middleware(HttpAccessLogMiddleware, skip_paths=("/mcp",))
     mount_mcp(app, access_log=True)
 

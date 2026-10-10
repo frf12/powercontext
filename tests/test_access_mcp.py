@@ -58,11 +58,11 @@ class _MemoryApplication:
     async def logical_artifacts(self):
         return ()
 
-    async def list(self, *, include_inactive=False, limit=50, cursor=None, tag_filter=None, atomic_context=None):
-        assert atomic_context is not None
-        assert atomic_context.principal == BOB
+    async def list(self, *, states=("active",), limit=50, cursor=None, tag_filter=None, context=None):
+        assert context is not None
+        assert context.principal == BOB
         async with self.database.transaction() as connection:
-            await AtomicMemoryAccess().filters(connection, self.scope_id, atomic_context, tags=tag_filter)
+            await AtomicMemoryAccess().filters(connection, self.scope_id, context, tags=tag_filter)
         return AtomicMemoryPage(items=())
 
 
@@ -104,7 +104,7 @@ def test_mcp_internal_bridge_preserves_principal_and_audits_mcp_transport() -> N
             authentication = StaticBearerAuthenticationProvider("bob-token", BOB)
             memory = _MemoryApplication(profile.database)
             app = create_app(
-                application=SimpleNamespace(memory=memory, records=memory),
+                application=SimpleNamespace(atomic_memory=memory, records=memory),
                 access_control=service,
                 authentication_provider=authentication,
                 middleware=(

@@ -74,16 +74,12 @@ from powercontext.builtin.runtime import (
     HandoffStatement,
     InvalidRuntimeRequestError,
     MemoryChange,
-    MemoryChangesPage,
-    MemoryEntryInput,
-    MemoryEntryRecord,
     MemoryFlushResult,
     MemoryHit,
     PrepareContextRequest,
     PreparedContext,
     PreparedHandoff,
     PrepareHandoff,
-    RememberMemoryRequest,
     SourceReceipt,
     TopicMemoryFlushResult,
 )
@@ -108,9 +104,6 @@ from powercontext.builtin.runtime import (
 from powercontext.builtin.runtime import (
     GetExperienceRequest as RuntimeGetExperienceRequest,
 )
-from powercontext.builtin.runtime import (
-    GetMemoryEntryRequest as RuntimeGetMemoryEntryRequest,
-)
 from powercontext.builtin.runtime import GetSkillRequest as RuntimeGetSkillRequest
 from powercontext.builtin.runtime import GetTopicMemoryRequest as RuntimeGetTopicMemoryRequest
 from powercontext.builtin.runtime import (
@@ -124,9 +117,6 @@ from powercontext.builtin.runtime import (
     MemoryCitation as RuntimeMemoryCitation,
 )
 from powercontext.builtin.runtime import (
-    MemoryRevisionChanges as RuntimeMemoryRevisionChanges,
-)
-from powercontext.builtin.runtime import (
     ProposeExperienceRequest as RuntimeProposeExperienceRequest,
 )
 from powercontext.builtin.runtime import ProposeSkillRequest as RuntimeProposeSkillRequest
@@ -135,16 +125,7 @@ from powercontext.builtin.runtime import (
 )
 from powercontext.builtin.runtime import ResolveExternalSkillRequest as RuntimeResolveExternalSkillRequest
 from powercontext.builtin.runtime import (
-    RetireMemoryEntryRequest as RuntimeRetireMemoryEntryRequest,
-)
-from powercontext.builtin.runtime import (
     ReviseArtifactCandidateRequest as RuntimeReviseArtifactCandidateRequest,
-)
-from powercontext.builtin.runtime import (
-    ReviseMemoryEntryRequest as RuntimeReviseMemoryEntryRequest,
-)
-from powercontext.builtin.runtime import (
-    SearchMemoryRequest as RuntimeSearchMemoryRequest,
 )
 from powercontext.builtin.runtime import SearchTopicMemoryRequest as RuntimeSearchTopicMemoryRequest
 from powercontext.builtin.runtime import (
@@ -155,7 +136,6 @@ from powercontext.builtin.runtime import (
 )
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchPage
 from powercontext.builtin.sources import ExternalSkillImportMode as RuntimeExternalSkillImportMode
-from powercontext.builtin.tags import MemoryEntryTagTarget, TagFilter
 from powercontext.builtin.work import (
     AcknowledgeHandoff as RuntimeAcknowledgeHandoff,
 )
@@ -212,7 +192,6 @@ from powercontext.http import (
     GetArtifactCandidateRequest,
     GetConnectorCheckpointRequest,
     GetExperienceRequest,
-    GetMemoryEntryRequest,
     GetSkillRequest,
     GetTopicMemoryRequest,
     HandoffAcknowledgement,
@@ -228,14 +207,10 @@ from powercontext.http import (
     ListArtifactCandidatesRequest,
     ListExternalSkillsRequest,
     ListExternalSkillsResponse,
-    ListMemoryChangesResponse,
     ListMemoryEntriesResponse,
     ManagedSkillLibraryEntry,
-    MemoryEntry,
-    MemoryEntryState,
     MemoryMatchedBy,
     MemoryMutationResponse,
-    MemoryRevisionChanges,
     PreparedContextSchema,
     PreparedContextStatus,
     PreparedHandoffSchema,
@@ -248,14 +223,11 @@ from powercontext.http import (
     RecordTaskOutcomeRequest,
     RejectArtifactCandidateRequest,
     ResolveExternalSkillRequest,
-    RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
-    ReviseMemoryEntryRequest,
     ScanExternalSkillsResponse,
     ScopedStats,
     SearchArtifactsResponse,
     SearchMemoryHit,
-    SearchMemoryRequest,
     SearchMemoryResponse,
     SearchTopicMemoryHit,
     SearchTopicMemoryRequest,
@@ -336,9 +308,6 @@ from powercontext.http import (
 )
 from powercontext.http import (
     PreparedHandoff as TransportPreparedHandoff,
-)
-from powercontext.http import (
-    RememberMemoryRequest as TransportRememberMemoryRequest,
 )
 from powercontext.http import RepairSurface as TransportRepairSurface
 from powercontext.server.atomic_memory import record_response
@@ -596,13 +565,6 @@ def flush_response(value: MemoryFlushResult) -> FlushMemoryResponse:
     )
 
 
-def remember_request(value: TransportRememberMemoryRequest) -> RememberMemoryRequest:
-    return RememberMemoryRequest(
-        entries=(MemoryEntryInput(kind=value.kind, text=value.text, reason=value.reason),),
-        expected_revision=value.expected_revision,
-    )
-
-
 def propose_experience_request(value: ProposeExperienceRequest) -> RuntimeProposeExperienceRequest:
     return RuntimeProposeExperienceRequest(
         proposal=experience_content(value.proposal),
@@ -693,17 +655,6 @@ def revise_candidate_request(value: ReviseArtifactCandidateRequest) -> RuntimeRe
         ),
         target=None if value.target is None else runtime_artifact_reference(value.target),
         reason=value.reason,
-    )
-
-
-def search_request(value: SearchMemoryRequest) -> RuntimeSearchMemoryRequest:
-    return RuntimeSearchMemoryRequest(
-        query=value.query,
-        limit=value.limit,
-        mode=value.mode.value,
-        tag_filter=None
-        if value.tag_filter is None
-        else TagFilter.model_validate_json(value.tag_filter.model_dump_json()),
     )
 
 
@@ -815,27 +766,6 @@ def handoff_resolution_response(value: HandoffResolution) -> TransportHandoffRes
     })
 
 
-def get_request(value: GetMemoryEntryRequest) -> RuntimeGetMemoryEntryRequest:
-    if value.citation is not None:
-        return RuntimeGetMemoryEntryRequest(citation=runtime_citation(value.citation))
-    if value.target is None:
-        raise InvalidRuntimeRequestError("memory-address")
-    return RuntimeGetMemoryEntryRequest(target=MemoryEntryTagTarget.model_validate_json(value.target.model_dump_json()))
-
-
-def revise_request(value: ReviseMemoryEntryRequest) -> RuntimeReviseMemoryEntryRequest:
-    return RuntimeReviseMemoryEntryRequest(
-        citation=runtime_citation(value.citation),
-        kind=value.kind,
-        text=value.text,
-        reason=value.reason,
-    )
-
-
-def retire_request(value: RetireMemoryEntryRequest) -> RuntimeRetireMemoryEntryRequest:
-    return RuntimeRetireMemoryEntryRequest(citation=runtime_citation(value.citation), reason=value.reason)
-
-
 def search_response(value: AtomicMemorySearchPage) -> SearchMemoryResponse:
     return SearchMemoryResponse.model_validate({
         "mode": value.mode,
@@ -906,13 +836,6 @@ def entries_response(value: AtomicMemoryPage) -> ListMemoryEntriesResponse:
 
 def mutation_response(value: AtomicMemoryMutationResult) -> MemoryMutationResponse:
     return MemoryMutationResponse(changed=value.changed, records=[record_response(item) for item in value.records])
-
-
-def changes_response(value: MemoryChangesPage) -> ListMemoryChangesResponse:
-    return ListMemoryChangesResponse(
-        memory=None if value.memory_ref is None else artifact_reference(value.memory_ref),
-        revisions=[revision_changes(revision) for revision in value.revisions],
-    )
 
 
 def candidate_response(value: RuntimeArtifactCandidate[Any]) -> ArtifactCandidate:
@@ -1281,13 +1204,6 @@ def entry_change(value: MemoryChange) -> EntryChange:
     )
 
 
-def revision_changes(value: RuntimeMemoryRevisionChanges) -> MemoryRevisionChanges:
-    return MemoryRevisionChanges(
-        memory_ref=artifact_reference(value.memory_ref),
-        changes=[entry_change(change) for change in value.changes],
-    )
-
-
 def search_hit(value: MemoryHit) -> SearchMemoryHit:
     return SearchMemoryHit(
         citation=transport_citation(
@@ -1300,17 +1216,4 @@ def search_hit(value: MemoryHit) -> SearchMemoryHit:
         text=value.text,
         score=value.score,
         matched_by=[MemoryMatchedBy(channel) for channel in value.matched_by],
-    )
-
-
-def memory_entry(value: MemoryEntryRecord) -> MemoryEntry:
-    entry = value.entry
-    return MemoryEntry(
-        citation=transport_citation(value.citation),
-        version=entry.version,
-        kind=entry.kind,
-        text=entry.text,
-        state=MemoryEntryState(value.state),
-        source_refs=[SourceReference(name=source.source_type, source_id=source.source_id) for source in entry.sources],
-        artifact_refs=[artifact_reference(reference) for reference in entry.artifacts],
     )

@@ -59,7 +59,6 @@ from powercontext.builtin.runtime import (
     CaptureSource,
     MemoryExtractionProfile,
     RuntimeConfig,
-    SearchMemoryRequest,
     open_builtin_runtime,
 )
 from powercontext.builtin.runtime.config import DatabaseConfig
@@ -525,7 +524,7 @@ async def _reuse_page(runtime, scope, sessions, donor_record, directory, records
     if scope in cache:
         return cache[scope]
     started = perf_counter()
-    memory = runtime.memory.for_scope(scope)
+    memory = runtime.atomic_memory.for_scope(scope)
     cursor = await memory.cursor()
     if cursor.sequence != len(sessions):
         raise ValueError("reused Memory cursor does not match the complete history")  # noqa: TRY003
@@ -577,7 +576,7 @@ async def _flush_session(memory_app, session, position, scope, output_directory,
 
 async def _ingest(runtime, case, sessions, scope, output_directory, records, prices, settings, extraction_model):
     source_app = runtime.sources.for_scope(scope)
-    memory_app = runtime.memory.for_scope(scope)
+    memory_app = runtime.atomic_memory.for_scope(scope)
     started = perf_counter()
     record = records.setdefault(scope, {"scope_id": scope, "latency_ms": 0.0})
     flush_inflight = False
@@ -707,9 +706,7 @@ def _record_rerank_usage(observation, usages, trace, retrieved, model, prices):
 
 
 async def _retrieve(runtime, case, scope, sessions, top_k, source_expansion):
-    result = await runtime.memory.for_scope(scope).search(
-        SearchMemoryRequest(query=case.question, limit=top_k, mode="hybrid")
-    )
+    result = await runtime.atomic_memory.for_scope(scope).search(case.question, limit=top_k, mode="hybrid")
     records = runtime.records.for_scope(scope)
     cache: dict[tuple[str, str, int], tuple[str, ...]] = {}
     rendered: list[str] = []

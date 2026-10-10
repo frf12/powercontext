@@ -295,8 +295,9 @@ async def validate_runtime(label, configuration, *, dream_generator=None):
                     await client.capture_content_source(
                         CaptureContentSourceRequest(scope_id=scope.scope_id, source_id=f"task-{index}", content=content)
                     )
-                await runtime.memory.for_scope(scope.scope_id).flush()
-                entries = await runtime.memory.for_scope(scope.scope_id).list()
+                assert runtime.atomic_memory is not None
+                await runtime.atomic_memory.for_scope(scope.scope_id).flush()
+                entries = await runtime.atomic_memory.for_scope(scope.scope_id).list()
                 citations = [
                     ArtifactReference.model_validate_json(entry.ref.model_dump_json()) for entry in entries.items
                 ]

@@ -37,10 +37,10 @@ from powercontext.builtin.artifacts.skill import ExternalSkillProvider, SkillGen
 from powercontext.builtin.dream.generation import DreamGenerator
 from powercontext.builtin.inference import EmbeddingModel
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.records import BaseOperationNotSupportedError
 from powercontext.builtin.runtime import (
     BuiltinRuntime,
     ExperienceIncubationResult,
-    MemoryEntryRecord,
     MemoryFlushResult,
 )
 from powercontext.builtin.runtime.application import ScheduledExperienceRunner, ScheduledSourceRunner
@@ -67,7 +67,6 @@ from powercontext.server.authz import (
     AccessAction,
     AccessAuditContext,
     AccessControlService,
-    MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
     access_control_for_mode,
@@ -402,8 +401,10 @@ def _scheduled_access_runners(
         context = AccessAuditContext(transport="background", operation="process_source_window")
         await access.bootstrap_static_scope(principal, scope_id, context=context)
         await access.require(principal, AccessAction.SCOPE_CONTRIBUTE, ResourceRef.scope(scope_id), context=context)
-        return await runtime.memory.for_scope(scope_id).flush(
-            atomic_context=ArtifactSearchExecutionContext(principal=principal, access=access, audit=context),
+        if runtime.atomic_memory is None:
+            raise BaseOperationNotSupportedError("artifact_family", "atomic-memory", "runtime application")
+        return await runtime.atomic_memory.for_scope(scope_id).flush(
+            context=ArtifactSearchExecutionContext(principal=principal, access=access, audit=context),
         )
 
     async def incubate_experience(scope_id: str, runtime: BuiltinRuntime) -> ExperienceIncubationResult:
@@ -485,16 +486,6 @@ def _scheduled_principal(
     if legacy_static_principal is not None:
         return legacy_static_principal
     raise ValueError("scheduled processing in enforced mode requires ACCESS_BACKGROUND_PRINCIPAL_ID")  # noqa: TRY003
-
-
-def _memory_resource(scope_id: str, entry: MemoryEntryRecord) -> ResourceRef:
-    citation = entry.citation
-    return ResourceRef.artifact(
-        scope_id,
-        family="memory",
-        artifact_id=citation.memory_ref.artifact_id,
-        selector=MemoryEntrySelector(entry_id=citation.entry_id),
-    )
 
 
 class _ServerReadinessProbe:

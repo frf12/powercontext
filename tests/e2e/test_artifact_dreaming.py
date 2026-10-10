@@ -35,7 +35,6 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryExtractionOutput,
 )
 from powercontext.builtin.artifacts.experience import ExperienceContent
-from powercontext.builtin.artifacts.memory import MemoryEntryInput
 from powercontext.builtin.artifacts.skill import SkillContent
 from powercontext.builtin.dream.generation import DreamGenerationInput
 from powercontext.builtin.dream.models import DreamError, DreamPlan
@@ -59,7 +58,6 @@ from powercontext.builtin.runtime import (
     PrepareContextRequest,
     ProposeExperienceRequest,
     ProposeSkillRequest,
-    RememberMemoryRequest,
     ReviseArtifactCandidateRequest,
     RuntimeConfig,
 )
@@ -236,11 +234,12 @@ async def seed(runtime: BuiltinRuntime):
             metadata={},
         )
     )
-    await runtime.memory.for_scope(scope.scope_id).flush()
-    await runtime.memory.for_scope(scope.scope_id).remember(
-        RememberMemoryRequest(entries=(MemoryEntryInput(kind="private_note", text="UNSELECTED_SIBLING_SENTINEL"),))
-    )
-    entries = await runtime.memory.for_scope(scope.scope_id).list()
+    assert runtime.atomic_memory is not None
+    await runtime.atomic_memory.for_scope(scope.scope_id).flush()
+    await runtime.atomic_memory.for_scope(scope.scope_id).create((
+        AtomicMemoryContent(kind="private_note", text="UNSELECTED_SIBLING_SENTINEL"),
+    ))
+    entries = await runtime.atomic_memory.for_scope(scope.scope_id).list()
     citation = next(item.ref for item in entries.items if item.artifact.content.kind == "working_note")
     return scope.scope_id, captured.source_ref, citation
 
@@ -1266,17 +1265,13 @@ def test_memory_without_task_sources_cannot_produce_experience(database: Databas
                     )
                 )
             ).scope_id
-            await runtime.memory.for_scope(scope).remember(
-                RememberMemoryRequest(
-                    entries=(
-                        MemoryEntryInput(
-                            kind="preference",
-                            text="I prefer retrying writes without checking the previous result.",
-                        ),
-                    )
-                )
-            )
-            citation = (await runtime.memory.for_scope(scope).list()).items[0].ref
+            await runtime.atomic_memory.for_scope(scope).create((
+                AtomicMemoryContent(
+                    kind="preference",
+                    text="I prefer retrying writes without checking the previous result.",
+                ),
+            ))
+            citation = (await runtime.atomic_memory.for_scope(scope).list()).items[0].ref
             accepted = await runtime.dream.for_scope(scope).create(
                 CreateDreamRunRequest(
                     operation="refine_experience",
@@ -1419,7 +1414,7 @@ def test_multiple_entries_and_experience_reusing_a_source_keep_one_root(database
             config(database), candidate_pipeline=atomic_memory_pipeline(EchoPipeline()), dream_generator=generator
         ) as runtime:
             scope, root, citation = await seed(runtime)
-            entries = await runtime.memory.for_scope(scope).list()
+            entries = await runtime.atomic_memory.for_scope(scope).list()
             citations = tuple(item.ref for item in entries.items if item.artifact.content.kind == "working_note")
             assert len(citations) == 2
             candidate = await runtime.experience.for_scope(scope).propose(
@@ -1706,8 +1701,8 @@ def test_ordinary_experience_revisions_do_not_inherit_dream_depth_budget(
             )
             citations = ()
             if with_memory:
-                await runtime.memory.for_scope(scope).flush()
-                entries = await runtime.memory.for_scope(scope).list()
+                await runtime.atomic_memory.for_scope(scope).flush()
+                entries = await runtime.atomic_memory.for_scope(scope).list()
                 citations = (entries.items[0].ref,)
             target = None
             for revision in range(1, 13):

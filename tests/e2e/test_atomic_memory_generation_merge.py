@@ -159,7 +159,7 @@ def test_public_flush_derives_merge_creation_from_model_owned_content(tmp_path: 
                 ScopeDraft(title="Rollout policy", summary="Source-driven merge", idempotency_key="rollout-policy")
             )
             sources = runtime.sources.for_scope(scope.scope_id)
-            processing = runtime.memory.for_scope(scope.scope_id)
+            processing = runtime.atomic_memory.for_scope(scope.scope_id)
             memory = runtime.atomic_memory.for_scope(scope.scope_id)
             originals = []
             for position, text in enumerate((CANARY, PAUSE), 1):

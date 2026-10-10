@@ -39,7 +39,6 @@ from powercontext.artifacts.search import (
 from powercontext.builtin.artifacts.atomic_memory.models import (
     AtomicMemoryContent,
     AtomicMemoryMutationResult,
-    AtomicMemoryRecord,
 )
 from powercontext.builtin.artifacts.experience import (
     EXPERIENCE_INCUBATION_WINDOW_LIMIT,
@@ -68,10 +67,6 @@ from powercontext.builtin.artifacts.handoff import (
 from powercontext.builtin.artifacts.memory import (
     EmbeddingProfile,
     Memory,
-    MemoryCapacity,
-    MemoryCitation,
-    MemoryCompactionResult,
-    MemoryEntryVersion,
     MemoryQueryEmbedding,
     MemoryService,
     MemoryWritePlan,
@@ -80,7 +75,6 @@ from powercontext.builtin.artifacts.memory import (
 from powercontext.builtin.artifacts.memory.errors import (
     CapabilityNotSupportedError,
     InvalidMemoryCitationError,
-    MemoryEntryNotFoundError,
     MemoryWriteRejectedError,
 )
 from powercontext.builtin.artifacts.profile.service import RelationalProfileService
@@ -149,8 +143,6 @@ from powercontext.builtin.persistence.artifact_governance import (
     ArtifactGovernance,
     ArtifactLifecycleState,
 )
-from powercontext.builtin.persistence.atomic_memory_compatibility import resolve_legacy_memory_target
-from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
 from powercontext.builtin.persistence.skill_publications import SkillPublication
 from powercontext.builtin.publication import ArtifactPublicationApplication
 from powercontext.builtin.records import (
@@ -159,7 +151,6 @@ from powercontext.builtin.records import (
     ArtifactRecordPage,
     ArtifactRevisionPage,
     ArtifactWrite,
-    BaseOperationNotSupportedError,
     BaseValueConflictError,
     LogicalArtifactRecord,
     RecordService,
@@ -176,7 +167,7 @@ from powercontext.builtin.runtime._scope_cache import (
     ScopeEvictor,
 )
 from powercontext.builtin.runtime.artifact_search import ArtifactSearchService
-from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchHit, AtomicMemorySearchPage
+from powercontext.builtin.runtime.atomic_memory import AtomicMemorySearchHit
 from powercontext.builtin.runtime.decision_model import DecisionModel
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
 from powercontext.builtin.runtime.models import (
@@ -192,30 +183,22 @@ from powercontext.builtin.runtime.models import (
     GenerateSkillRequest,
     GetArtifactCandidateRequest,
     GetExperienceRequest,
-    GetMemoryEntryRequest,
     GetSkillRequest,
     GetTopicMemoryRequest,
     ImportExternalSkillRequest,
     ListArtifactCandidatesRequest,
     ListExternalSkillsRequest,
-    MemoryChangesPage,
-    MemoryEntryRecord,
     MemoryFlushResult,
-    MemoryMutationResult,
     PrepareContextRequest,
     PreparedContext,
     ProposeExperienceRequest,
     ProposeSkillRequest,
     RejectArtifactCandidateRequest,
-    RememberMemoryRequest,
     ResolveExternalSkillRequest,
-    RetireMemoryEntryRequest,
     ReviewedCandidate,
     ReviewedCandidatePage,
     ReviseArtifactCandidateRequest,
-    ReviseMemoryEntryRequest,
     RuntimeCapabilities,
-    SearchMemoryRequest,
     SearchTopicMemoryRequest,
     SkillCandidate,
     SourceReceipt,
@@ -302,7 +285,7 @@ from powercontext.builtin.work import (
     project_work_continuity,
 )
 from powercontext.context import PowerContext
-from powercontext.errors import ArtifactNotFoundError, RevisionConflictError, SourceConflictError
+from powercontext.errors import ArtifactNotFoundError, SourceConflictError
 from powercontext.sources import ConnectorBinding, SourceDefinitionManifest, SourceRef
 
 if TYPE_CHECKING:
@@ -615,10 +598,6 @@ class ScopedRecordApplication:
             return await self._runtime._records().list_artifact_revisions(
                 self.scope_id, family, artifact_id, limit=limit, cursor=cursor
             )
-
-    async def current_memory_entry(self, artifact_id: str, entry_id: str, /) -> MemoryEntryVersion:
-        async with self._runtime._scope_operation(self.scope_id):
-            return await self._runtime._records().current_memory_entry(self.scope_id, artifact_id, entry_id)
 
     async def logical_artifacts(self) -> tuple[LogicalArtifactRecord, ...]:
         async with self._runtime._scope_operation(self.scope_id):
@@ -2536,6 +2515,26 @@ class ScopedAtomicMemoryApplication:
                     })
                 return result
 
+    async def create(self, contents: Sequence[AtomicMemoryContent], /, *, context=None) -> AtomicMemoryMutationResult:
+        """Create explicit Atomic Memories in one all-or-nothing batch."""
+        values = tuple(content.model_dump(mode="json", by_alias=True, exclude_none=True) for content in contents)
+        async with self._runtime._scoped_operation(self.scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_INDEXING):
+            created = await self._runtime._records().create_atomic_memories(
+                self.scope_id, values, execution_context=context
+            )
+            records = tuple([await self._scoped.get(item.artifact_id, context=context) for item in created])
+        return AtomicMemoryMutationResult(
+            changed=True, records=records, primary_artifact_id=records[0].artifact.artifact_id
+        )
+
+    async def flush(self, /, *, limit: int | None = None, context=None) -> MemoryFlushResult:
+        """Process the next scoped Source window into Atomic Memory."""
+        return await self._runtime._flush_sources(self.scope_id, limit=limit, context=context)
+
+    async def cursor(self) -> SourceCursor:
+        async with self._runtime._context(self.scope_id) as runtime_context:
+            return await runtime_context.triggers.cursor()
+
     async def merge(self, inputs, content, **kwargs):
         async with self._runtime._scoped_operation(self.scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_INDEXING):
             return await self._scoped.merge(inputs, content, **kwargs)
@@ -2562,151 +2561,6 @@ class AtomicMemoryRuntimeApplication:
 
     def for_scope(self, scope_id: str, /) -> ScopedAtomicMemoryApplication:
         return ScopedAtomicMemoryApplication(self._runtime, self._application, scope_id)
-
-
-class ScopedMemoryApplication:
-    """Explicit compatibility adapter for the retired collection Memory API."""
-
-    def __init__(self, runtime: BuiltinRuntime, scope_id: str) -> None:
-        self._runtime = runtime
-        self.scope_id = validate_scope_id(scope_id)
-
-    def _atomic(self):
-        application = self._runtime.atomic_memory
-        if application is None:
-            raise BaseOperationNotSupportedError("artifact_family", "atomic-memory", "runtime application")
-        return application.for_scope(self.scope_id)
-
-    async def remember(self, request: RememberMemoryRequest, /, *, atomic_context=None) -> AtomicMemoryMutationResult:
-        if request.expected_revision is not None:
-            raise BaseOperationNotSupportedError("artifact_family", "memory", "collection revision precondition")
-        if any(entry.entry is not None for entry in request.entries):
-            raise BaseOperationNotSupportedError("artifact_family", "memory", "collection entry mutation")
-        if any(entry.sources or entry.artifacts for entry in request.entries):
-            raise BaseOperationNotSupportedError("artifact_family", "memory", "legacy object evidence")
-        contents = tuple(
-            AtomicMemoryContent(kind=entry.kind, text=entry.text).model_dump(
-                mode="json",
-                by_alias=True,
-                exclude_none=True,
-            )
-            for entry in request.entries
-        )
-        async with self._runtime._scoped_operation(self.scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_INDEXING):
-            created = await self._runtime._records().create_atomic_memories(
-                self.scope_id,
-                contents,
-                execution_context=atomic_context,
-            )
-            records = tuple([await self._atomic().get(item.artifact_id, context=atomic_context) for item in created])
-        return AtomicMemoryMutationResult(
-            changed=True, records=records, primary_artifact_id=records[0].artifact.artifact_id
-        )
-
-    async def search(self, request: SearchMemoryRequest, /, *, atomic_context=None) -> AtomicMemorySearchPage:
-        with self._runtime._stage(
-            _MEMORY_SEARCH_STAGE,
-            attributes={_MEMORY_SEARCH_REQUESTED_MODE: request.mode, _MEMORY_SEARCH_LIMIT: request.limit},
-        ) as span:
-            result = await self._atomic().search(
-                request.query,
-                mode="text" if request.mode == "fts" else request.mode,
-                limit=request.limit,
-                tag_filter=request.tag_filter,
-                context=atomic_context,
-                _trace=False,
-            )
-            if span is not None:
-                span.set_attributes({
-                    _MEMORY_SEARCH_MODE: "fts" if result.mode == "text" else result.mode,
-                    _MEMORY_SEARCH_RESULT_COUNT: len(result.hits),
-                    "powercontext.memory.search.embedding_calls": result.embedding_calls,
-                    "powercontext.memory.search.generation_calls": result.generation_calls,
-                })
-            return result
-
-    async def capacity(self) -> MemoryCapacity:
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "collection capacity")
-
-    async def compact(
-        self, *, dry_run=False, limit=None, reason=None, expected_revision=None
-    ) -> MemoryCompactionResult:
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "collection compaction")
-
-    async def list(
-        self, *, include_inactive=False, tag_filter=None, limit=50, cursor=None, atomic_context=None
-    ) -> AtomicMemoryPage:
-        return await self._atomic().list(
-            states=("active", "forgotten", "merged", "retired") if include_inactive else ("active",),
-            tag_filter=tag_filter,
-            limit=limit,
-            cursor=cursor,
-            context=atomic_context,
-        )
-
-    async def get(
-        self, request: GetMemoryEntryRequest, /, *, atomic_context=None
-    ) -> MemoryEntryRecord | AtomicMemoryRecord:
-        if request.target is not None:
-            async with self._runtime._scope_operation(self.scope_id):
-                application = self._runtime.atomic_memory
-                if application is None:
-                    raise BaseOperationNotSupportedError("artifact_family", "atomic-memory", "legacy target lookup")
-                async with application._application.database.transaction() as connection:
-                    artifact_id = await resolve_legacy_memory_target(
-                        connection,
-                        application._application.artifacts,
-                        self.scope_id,
-                        request.target.artifact_id,
-                        request.target.entry_id,
-                    )
-                return await self._atomic().get(artifact_id, context=atomic_context)
-        citation = request.citation
-        if citation is None:
-            raise InvalidRuntimeRequestError("memory-address")
-        async with self._runtime._context(self.scope_id) as context:
-            service = context.artifacts.memory
-            memory = await service.revision(citation.memory_ref)
-            entry = await _cited_entry(service, memory, citation)
-            # Validate exact membership first; authority belongs to the mapped identity.
-            await self._atomic().get(
-                legacy_entry_artifact_id(self.scope_id, citation.memory_ref.artifact_id, citation.entry_id),
-                context=atomic_context,
-            )
-            return _entry_record(memory, entry)
-
-    async def revise(self, request: ReviseMemoryEntryRequest, /) -> MemoryMutationResult:
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "citation revise")
-
-    async def retire(self, request: RetireMemoryEntryRequest, /) -> MemoryMutationResult:
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "citation retire")
-
-    async def changes(self, *, since_revision=None) -> MemoryChangesPage:
-        raise BaseOperationNotSupportedError("artifact_family", "memory", "continuous collection changes")
-
-    async def flush(self, /, *, limit=None, atomic_context=None) -> MemoryFlushResult:
-        async with self._runtime._context(
-            self.scope_id,
-            generation_purpose=ModelUsagePurpose.MEMORY_EXTRACTION,
-            embedding_purpose=ModelUsagePurpose.MEMORY_INDEXING,
-        ) as context:
-            window_limit = self._runtime.source_window_limit if limit is None else limit
-            async with self._runtime._locked(self.scope_id):
-                return await context.triggers.flush(limit=window_limit, atomic_context=atomic_context)
-
-    async def cursor(self) -> SourceCursor:
-        async with self._runtime._context(self.scope_id) as context:
-            return await context.triggers.cursor()
-
-
-class MemoryApplication:
-    """Select the application service for one Memory family scope."""
-
-    def __init__(self, runtime: BuiltinRuntime) -> None:
-        self._runtime = runtime
-
-    def for_scope(self, scope_id: str, /) -> ScopedMemoryApplication:
-        return ScopedMemoryApplication(self._runtime, scope_id)
 
 
 class ScopedTopicMemoryApplication:
@@ -2831,7 +2685,7 @@ class ScheduledSourceProcessor:
                     try:
                         runner = self._runtime._scheduled_source_runner
                         result = (
-                            await self._runtime.memory.for_scope(scope_id).flush()
+                            await self._runtime._flush_sources(scope_id)
                             if runner is None
                             else await runner(scope_id, self._runtime)
                         )
@@ -3123,7 +2977,6 @@ class BuiltinRuntime:
         self.external_skills = ExternalSkillApplication(self)
         self.handoff = HandoffApplication(self)
         self.work = WorkApplication(self)
-        self.memory = MemoryApplication(self)
         self.topic_memory = TopicMemoryApplication(self)
         self.records = RecordApplication(self)
         self.prompts = PromptApplication(self)
@@ -3397,6 +3250,16 @@ class BuiltinRuntime:
     def _lock(self, scope_id: str) -> asyncio.Lock:
         return self._scope_cache.lock(validate_scope_id(scope_id))
 
+    async def _flush_sources(self, scope_id: str, *, limit: int | None = None, context=None) -> MemoryFlushResult:
+        async with self._context(
+            scope_id,
+            generation_purpose=ModelUsagePurpose.MEMORY_EXTRACTION,
+            embedding_purpose=ModelUsagePurpose.MEMORY_INDEXING,
+        ) as runtime_context:
+            window_limit = self.source_window_limit if limit is None else limit
+            async with self._locked(scope_id):
+                return await runtime_context.triggers.flush(limit=window_limit, atomic_context=context)
+
     @asynccontextmanager
     async def _locked(self, scope_id: str) -> AsyncIterator[None]:
         """Serialize writes for one scope and trace only the wait, not the critical section."""
@@ -3560,64 +3423,3 @@ def _raise_if_held(plan: MemoryWritePlan) -> None:
         return
     code = "unspecified" if decision.code is None else decision.code.value
     raise MemoryWriteRejectedError(code, decision.reason)
-
-
-def _validate_expected_revision(memory: Memory | None, expected_revision: int | None) -> None:
-    if expected_revision is None:
-        return
-    if memory is None:
-        raise ArtifactNotFoundError(expected_revision)
-    if memory.revision != expected_revision:
-        raise RevisionConflictError(expected_revision, memory)
-
-
-def _validate_memory_identity(memory_artifact_id: str, memory: Memory) -> None:
-    if memory.artifact_id != memory_artifact_id:
-        raise ArtifactNotFoundError(memory.as_ref())
-
-
-async def _current_citation(
-    service: MemoryService,
-    memory_artifact_id: str,
-    citation: MemoryCitation,
-) -> tuple[Memory, MemoryEntryVersion]:
-    current = await service.head(memory_artifact_id)
-    if citation.memory_ref.artifact_id != current.artifact_id:
-        raise ArtifactNotFoundError(citation.memory_ref)
-    if citation.memory_ref.revision != current.revision:
-        raise RevisionConflictError(citation.memory_ref, current)
-    return current, await _cited_entry(service, current, citation)
-
-
-async def _cited_entry(
-    service: MemoryService,
-    memory: Memory,
-    citation: MemoryCitation,
-) -> MemoryEntryVersion:
-    if not any(
-        item.entry_id == citation.entry_id and item.entry_version_id == citation.entry_version_id
-        for item in memory.content.manifest.entries
-    ):
-        raise MemoryEntryNotFoundError(citation.entry_id)
-    return await service.validate_citation(citation)
-
-
-def _entry_record(memory: Memory, entry: MemoryEntryVersion) -> MemoryEntryRecord:
-    manifest_entry = next(
-        item
-        for item in memory.content.manifest.entries
-        if item.entry_id == entry.entry_id and item.entry_version_id == entry.entry_version_id
-    )
-    return MemoryEntryRecord(
-        memory_ref=memory.as_ref(),
-        state=manifest_entry.state,
-        entry=entry,
-    )
-
-
-async def _last_changed_entry(service: MemoryService, memory: Memory) -> MemoryEntryRecord | None:
-    if not memory.content.changes:
-        return None
-    entry_id = memory.content.changes[-1].entry_id
-    entry = next((item for item in await service.entries(memory) if item.entry_id == entry_id), None)
-    return None if entry is None else _entry_record(memory, entry)

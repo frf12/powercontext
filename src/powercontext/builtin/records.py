@@ -26,7 +26,6 @@ from powercontext.artifacts import ArtifactRef, MemoryCitation
 from powercontext.sources import SourceRef
 
 if TYPE_CHECKING:
-    from powercontext.builtin.artifacts.memory import MemoryEntryVersion
     from powercontext.builtin.persistence.cursor_codec import SignedCursorCodec
     from powercontext.builtin.tags import ArtifactTagSet, TagFilter, TagQuery, TagQueryPage, TagTarget
 
@@ -316,8 +315,6 @@ class RecordService(Protocol):
         limit: int,
         cursor: str | None,
     ) -> ArtifactRevisionPage: ...
-
-    async def current_memory_entry(self, scope_id: str, artifact_id: str, entry_id: str, /) -> MemoryEntryVersion: ...
 
     async def logical_artifacts(self, scope_id: str, /) -> tuple[LogicalArtifactRecord, ...]: ...
 

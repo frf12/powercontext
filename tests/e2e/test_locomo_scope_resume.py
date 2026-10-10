@@ -113,7 +113,8 @@ def test_locomo_ingestion_registers_and_resumes_its_scope_after_restart(
         ) as runtime:
             assert runtime.scopes is not None
             descriptor = await runtime.scopes.get(registered_scope)
-            page = await runtime.memory.for_scope(descriptor.scope_id).list()
+            assert runtime.atomic_memory is not None
+            page = await runtime.atomic_memory.for_scope(descriptor.scope_id).list()
             assert len(page.items) == 1
             assert page.items[0].artifact.lineage.sources[0].source_id == "D1"
 

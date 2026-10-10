@@ -43,9 +43,8 @@ from powercontext.builtin.persistence.tables import (
     MEMORY_ENTRY_HEADS_TABLE,
     MEMORY_ENTRY_VERSIONS_TABLE,
 )
-from powercontext.builtin.records import ArtifactWrite, BaseOperationNotSupportedError
-from powercontext.builtin.runtime import BuiltinConfig, RuntimeCapabilities, open_builtin_contexts
-from powercontext.builtin.runtime.application import BuiltinRuntime
+from powercontext.builtin.records import ArtifactWrite
+from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
 from powercontext.builtin.runtime.config import RuntimeConfig
 from powercontext.builtin.tags import ArtifactTagTarget, TagFilter
 
@@ -355,7 +354,7 @@ def test_default_history_window_and_explicit_override(database_config):
     asyncio.run(scenario())
 
 
-def test_atomic_memory_ignores_legacy_capacity_and_rejects_collection_compaction(database_config):
+def test_atomic_memory_ignores_legacy_capacity_limits(database_config):
     async def scenario():
         config = BuiltinConfig(
             database=database_config,
@@ -384,19 +383,7 @@ def test_atomic_memory_ignores_legacy_capacity_and_rejects_collection_compaction
                 await memory.forget(
                     item.artifact_id, expected_revision=1, expected_state_version=current.state.state_version
                 )
-            runtime = BuiltinRuntime(
-                provider=contexts,
-                capabilities=RuntimeCapabilities(memory_extraction=False, memory_search_modes=("fts",)),
-                atomic_memory_application=contexts.atomic_memory,
-            )
-            legacy = runtime.memory.for_scope(scope_id)
             before = await atomic_row_counts(contexts, scope_id)
-            for _ in range(2):
-                with pytest.raises(BaseOperationNotSupportedError, match="collection capacity"):
-                    await legacy.capacity()
-                with pytest.raises(BaseOperationNotSupportedError, match="collection compaction"):
-                    await legacy.compact()
-                assert await atomic_row_counts(contexts, scope_id) == before
             fourth = await contexts.records.create_artifact(
                 scope_id, "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": fact(4).text})
             )

@@ -18,12 +18,11 @@ import asyncio
 import json
 import sqlite3
 from contextlib import AsyncExitStack
-from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -34,6 +33,7 @@ from pydantic import SecretStr
 from sqlalchemy import insert, text
 from starlette.middleware import Middleware
 
+from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
     AtomicMemoryMigrationError,
     apply_atomic_memory_migration,
@@ -272,53 +272,14 @@ def test_legacy_grant_replay_and_conflicts_survive_migration(tmp_path: Path, rev
         row for row in receipts if row[2] != "binding.create"
     ]
     with _client(tmp_path) as client:
-        for _ in range(2):
-            response = client.post("/v1/access/bindings/create", json=payload)
-            assert response.status_code == 201, response.text
-            binding = response.json()
-            assert binding["binding_id"] == original.binding_id
-            assert binding["granted_by"]["id"] == ACTOR.id
-            assert binding["state"] == ("revoked" if revoked else "active")
-            assert binding["version"] == (2 if revoked else 1)
-            if revoked:
-                assert binding["revoked_by"]["id"] == ACTOR.id
-                replay_revoke = client.post(
-                    "/v1/access/bindings/revoke",
-                    json={
-                        "binding_id": original.binding_id,
-                        "expected_version": 1,
-                        "idempotency_key": "revoke-legacy",
-                    },
-                )
-                assert replay_revoke.status_code == 200, replay_revoke.text
-                assert replay_revoke.json()["binding_id"] == original.binding_id
-        for field, value in (
-            ("subject", {"type": "user", "id": "different-reader"}),
-            ("reason", "A different grant."),
-            ("expires_at", "2031-01-01T00:00:00+00:00"),
-            (
-                "resource",
-                deepcopy(payload["resource"])
-                | {
-                    "selector": {"type": "memory_entry", "entry_id": "legacy-entry-2"},
-                },
-            ),
-        ):
-            response = client.post("/v1/access/bindings/create", json=payload | {field: value})
-            assert response.status_code == 409, response.text
-            assert response.json()["error"]["code"] == "idempotency-key"
-        atomic_resource = binding["resource"]
-        assert (
-            client.post(
-                "/v1/access/bindings/create",
-                json=payload
-                | {
-                    "resource": atomic_resource,
-                    "idempotency_key": "post-migration-grant",
-                },
-            ).status_code
-            == 201
+        legacy = client.post("/v1/access/bindings/create", json=payload)
+        assert legacy.status_code == 422, legacy.text
+        assert legacy.json()["error"]["code"] == "legacy_memory_operation_unsupported"
+        response = client.post(
+            "/v1/access/bindings/create",
+            json=_atomic_payload(payload) | {"idempotency_key": "post-migration-grant"},
         )
+        assert response.status_code == 201, response.text
 
     async def verify_role_and_current() -> None:
         async with SQLiteProfile.open(_config(tmp_path), tables=()) as profile:
@@ -374,10 +335,8 @@ def test_apply_repairs_receipts_left_by_completed_migration(tmp_path: Path) -> N
     assert _snapshot(tmp_path, "pc_access_audit") == audit
     assert [row for row in _snapshot(tmp_path, "pc_access_idempotency") if row[2] != "binding.create"] == noncreate
     with _client(tmp_path) as client:
-        response = client.post("/v1/access/bindings/create", json=payload)
-        assert response.status_code == 201, response.text
-        assert response.json()["binding_id"] == original.binding_id
-        assert response.json()["state"] == "revoked"
+        legacy = client.post("/v1/access/bindings/create", json=payload)
+        assert legacy.status_code == 422, legacy.text
         replacement = client.post(
             "/v1/access/bindings/replace",
             json={
@@ -480,7 +439,7 @@ def test_server_startup_keeps_grant_projection_current(tmp_path: Path, entrypoin
 
             response = await client.post(
                 "/v1/access/bindings/create",
-                json=payload
+                json=_atomic_payload(payload)
                 | {
                     "subject": {"type": "user", "id": "startup-reader"},
                     "idempotency_key": "startup-grant",
@@ -513,3 +472,17 @@ def test_server_startup_keeps_grant_projection_current(tmp_path: Path, entrypoin
             await verify()
 
     asyncio.run(scenario())
+
+
+def _atomic_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    resource = payload["resource"]
+    artifact_id = legacy_entry_artifact_id(
+        resource["scope_id"], resource["identity"]["artifact_id"], resource["selector"]["entry_id"]
+    )
+    return payload | {
+        "resource": {
+            "type": "artifact",
+            "scope_id": resource["scope_id"],
+            "identity": {"family": "atomic-memory", "artifact_id": artifact_id},
+        }
+    }

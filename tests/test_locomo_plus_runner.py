@@ -651,7 +651,8 @@ def test_memory_uses_configured_database_or_result_directory_fallback(
         ) as runtime:
             assert runtime.scopes is not None
             scope = await runtime.scopes.get(_rows(output_directory)[-1]["scope_id"])
-            memories = await runtime.memory.for_scope(scope.scope_id).list()
+            assert runtime.atomic_memory is not None
+            memories = await runtime.atomic_memory.for_scope(scope.scope_id).list()
             assert len(memories.items) == 3
 
     asyncio.run(read_persisted_scope())
@@ -711,7 +712,8 @@ def test_separate_results_isolate_equal_run_ids_in_a_shared_database(
             assert runtime.scopes is not None
             for scope_id in scope_ids:
                 descriptor = await runtime.scopes.get(scope_id)
-                page = await runtime.memory.for_scope(descriptor.scope_id).list()
+                assert runtime.atomic_memory is not None
+                page = await runtime.atomic_memory.for_scope(descriptor.scope_id).list()
                 assert len(page.items) == 3
 
     asyncio.run(read_both_scopes())
