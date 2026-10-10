@@ -89,7 +89,13 @@ async def stream_llm_reply(
             data = line.removeprefix("data: ").strip()
             if data == "[DONE]":
                 break
-            delta = json.loads(data)["choices"][0]["delta"].get("content")
+            chunk = json.loads(data)
+            choices = chunk.get("choices") or []
+            if not choices:
+                # Some OpenAI-compatible providers (e.g. DashScope) end the
+                # stream with a usage-only chunk carrying an empty choices list.
+                continue
+            delta = choices[0].get("delta", {}).get("content")
             if delta:
                 yield delta
 

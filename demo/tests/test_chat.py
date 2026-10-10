@@ -47,6 +47,8 @@ def make_llm_transport(captured: list[dict[str, Any]]) -> httpx.MockTransport:
             chunks.append(
                 "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}, ensure_ascii=False) + "\n\n"
             )
+        # DashScope-style usage-only trailing chunk with an empty choices list.
+        chunks.append("data: " + json.dumps({"choices": [], "usage": {"total_tokens": 42}}) + "\n\n")
         chunks.append("data: [DONE]\n\n")
         return httpx.Response(200, content="".join(chunks).encode("utf-8"))
 
