@@ -1,0 +1,5 @@
+# Demo-only lint config; deleted together with the demo/ directory.
+extend = "../pyproject.toml"
+
+[lint.per-file-ignores]
+"*.py" = ["S101", "S105", "RUF001", "RUF002", "TRY003"]
