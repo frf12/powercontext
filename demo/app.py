@@ -25,6 +25,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from powercontext.client import PowerContextClient
+from powercontext.http import CreateScopeRequest
 from pydantic import BaseModel, Field
 
 from .config import DemoConfig
@@ -39,6 +40,19 @@ def scope_for_nickname(nickname: str) -> str:
     if not cleaned:
         raise ValueError("nickname is empty after normalization")
     return f"visitor-{cleaned}"
+
+
+async def ensure_scope(client: PowerContextClient, nickname: str) -> str:
+    """Get-or-create the visitor's server-side scope via an idempotency key."""
+    slug = scope_for_nickname(nickname)
+    descriptor = await client.create_scope(
+        CreateScopeRequest(
+            title=f"记忆体验访客 {nickname}",
+            summary=f"线下活动 Demo 访客 {nickname} 的独立记忆空间",
+            idempotency_key=f"demo:{slug}",
+        )
+    )
+    return descriptor.scope_id
 
 
 class EnterRequest(BaseModel):
@@ -61,9 +75,11 @@ def create_demo_app(cfg: DemoConfig) -> FastAPI:
         if body.passphrase != app.state.cfg.passphrase:
             raise HTTPException(status_code=401, detail="口令不对")
         try:
-            scope = scope_for_nickname(body.nickname)
+            scope_for_nickname(body.nickname)
         except ValueError:
             raise HTTPException(status_code=422, detail="昵称无效：请使用包含中文或字母的昵称") from None
+        # scope_id 由 Server 分配, 幂等键保证同一昵称跨重启拿到同一个 scope
+        scope = await ensure_scope(app.state.client, body.nickname)
         token = uuid.uuid4().hex
         app.state.tokens.add(token)
         response = JSONResponse({"ok": True, "nickname": body.nickname, "scope_id": scope})
@@ -74,20 +90,20 @@ def create_demo_app(cfg: DemoConfig) -> FastAPI:
 
     @app.get("/api/session")
     async def session(request: Request) -> dict[str, str]:
-        scope = require_session(request)
+        scope = await require_session(request)
         nickname = urllib.parse.unquote(request.cookies.get("demo_nick", ""))
         return {"nickname": nickname, "scope_id": scope}
 
     return app
 
 
-def require_session(request: Request) -> str:
+async def require_session(request: Request) -> str:
     token = request.cookies.get("demo_token", "")
     if not token or token not in request.app.state.tokens:
         raise HTTPException(status_code=401, detail="请先输入口令进入")
     nickname = urllib.parse.unquote(request.cookies.get("demo_nick", ""))
     try:
-        return scope_for_nickname(nickname)
+        return await ensure_scope(request.app.state.client, nickname)
     except ValueError:
         raise HTTPException(status_code=401, detail="会话无效，请重新进入") from None
 

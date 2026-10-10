@@ -70,10 +70,12 @@ def test_enter_then_session_and_scope() -> None:
     async def body(client: httpx.AsyncClient, app: Any) -> None:
         resp = await _enter(client, "open-sesame", "张三")
         assert resp.status_code == 200
-        assert resp.json()["scope_id"] == "visitor-张三"
+        # scope_id 由 Server 分配, 这里只要求非空且与会话接口一致
+        scope = resp.json()["scope_id"]
+        assert scope
         session = await client.get("/api/session")
         assert session.status_code == 200
-        assert session.json() == {"nickname": "张三", "scope_id": "visitor-张三"}
+        assert session.json() == {"nickname": "张三", "scope_id": scope}
 
     run_with_app(body)
 
@@ -82,9 +84,20 @@ def test_nickname_roundtrip_with_tricky_characters() -> None:
     async def body(client: httpx.AsyncClient, app: Any) -> None:
         resp = await _enter(client, "open-sesame", "张 三")  # interior space, exercises percent-encoding
         assert resp.status_code == 200
-        assert resp.json()["scope_id"] == "visitor-张-三"
+        scope = resp.json()["scope_id"]
         session = await client.get("/api/session")
-        assert session.json() == {"nickname": "张 三", "scope_id": "visitor-张-三"}
+        assert session.json() == {"nickname": "张 三", "scope_id": scope}
+
+    run_with_app(body)
+
+
+def test_same_nickname_same_scope_different_nickname_different_scope() -> None:
+    async def body(client: httpx.AsyncClient, app: Any) -> None:
+        first = (await _enter(client, "open-sesame", "张三")).json()["scope_id"]
+        again = (await _enter(client, "open-sesame", "张三")).json()["scope_id"]
+        assert first == again  # 幂等键相同, 同一昵称拿到同一个 scope
+        other = (await _enter(client, "open-sesame", "李四")).json()["scope_id"]
+        assert other != first
 
     run_with_app(body)
 
