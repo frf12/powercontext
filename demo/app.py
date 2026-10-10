@@ -21,11 +21,12 @@ import re
 import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.http import (
     ArtifactReference,
@@ -43,6 +44,9 @@ from .config import DemoConfig
 from .server import EmbeddedPowerContext
 
 _NICK_CLEAN = re.compile(r"[^0-9a-zA-Z一-鿿]+")
+
+# 前端单页路径在导入期解析一次: async 路由内直接用 pathlib 会触发 ASYNC240
+_INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 def scope_for_nickname(nickname: str) -> str:
@@ -163,6 +167,11 @@ def create_demo_app(cfg: DemoConfig) -> FastAPI:
 
     app = FastAPI(title="PowerContext Memory Demo", lifespan=lifespan)
     app.state.cfg = cfg
+
+    # 前端单页: 单文件无构建, 与 API 同源部署, 随 demo/ 目录一起分发
+    @app.get("/")
+    async def index() -> FileResponse:
+        return FileResponse(_INDEX_HTML)
 
     @app.post("/api/enter")
     async def enter(body: EnterRequest, request: Request) -> JSONResponse:
