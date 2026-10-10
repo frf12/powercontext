@@ -344,11 +344,8 @@ def test_migrated_entry_projects_only_its_exact_sources(migrated, entry_id, revi
             assert own in _projected_artifacts(resolved)
             assert unrelated not in _projected_artifacts(resolved)
             stored = await contexts.repositories.artifacts.get(connection, SCOPE, selected)
-            assert own in stored.lineage.artifacts
-            assert _collection(revision) in stored.lineage.artifacts
-            if revision == 2:
-                assert _atomic(entry_id, 1) in stored.lineage.artifacts
-                assert _atomic(entry_id, 1) in _projected_artifacts(resolved)
+            assert stored.lineage.artifacts == (own,)
+            assert all(source in stored.lineage.sources for source in expected)
 
     asyncio.run(scenario())
 
@@ -440,6 +437,40 @@ def test_restoration_of_migrated_history_does_not_add_unrelated_sources(migrated
             assert repeated.ready, repeated.errors
             async with contexts.database.transaction() as connection:
                 assert await _imported_snapshot(connection) == imported
+
+    asyncio.run(scenario())
+
+
+def test_apply_replaces_the_collection_anchor_left_by_an_earlier_import(migrated) -> None:
+    async def scenario() -> None:
+        async with open_builtin_contexts(BuiltinConfig(database=migrated[0])) as contexts:
+            target = _atomic("alpha", 2)
+            identity = {"scope_id": SCOPE, "family": "atomic-memory", "artifact_id": target.artifact_id, "revision": 2}
+            async with contexts.database.transaction() as connection:
+                direct = await _imported_snapshot(connection)
+                for table in (ARTIFACT_LINEAGE_SOURCES_TABLE, ARTIFACT_LINEAGE_ARTIFACTS_TABLE):
+                    await connection.execute(
+                        table.delete().where(*(table.c[key] == value for key, value in identity.items()))
+                    )
+                for ordinal, ref in enumerate((_collection(2), EA, _atomic("alpha", 1))):
+                    await connection.execute(
+                        insert(ARTIFACT_LINEAGE_ARTIFACTS_TABLE).values(
+                            **identity,
+                            ordinal=ordinal,
+                            upstream_family=ref.family,
+                            upstream_artifact_id=ref.artifact_id,
+                            upstream_revision=ref.revision,
+                        )
+                    )
+                report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
+                assert not report.ready
+                assert any("collection anchor" in error for error in report.errors), report.errors
+            repaired = await apply_atomic_memory_migration(
+                contexts.database, contexts.atomic_memory.index, maintenance_confirmed=True
+            )
+            assert repaired.ready, repaired.errors
+            async with contexts.database.transaction() as connection:
+                assert await _imported_snapshot(connection) == direct
 
     asyncio.run(scenario())
 

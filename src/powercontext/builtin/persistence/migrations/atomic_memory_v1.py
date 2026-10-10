@@ -186,6 +186,16 @@ _STATES = Table(
 Index("ix_pc_atomic_memory_states_management", _STATES.c.scope_id, _STATES.c.state)
 
 _ARTIFACT_COLUMNS = ("scope_id", "family", "artifact_id", "revision", "content", "memory_citations")
+_LINEAGE_ARTIFACT_COLUMNS = (
+    "scope_id",
+    "family",
+    "artifact_id",
+    "revision",
+    "ordinal",
+    "upstream_family",
+    "upstream_artifact_id",
+    "upstream_revision",
+)
 _HEAD_COLUMNS = (
     "scope_id",
     "family",
@@ -936,28 +946,111 @@ async def _insert(connection: AsyncConnection, table: str, columns: tuple[str, .
     )
 
 
-def _imported_refs(entry: _Entry, row: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
-    # The creating collection is an immutable provenance anchor, not every
-    # entry's generation evidence. Runtime readers resolve this imported
-    # identity against its exact retained entry version before following Sources.
+def _unique(values) -> tuple[dict[str, Any], ...]:
+    result: list[dict[str, Any]] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return tuple(result)
+
+
+def _imported_sources(row: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    return _unique(
+        {"source_type": value["source_type"], "source_id": value["source_id"]} for value in _decode(row["source_refs"])
+    )
+
+
+def _imported_refs(row: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    # A legacy entry may cite a whole Memory collection; that relationship has
+    # no single Atomic target and is archived instead of becoming evidence.
+    return _unique(
+        {"family": value["family"], "artifact_id": value["artifact_id"], "revision": value["revision"]}
+        for value in _decode(row["artifact_refs"])
+        if value["family"] != "memory"
+    )
+
+
+def _anchored_refs(entry: _Entry, row: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Lineage written by the earlier import, which anchored each version to its collection write."""
     values = [
         {"family": "memory", "artifact_id": entry.memory_id, "revision": row["created_in_revision"]},
         *_decode(row["artifact_refs"]),
     ]
     if row["version"] > 1:
-        # Legacy entry evidence accumulates, while a collection revision only
-        # records the evidence supplied to that particular collection write.
-        # Following the imported predecessor retains inherited Sources without
-        # copying a lineage_only Source onto a different exact target.
         values.append({"family": _FAMILY, "artifact_id": entry.artifact_id, "revision": row["version"] - 1})
-    refs: list[dict[str, Any]] = []
-    for value in values:
-        if value not in refs:
-            refs.append(value)
-    return tuple(refs)
+    return _unique(values)
 
 
-async def _history_issues(connection: AsyncConnection, entry: _Entry) -> list[str]:
+async def _insert_lineage(connection: AsyncConnection, entry: _Entry, row: Mapping[str, Any]) -> None:
+    identity = {
+        "scope_id": entry.scope_id,
+        "family": _FAMILY,
+        "artifact_id": entry.artifact_id,
+        "revision": row["version"],
+    }
+    for ordinal, source in enumerate(_imported_sources(row)):
+        await _insert(
+            connection,
+            "pc_artifact_lineage_sources",
+            ("scope_id", "family", "artifact_id", "revision", "ordinal", "source_type", "source_id"),
+            {**identity, "ordinal": ordinal, **source},
+        )
+    for ordinal, ref in enumerate(_imported_refs(row)):
+        await _insert(
+            connection,
+            "pc_artifact_lineage_artifacts",
+            _LINEAGE_ARTIFACT_COLUMNS,
+            {
+                **identity,
+                "ordinal": ordinal,
+                "upstream_family": ref["family"],
+                "upstream_artifact_id": ref["artifact_id"],
+                "upstream_revision": ref["revision"],
+            },
+        )
+
+
+async def _imported_lineage(
+    connection: AsyncConnection, entry: _Entry, revision: int
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    where = "WHERE scope_id = :scope AND family = 'atomic-memory' AND artifact_id = :id AND revision = :revision"
+    sources = await _rows(
+        connection,
+        "pc_artifact_lineage_sources",
+        ("ordinal", "source_type", "source_id"),
+        f"{where} ORDER BY ordinal",
+        scope=entry.scope_id,
+        id=entry.artifact_id,
+        revision=revision,
+    )
+    refs = await _rows(
+        connection,
+        "pc_artifact_lineage_artifacts",
+        ("ordinal", "upstream_family", "upstream_artifact_id", "upstream_revision"),
+        f"{where} ORDER BY ordinal",
+        scope=entry.scope_id,
+        id=entry.artifact_id,
+        revision=revision,
+    )
+    if [item["ordinal"] for item in sources] != list(range(len(sources))) or [item["ordinal"] for item in refs] != list(
+        range(len(refs))
+    ):
+        raise AtomicMemoryMigrationError((f"{entry.entry_id}@{revision}: imported lineage ordinals are not dense",))
+    return (
+        tuple({"source_type": item["source_type"], "source_id": item["source_id"]} for item in sources),
+        tuple(
+            {
+                "family": item["upstream_family"],
+                "artifact_id": item["upstream_artifact_id"],
+                "revision": item["upstream_revision"],
+            }
+            for item in refs
+        ),
+    )
+
+
+async def _history_issues(connection: AsyncConnection, entry: _Entry, *, repair: bool = False) -> list[str]:
+    """Check imported versions; with ``repair``, rewrite the earlier anchored lineage to direct evidence."""
     errors: list[str] = []
     for row in entry.versions:
         imported = await _rows(
@@ -977,34 +1070,22 @@ async def _history_issues(connection: AsyncConnection, entry: _Entry) -> list[st
         ):
             errors.append(f"{entry.entry_id}@{row['version']}: imported body differs or is missing")
             continue
-        refs = await _rows(
-            connection,
-            "pc_artifact_lineage_artifacts",
-            ("ordinal", "upstream_family", "upstream_artifact_id", "upstream_revision"),
-            "WHERE scope_id = :scope AND family = 'atomic-memory' AND artifact_id = :id AND revision = :revision ORDER BY ordinal",
-            scope=entry.scope_id,
-            id=entry.artifact_id,
-            revision=row["version"],
-        )
-        actual = tuple(
-            {
-                "family": item["upstream_family"],
-                "artifact_id": item["upstream_artifact_id"],
-                "revision": item["upstream_revision"],
-            }
-            for item in refs
-        )
-        if actual != _imported_refs(entry, row) or [item["ordinal"] for item in refs] != list(range(len(refs))):
+        sources, refs = await _imported_lineage(connection, entry, row["version"])
+        if sources == _imported_sources(row) and refs == _imported_refs(row):
+            continue
+        if sources or refs != _anchored_refs(entry, row):
             errors.append(f"{entry.entry_id}@{row['version']}: imported exact evidence differs")
-        direct_sources = await connection.scalar(
-            text(
-                "SELECT COUNT(*) FROM pc_artifact_lineage_sources WHERE scope_id = :scope AND family = 'atomic-memory' "
-                "AND artifact_id = :id AND revision = :revision"
-            ),
-            {"scope": entry.scope_id, "id": entry.artifact_id, "revision": row["version"]},
-        )
-        if direct_sources:
-            errors.append(f"{entry.entry_id}@{row['version']}: import unexpectedly rebound historical Sources")
+        elif repair:
+            await connection.execute(
+                text(
+                    "DELETE FROM pc_artifact_lineage_artifacts WHERE scope_id = :scope AND family = 'atomic-memory' "
+                    "AND artifact_id = :id AND revision = :revision"
+                ),
+                {"scope": entry.scope_id, "id": entry.artifact_id, "revision": row["version"]},
+            )
+            await _insert_lineage(connection, entry, row)
+        else:
+            errors.append(f"{entry.entry_id}@{row['version']}: imported lineage still uses the collection anchor")
     return errors
 
 
@@ -1033,7 +1114,7 @@ async def _head_and_state(
 async def _import_entry(connection: AsyncConnection, entry: _Entry) -> bool:
     head, state = await _head_and_state(connection, entry)
     if head is not None:
-        errors = await _history_issues(connection, entry)
+        errors = await _history_issues(connection, entry, repair=True)
         if errors or state is None or head["revision"] < entry.tail["version"]:
             raise AtomicMemoryMigrationError(tuple(errors) or (f"{entry.entry_id}: existing target is incomplete",))
         # A completed import may since have been revised, merged or retagged.
@@ -1063,31 +1144,7 @@ async def _import_entry(connection: AsyncConnection, entry: _Entry) -> bool:
                 "memory_citations": None,
             },
         )
-        for ordinal, ref in enumerate(_imported_refs(entry, row)):
-            await _insert(
-                connection,
-                "pc_artifact_lineage_artifacts",
-                (
-                    "scope_id",
-                    "family",
-                    "artifact_id",
-                    "revision",
-                    "ordinal",
-                    "upstream_family",
-                    "upstream_artifact_id",
-                    "upstream_revision",
-                ),
-                {
-                    "scope_id": entry.scope_id,
-                    "family": _FAMILY,
-                    "artifact_id": entry.artifact_id,
-                    "revision": row["version"],
-                    "ordinal": ordinal,
-                    "upstream_family": ref["family"],
-                    "upstream_artifact_id": ref["artifact_id"],
-                    "upstream_revision": ref["revision"],
-                },
-            )
+        await _insert_lineage(connection, entry, row)
     summary = "active" if entry.state == "active" else "retired" if entry.state == "retired" else "deprecated"
     await _insert(
         connection,

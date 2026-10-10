@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from powercontext.artifacts import ArtifactLineage, ArtifactRef, MemoryCitation
+from powercontext.artifacts import ArtifactRef, MemoryCitation
 from powercontext.builtin.artifacts.atomic_memory.models import AtomicMemory, AtomicMemoryStateValue
 from powercontext.builtin.artifacts.experience import Experience
 from powercontext.builtin.artifacts.memory import Memory, MemoryEntryVersion
@@ -46,7 +46,6 @@ from powercontext.builtin.evidence.models import (
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.atomic_memory import AtomicMemoryStateRepository
 from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
-from powercontext.builtin.persistence.atomic_memory_legacy_evidence import read_imported_memory_evidence
 from powercontext.builtin.persistence.errors import RepositoryNotFoundError
 from powercontext.builtin.persistence.generation_sources import GenerationSourceAccess
 from powercontext.builtin.persistence.sources import SourceRepository
@@ -401,16 +400,8 @@ class EvidenceResolver:
             )
             if not same_identity_history and not frozen_merge_input:
                 raise EvidenceResolutionError("memory_entry_inactive")
-        imported = await read_imported_memory_evidence(connection, self.artifacts, self.scope_id, artifact)
-        if imported is not None:
-            await self._authorize_reference(connection, imported.anchor)
         digest = content_digest(
-            (
-                artifact.model_dump_json()
-                + current.as_ref().model_dump_json()
-                + state.model_dump_json()
-                + ("" if imported is None else imported.entry.model_dump_json())
-            ).encode()
+            (artifact.model_dump_json() + current.as_ref().model_dump_json() + state.model_dump_json()).encode()
         )
         return (
             EvidenceNode(
@@ -422,7 +413,7 @@ class EvidenceResolver:
                 historical=current.as_ref() != ref or state.state is not AtomicMemoryStateValue.ACTIVE,
             ),
             artifact.content.model_dump_json(),
-            _lineage_children(artifact, lineage=None if imported is None else imported.lineage),
+            _lineage_children(artifact),
         )
 
     async def _read_source(
@@ -554,8 +545,8 @@ class EvidenceResolver:
             state.nodes[key] = old
 
 
-def _lineage_children(artifact, *, lineage: ArtifactLineage | None = None) -> tuple[EvidenceChild, ...]:
-    lineage = artifact.lineage if lineage is None else lineage
+def _lineage_children(artifact) -> tuple[EvidenceChild, ...]:
+    lineage = artifact.lineage
     refs = (*lineage.sources, *lineage.artifacts, *lineage.memory_citations)
     selected = ()
     if isinstance(artifact, AtomicMemory) and artifact.content.creation is not None:
