@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -35,6 +36,7 @@ class DemoConfig:
     llm_api_key: str
     llm_model: str
     data_dir: Path
+    llm_extra_body: dict = field(default_factory=dict)
 
 
 def load_config(env_file: Path | None = None) -> DemoConfig:
@@ -48,6 +50,11 @@ def load_config(env_file: Path | None = None) -> DemoConfig:
         port = int(os.environ.get("DEMO_PORT", "8080"))
     except ValueError:
         raise SystemExit(f"DEMO_PORT 必须是整数，当前值: {os.environ.get('DEMO_PORT')!r}；请修改 demo/.env") from None
+    extra_body_raw = os.environ.get("DEMO_LLM_EXTRA_BODY", "").strip()
+    try:
+        llm_extra_body = json.loads(extra_body_raw) if extra_body_raw else {}
+    except ValueError:
+        raise SystemExit(f"DEMO_LLM_EXTRA_BODY 必须是合法 JSON，当前值: {extra_body_raw!r}；请修改 demo/.env") from None
     return DemoConfig(
         passphrase=os.environ["DEMO_PASSPHRASE"],
         port=port,
@@ -55,4 +62,5 @@ def load_config(env_file: Path | None = None) -> DemoConfig:
         llm_api_key=os.environ["DEMO_LLM_API_KEY"],
         llm_model=os.environ["DEMO_LLM_MODEL"],
         data_dir=Path(os.environ.get("DEMO_DATA_DIR", DEMO_DIR / "data")),
+        llm_extra_body=llm_extra_body,
     )

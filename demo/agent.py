@@ -28,6 +28,7 @@ from powercontext.http import (
     CreateSourceRequest,
     FlushMemoryRequest,
     FlushMemoryResponse,
+    ListMemoryEntriesRequest,
     SearchMemoryHit,
     SearchMemoryRequest,
 )
@@ -75,7 +76,7 @@ async def stream_llm_reply(
         "stream": True,
         "temperature": 0.7,
         "messages": [{"role": "system", "content": system_prompt}, *messages],
-    }
+    } | cfg.llm_extra_body
     async with http.stream(
         "POST",
         f"{cfg.llm_base_url}/chat/completions",
@@ -100,6 +101,34 @@ async def stream_llm_reply(
                 yield delta
 
 
+async def _recall_for_query(
+    client: PowerContextClient, scope_id: str, query: str
+) -> tuple[list[SearchMemoryHit], bool, dict[str, Any] | None]:
+    """Search memories for the query; on miss, fall back to the most recent entries.
+
+    Returns (hits, fallback, error_event). Identity-style questions ("你知道我是谁吗")
+    share no tokens with the stored text, so the fallback keeps the agent oriented.
+    """
+    try:
+        resp = await client.search_memory(SearchMemoryRequest(scope_id=scope_id, query=query, limit=5))
+        if resp.hits:
+            return resp.hits, False, None
+    except Exception as exc:  # recall failure must not block the chat
+        return [], False, {"type": "recall_error", "message": str(exc)}
+    try:
+        listed = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope_id))
+        return (
+            [
+                SearchMemoryHit(citation=entry.citation, text=entry.text, score=0.0, matched_by=[])
+                for entry in listed.entries[:8]
+            ],
+            True,
+            None,
+        )
+    except Exception as exc:
+        return [], False, {"type": "recall_error", "message": str(exc)}
+
+
 async def run_chat_turn(
     client: PowerContextClient,
     http: httpx.AsyncClient,
@@ -113,13 +142,15 @@ async def run_chat_turn(
 
     hits: list[SearchMemoryHit] = []
     if memory_on and last_user:
-        try:
-            resp = await client.search_memory(SearchMemoryRequest(scope_id=scope_id, query=last_user, limit=5))
-            hits = resp.hits
-        except Exception as exc:  # recall failure must not block the chat
-            yield {"type": "recall_error", "message": str(exc)}
+        hits, fallback, error_event = await _recall_for_query(client, scope_id, last_user)
+        if error_event:
+            yield error_event
         if hits:
-            yield {"type": "recall", "hits": [{"text": hit.text, "score": hit.score} for hit in hits]}
+            yield {
+                "type": "recall",
+                "fallback": fallback,
+                "hits": [{"text": hit.text, "score": hit.score} for hit in hits],
+            }
 
     reply: list[str] = []
     try:

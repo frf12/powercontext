@@ -80,3 +80,35 @@ def test_load_config_rejects_bad_port(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     with pytest.raises(SystemExit, match="DEMO_PORT"):
         load_config(env_file)
+
+
+def test_load_config_parses_extra_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (*ENV_KEYS, "DEMO_LLM_EXTRA_BODY"):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DEMO_PASSPHRASE=open-sesame\n"
+        "DEMO_LLM_BASE_URL=http://x.example/v1\n"
+        "DEMO_LLM_API_KEY=test-key\n"
+        "DEMO_LLM_MODEL=fake-chat\n"
+        'DEMO_LLM_EXTRA_BODY={"enable_thinking": false}\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(env_file)
+    assert cfg.llm_extra_body == {"enable_thinking": False}
+
+
+def test_load_config_rejects_bad_extra_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (*ENV_KEYS, "DEMO_LLM_EXTRA_BODY"):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DEMO_PASSPHRASE=open-sesame\n"
+        "DEMO_LLM_BASE_URL=http://x.example/v1\n"
+        "DEMO_LLM_API_KEY=test-key\n"
+        "DEMO_LLM_MODEL=fake-chat\n"
+        "DEMO_LLM_EXTRA_BODY=not-json\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="DEMO_LLM_EXTRA_BODY"):
+        load_config(env_file)

@@ -282,20 +282,26 @@ function lastUserText() {
   return mine.length ? mine[mine.length - 1].content : "";
 }
 
-function renderRecall(hits) {
+function renderRecall(hits, fallback) {
   const details = el("details", "recall");
-  const summary = el("summary", "", `📎 本次召回了 ${hits.length} 条记忆`);
+  const summary = el(
+    "summary",
+    "",
+    fallback ? `🧠 没有直接命中，带上了最近的 ${hits.length} 条记忆` : `📎 本次召回了 ${hits.length} 条记忆`
+  );
   details.append(summary);
   for (const hit of hits) {
     const row = el("div", "hit");
     row.append(document.createTextNode(hit.text));
-    row.append(el("span", "score", (hit.score ?? 0).toFixed(2)));
+    if (!fallback) row.append(el("span", "score", (hit.score ?? 0).toFixed(2)));
     details.append(row);
   }
   const log = $("recallLog");
   log.querySelector(".empty")?.remove();
   const item = el("div", "logitem");
-  item.append(el("b", "", `「${lastUserText().slice(0, 24)}」召回了 ${hits.length} 条`));
+  item.append(
+    el("b", "", fallback ? `「${lastUserText().slice(0, 24)}」带上了最近 ${hits.length} 条` : `「${lastUserText().slice(0, 24)}」召回了 ${hits.length} 条`)
+  );
   log.prepend(item);
   return details;
 }
@@ -471,7 +477,7 @@ async function send() {
         try { event = JSON.parse(chunk.slice(6)); } catch (e) { continue; }
         if (event.type === "recall") {
           const stick = nearBottom();
-          bubble.before(renderRecall(event.hits || []));
+          bubble.before(renderRecall(event.hits || [], Boolean(event.fallback)));
           if (stick) scrollBottom();
         } else if (event.type === "recall_error") {
           logRecallError(event.message);
