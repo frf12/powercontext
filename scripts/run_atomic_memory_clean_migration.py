@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -109,20 +108,12 @@ def main() -> int:
     print(f"Collected {len(nodes)} {args.backend} clean migration cases.", flush=True)
     if args.collect_only:
         return 0
-    # Embedded SeekDB must exit between cases. The isolated OceanBase instance
-    # allows two connections' test databases to progress without another server.
-    with ThreadPoolExecutor(max_workers=1 if args.backend == "seekdb" else 2) as executor:
-        futures = [executor.submit(run_node, node, output / f"{index:03d}") for index, node in enumerate(nodes, 1)]
-        completed = False
-        try:
-            for future in as_completed(futures):
-                if not future.result():
-                    return 1
-            completed = True
-        finally:
-            if not completed:
-                for pending in futures:
-                    pending.cancel()
+    # SeekDB must exit between cases. OceanBase cases share one tenant, so keep
+    # their schema creation and cleanup separate; this suite tests migration,
+    # not concurrent DDL across databases.
+    for index, node in enumerate(nodes, 1):
+        if not run_node(node, output / f"{index:03d}"):
+            return 1
     print(f"All {len(nodes)} {args.backend} clean migration cases passed without skips.", flush=True)
     return 0
 
