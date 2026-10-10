@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from powercontext.artifacts import ArtifactRef, MemoryCitation
 from powercontext.builtin.artifacts.experience import ExperienceContent
@@ -136,6 +136,7 @@ class DreamRun(BaseModel):
     budget: DreamBudget = Field(default_factory=DreamBudget)
     prompt_version: str = DREAM_PROMPT_VERSION
     model_config_id: str | None = None
+    historical_data: dict[str, JsonValue] | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @property
     def terminal(self) -> bool:
@@ -159,10 +160,14 @@ class GetDreamRunRequest(BaseModel):
 
 
 class DreamRecord(BaseModel):
-    """Private execution state; a principal identity is never a credential."""
+    """Private execution state; a principal identity is never a credential.
+
+    A terminal run migrated from the legacy Memory format has no executable
+    request; its original request is kept only in ``run.historical_data``.
+    """
 
     run: DreamRun
-    request: CreateDreamRunRequest
+    request: CreateDreamRunRequest | None
     principal_id: str
     generation: int = 0
     request_generation: int = 0

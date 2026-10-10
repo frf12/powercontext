@@ -5894,6 +5894,33 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "budget": {"$ref": "#/components/schemas/DreamBudget"},
                     "prompt_version": {"type": "string", "default": "powercontext.dream.v1"},
                     "model_config_id": {"type": "string", "nullable": True},
+                    "historical_data": {
+                        "additionalProperties": True,
+                        "type": "object",
+                        "description": "Original "
+                        "request "
+                        "and "
+                        "input "
+                        "manifest "
+                        "of a "
+                        "terminal "
+                        "run "
+                        "migrated "
+                        "from "
+                        "the "
+                        "legacy "
+                        "Memory "
+                        "format. "
+                        "Present "
+                        "only "
+                        "on "
+                        "such "
+                        "runs; "
+                        "never "
+                        "accepted "
+                        "as "
+                        "evidence.",
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",

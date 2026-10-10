@@ -4308,6 +4308,12 @@ class DreamRun(BaseModel):
     budget: DreamBudget | None = None
     prompt_version: StrictStr = "powercontext.dream.v1"
     model_config_id: Annotated[StrictStr | None, Field(...)]
+    historical_data: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Original request and input manifest of a terminal run migrated from the legacy Memory format. Present only on such runs; never accepted as evidence."
+        ),
+    ] = None
 
 
 class DreamRunPage(BaseModel):

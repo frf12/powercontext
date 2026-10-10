@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 from sqlalchemy import insert, select, tuple_
 
-from powercontext.artifacts import ArtifactLineage, ArtifactRef, MemoryCitation
+from powercontext.artifacts import ArtifactRef, MemoryCitation
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryCandidate,
@@ -37,30 +37,52 @@ from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
     AtomicMemoryReconciliationOutput,
 )
 from powercontext.builtin.artifacts.experience import ExperienceContent, ExperienceDraft
+from powercontext.builtin.artifacts.experience.recurrence import (
+    RecurrenceMatch,
+    TaskOutcomeItemRef,
+    candidate_set_digest,
+    item_digest,
+)
+from powercontext.builtin.artifacts.handoff.models import (
+    HandoffArtifactCitation,
+    HandoffContent,
+    HandoffMemoryCitation,
+    HandoffStatement,
+)
 from powercontext.builtin.artifacts.memory import MemoryService
 from powercontext.builtin.artifacts.memory.canonical import canonical_json, entry_content_hash, normalize_refs
+from powercontext.builtin.dream.models import CreateDreamRunRequest, DreamRecord, DreamRun
 from powercontext.builtin.evidence.resolver import EvidenceResolver, evidence_id
 from powercontext.builtin.evidence.selection import select_evidence
 from powercontext.builtin.inference import GenerationResult, character_token_estimator
 from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
+from powercontext.builtin.persistence.dream import DreamRepository
+from powercontext.builtin.persistence.errors import RepositoryNotFoundError
 from powercontext.builtin.persistence.memory import RelationalMemoryBackend
+from powercontext.builtin.persistence.migrations.atomic_memory_archive import ARCHIVE_TABLE
+from powercontext.builtin.persistence.migrations.atomic_memory_references import DECISIONS_FORMAT, load_decisions
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
     apply_atomic_memory_migration,
     verify_atomic_memory_migration,
 )
+from powercontext.builtin.persistence.recurrence import RecurrenceRepository
 from powercontext.builtin.persistence.schema import create_tables
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.sqlite.atomic_memory_index import SQLiteAtomicMemoryIndex
 from powercontext.builtin.persistence.tables import (
+    ARTIFACT_CANDIDATE_HEADS_TABLE,
+    ARTIFACT_CANDIDATE_VERSIONS_TABLE,
     ARTIFACT_HEADS_TABLE,
     ARTIFACT_LINEAGE_ARTIFACTS_TABLE,
     ARTIFACT_LINEAGE_SOURCES_TABLE,
     ARTIFACTS_TABLE,
     MEMORY_ENTRY_VERSIONS_TABLE,
+    SCOPES_TABLE,
     SOURCES_TABLE,
 )
 from powercontext.builtin.runtime import BuiltinConfig, RuntimeConfig, open_builtin_contexts
 from powercontext.builtin.sources.content import ContentSource, ContentSourceInternal, ContentSourceTarget
+from powercontext.builtin.work.models import TaskOutcome, WorkClaim
 from powercontext.server.authz import ArtifactOwnerRelation, MemoryEntrySelector, PrincipalRef, ResourceRef
 from powercontext.server.authz.repository import RelationalAccessRepository
 from powercontext.sources import SourceMaterialization, SourceRef
@@ -107,7 +129,7 @@ def _version(
     }
 
 
-async def _seed_and_migrate(config: SQLiteConfig) -> bytes:
+async def _seed(config: SQLiteConfig, extra=None) -> bytes:
     alpha = _version("alpha", 1, "Task A was completed.", (A, INTERNAL), (EA,))
     beta = _version("beta", 1, "Unrelated task B was completed.", (B,), (EB,))
     revised = _version("alpha", 2, "Tasks A and C were completed.", (A, C, INTERNAL), (EA,))
@@ -250,17 +272,28 @@ async def _seed_and_migrate(config: SQLiteConfig) -> bytes:
                         idempotency_key=f"owner:{entry_id}",
                     )
                 )
+            if extra is not None:
+                await extra(contexts, connection)
             internal_bytes = await connection.scalar(
                 select(SOURCES_TABLE.c.payload).where(
                     SOURCES_TABLE.c.scope_id == SCOPE, SOURCES_TABLE.c.source_id == INTERNAL.source_id
                 )
             )
             assert isinstance(internal_bytes, bytes)
+    return internal_bytes
+
+
+async def _migrate(config: SQLiteConfig, decisions=None):
     async with SQLiteProfile.open(config, tables=()) as profile:
-        result = await apply_atomic_memory_migration(
-            profile.database, SQLiteAtomicMemoryIndex(), maintenance_confirmed=True
+        return await apply_atomic_memory_migration(
+            profile.database, SQLiteAtomicMemoryIndex(), maintenance_confirmed=True, decisions=decisions
         )
-        assert result.ready, result.errors
+
+
+async def _seed_and_migrate(config: SQLiteConfig, extra=None) -> bytes:
+    internal_bytes = await _seed(config, extra)
+    result = await _migrate(config)
+    assert result.ready, result.errors
     return internal_bytes
 
 
@@ -268,6 +301,41 @@ async def _seed_and_migrate(config: SQLiteConfig) -> bytes:
 def migrated(tmp_path: Path) -> tuple[SQLiteConfig, bytes]:
     config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'migration-evidence.db'}")
     return config, asyncio.run(_seed_and_migrate(config))
+
+
+async def _public_collection_rows(connection) -> list[Any]:
+    statement = select(ARTIFACTS_TABLE.c.revision).where(
+        ARTIFACTS_TABLE.c.scope_id == SCOPE, ARTIFACTS_TABLE.c.family == "memory"
+    )
+    return list((await connection.execute(statement)).scalars())
+
+
+async def _archive_metadata(connection, revision: int) -> dict[str, Any]:
+    value = await connection.scalar(
+        select(ARCHIVE_TABLE.c.metadata).where(
+            ARCHIVE_TABLE.c.scope_id == SCOPE,
+            ARCHIVE_TABLE.c.artifact_id == COLLECTION,
+            ARCHIVE_TABLE.c.revision == revision,
+        )
+    )
+    return json.loads(value)
+
+
+async def _restore_public_collection(connection) -> None:
+    for row in (await connection.execute(select(ARCHIVE_TABLE))).mappings():
+        await connection.execute(
+            insert(ARTIFACTS_TABLE).values(
+                scope_id=row["scope_id"],
+                family=row["family"],
+                artifact_id=row["artifact_id"],
+                revision=row["revision"],
+                content=row["content"],
+                memory_citations=row["memory_citations"],
+            )
+        )
+    await connection.execute(
+        insert(ARTIFACT_HEADS_TABLE).values(scope_id=SCOPE, family="memory", artifact_id=COLLECTION, revision=2)
+    )
 
 
 def _resolver(contexts) -> EvidenceResolver:
@@ -346,24 +414,6 @@ def test_migrated_entry_projects_only_its_exact_sources(migrated, entry_id, revi
             stored = await contexts.repositories.artifacts.get(connection, SCOPE, selected)
             assert stored.lineage.artifacts == (own,)
             assert all(source in stored.lineage.sources for source in expected)
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize(("revision", "expected"), [(1, (A,)), (2, (A, C))])
-def test_legacy_citation_preserves_exact_entry_sources(migrated, revision, expected) -> None:
-    async def scenario() -> None:
-        async with (
-            open_builtin_contexts(BuiltinConfig(database=migrated[0])) as contexts,
-            contexts.database.transaction() as connection,
-        ):
-            citation = MemoryCitation(
-                memory_ref=_collection(revision), entry_id="alpha", entry_version_id=f"alpha-v{revision}"
-            )
-            resolved = await _resolver(contexts).resolve(connection, memory_citations=(citation,))
-            assert _projected_sources(resolved) == expected
-            assert EA in _projected_artifacts(resolved)
-            assert EB not in _projected_artifacts(resolved)
 
     asyncio.run(scenario())
 
@@ -448,6 +498,8 @@ def test_apply_replaces_the_collection_anchor_left_by_an_earlier_import(migrated
             identity = {"scope_id": SCOPE, "family": "atomic-memory", "artifact_id": target.artifact_id, "revision": 2}
             async with contexts.database.transaction() as connection:
                 direct = await _imported_snapshot(connection)
+                # An interrupted earlier run left the collection online with anchored imports.
+                await _restore_public_collection(connection)
                 for table in (ARTIFACT_LINEAGE_SOURCES_TABLE, ARTIFACT_LINEAGE_ARTIFACTS_TABLE):
                     await connection.execute(
                         table.delete().where(*(table.c[key] == value for key, value in identity.items()))
@@ -471,6 +523,7 @@ def test_apply_replaces_the_collection_anchor_left_by_an_earlier_import(migrated
             assert repaired.ready, repaired.errors
             async with contexts.database.transaction() as connection:
                 assert await _imported_snapshot(connection) == direct
+                assert not await _public_collection_rows(connection)
 
     asyncio.run(scenario())
 
@@ -495,14 +548,14 @@ def test_undo_merge_preserves_each_migrated_entry_evidence(migrated) -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("other_origin", ["collection", "experience"])
+@pytest.mark.parametrize("other_origin", ["atomic", "experience"])
 def test_other_origin_does_not_broaden_migrated_entry_root_groups_or_selection(migrated, other_origin) -> None:
     async def scenario() -> None:
         async with (
             open_builtin_contexts(BuiltinConfig(database=migrated[0])) as contexts,
             contexts.database.transaction() as connection,
         ):
-            other = _collection(1)
+            other = _atomic("beta", 1)
             if other_origin == "experience":
                 experience = await contexts.repositories.artifacts.create(
                     connection,
@@ -533,26 +586,15 @@ def test_other_origin_does_not_broaden_migrated_entry_root_groups_or_selection(m
     asyncio.run(scenario())
 
 
-def test_ordinary_atomic_explicit_collection_reference_keeps_collection_evidence(migrated) -> None:
+def test_migrated_collection_leaves_public_artifact_reads(migrated) -> None:
     async def scenario() -> None:
-        async with open_builtin_contexts(BuiltinConfig(database=migrated[0])) as contexts:
-            application = contexts.atomic_memory
-            async with contexts.database.transaction() as connection:
-                plan = await application.service.inspect_change(
-                    connection,
-                    SCOPE,
-                    "ordinary-collection-memory",
-                    AtomicMemoryContent(kind="fact", text="Both tasks completed."),
-                    None,
-                    lineage=ArtifactLineage(artifacts=(_collection(1),)),
-                )
-            prepared = await application.service.prepare_change(plan)
-            async with contexts.database.transaction() as connection:
-                created = await application.service.commit(connection, prepared, None)
-            async with contexts.database.transaction() as connection:
-                resolved = await _resolver(contexts).resolve(connection, artifacts=(created.primary.ref,))
-                assert _projected_sources(resolved) == (A, B)
-                assert EA in _projected_artifacts(resolved) and EB in _projected_artifacts(resolved)
+        async with (
+            open_builtin_contexts(BuiltinConfig(database=migrated[0])) as contexts,
+            contexts.database.transaction() as connection,
+        ):
+            assert not await _public_collection_rows(connection)
+            with pytest.raises(RepositoryNotFoundError):
+                await contexts.repositories.artifacts.get(connection, SCOPE, _collection(2))
 
     asyncio.run(scenario())
 
@@ -626,5 +668,272 @@ def test_source_flush_supplies_the_migrated_related_entry_current_content(migrat
             for (published,) in observed:
                 assert published.artifact_ref == _atomic("alpha", 2)
                 assert published.content.text == "Tasks A and C were completed."
+
+    asyncio.run(scenario())
+
+
+ALPHA_2 = MemoryCitation(memory_ref=_collection(2), entry_id="alpha", entry_version_id="alpha-v2")
+OUTCOME = SourceRef(source_type="content", source_id="legacy-outcome")
+DREAM_REQUEST = CreateDreamRunRequest(
+    operation="refine_experience", memory_citations=(ALPHA_2,), idempotency_key="legacy-dream"
+)
+
+
+def _experience(name: str) -> ExperienceContent:
+    return ExperienceContent(
+        situation=f"{name} was requested.",
+        action=f"Executed {name}.",
+        outcome=f"Observed {name} completion.",
+        lesson=f"Preserve the exact evidence of {name}.",
+    )
+
+
+def _outcome() -> TaskOutcome:
+    return TaskOutcome(
+        objective="Ship task A.",
+        status="failed",
+        summary="Deployment failed.",
+        observations=(
+            WorkClaim(
+                text="Deploy failed.", basis="verified", evidence=(HandoffMemoryCitation(memory_citation=ALPHA_2),)
+            ),
+        ),
+    )
+
+
+async def _candidate(connection, candidate_id: str, *, artifact_refs: list[Any], citations: list[Any] | None) -> None:
+    await connection.execute(
+        insert(ARTIFACT_CANDIDATE_VERSIONS_TABLE).values(
+            scope_id=SCOPE,
+            candidate_id=candidate_id,
+            version=1,
+            family="experience",
+            proposal=_experience(candidate_id).model_dump_json(by_alias=True).encode(),
+            source_refs=b"[]",
+            artifact_refs=json.dumps(artifact_refs).encode(),
+            memory_citations=None if citations is None else json.dumps(citations).encode(),
+        )
+    )
+    await connection.execute(
+        insert(ARTIFACT_CANDIDATE_HEADS_TABLE).values(
+            scope_id=SCOPE, candidate_id=candidate_id, family="experience", version=1, status="pending"
+        )
+    )
+
+
+async def _legacy_references(contexts, connection) -> None:
+    await contexts.repositories.artifacts.create(
+        connection,
+        SCOPE,
+        "cited-experience",
+        ExperienceDraft(content=_experience("cited"), sources=(A,), memory_citations=(ALPHA_2,)),
+    )
+    await contexts.repositories.artifacts.create(
+        connection,
+        SCOPE,
+        "collection-experience",
+        ExperienceDraft(content=_experience("collection"), sources=(B,), artifacts=(_collection(1),)),
+    )
+    await _candidate(connection, "cited-candidate", artifact_refs=[], citations=[ALPHA_2.model_dump(mode="json")])
+    handoff = HandoffContent(
+        objective="Continue task A.",
+        state=(HandoffStatement(text="Task A shipped.", citations=(HandoffMemoryCitation(memory_citation=ALPHA_2),)),),
+        disposition="complete",
+    )
+    await connection.execute(
+        insert(ARTIFACTS_TABLE).values(
+            scope_id=SCOPE,
+            family="handoff",
+            artifact_id="legacy-handoff",
+            revision=1,
+            content=handoff.model_dump_json(by_alias=True).encode(),
+            memory_citations=None,
+        )
+    )
+    await connection.execute(
+        insert(ARTIFACT_LINEAGE_ARTIFACTS_TABLE).values(
+            scope_id=SCOPE,
+            family="handoff",
+            artifact_id="legacy-handoff",
+            revision=1,
+            ordinal=0,
+            upstream_family="memory",
+            upstream_artifact_id=COLLECTION,
+            upstream_revision=2,
+        )
+    )
+    await connection.execute(
+        insert(ARTIFACT_HEADS_TABLE).values(scope_id=SCOPE, family="handoff", artifact_id="legacy-handoff", revision=1)
+    )
+    await connection.execute(
+        insert(SCOPES_TABLE).values(
+            scope_id=SCOPE,
+            title="Migration evidence",
+            summary="Legacy reference fixture.",
+            scope_id_search=SCOPE,
+            title_search="migration evidence",
+            summary_search="legacy reference fixture",
+            version=1,
+        )
+    )
+    outcome = _outcome()
+    stored = await contexts.repositories.sources.add(
+        connection,
+        SCOPE,
+        ContentSource(
+            name=OUTCOME.source_id,
+            materialization=SourceMaterialization.CAPTURED,
+            content=outcome.model_dump_json(by_alias=True, exclude_none=False, indent=2),
+            metadata={"kind": "task-outcome", "schema": "powercontext.task-outcome.v1"},
+        ),
+    )
+    await RecurrenceRepository().append_match(
+        connection,
+        RecurrenceMatch(
+            scope_id=SCOPE,
+            task_outcome_ref=OUTCOME,
+            task_outcome_position=stored.journal_position,
+            failure_ref=TaskOutcomeItemRef(
+                task_outcome_ref=OUTCOME,
+                item_kind="observation",
+                item_index=0,
+                item_digest=item_digest(outcome.observations[0]),
+            ),
+            candidate_set_mode="scope_heads",
+            candidate_refs=(),
+            candidate_set_digest=candidate_set_digest(()),
+            result="unmatched",
+        ),
+    )
+    await DreamRepository().create(
+        connection,
+        DreamRecord(
+            run=DreamRun(
+                scope_id=SCOPE,
+                run_id="legacy-dream",
+                operation="refine_experience",
+                status="succeeded",
+                accepted_at=datetime(2026, 1, 2, tzinfo=UTC),
+            ),
+            request=DREAM_REQUEST,
+            principal_id="migration-owner",
+        ),
+    )
+
+
+def test_migration_converts_exact_citations_and_archives_collection_relationships(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'references.db'}")
+    alpha = _atomic("alpha", 2)
+
+    async def scenario() -> None:
+        await _seed_and_migrate(config, _legacy_references)
+        async with (
+            open_builtin_contexts(BuiltinConfig(database=config)) as contexts,
+            contexts.database.transaction() as connection,
+        ):
+            assert not await _public_collection_rows(connection)
+            report = await verify_atomic_memory_migration(connection, index=contexts.atomic_memory.index)
+            assert report.ready, report.errors
+
+            cited = await contexts.repositories.artifacts.get(
+                connection, SCOPE, ArtifactRef(family="experience", artifact_id="cited-experience", revision=1)
+            )
+            assert cited.lineage.memory_citations == ()
+            assert cited.lineage.artifacts == (alpha,)
+
+            whole = await contexts.repositories.artifacts.get(
+                connection, SCOPE, ArtifactRef(family="experience", artifact_id="collection-experience", revision=1)
+            )
+            assert whole.lineage.artifacts == ()
+            (incoming,) = (await _archive_metadata(connection, 1))["incoming_references"]
+            assert incoming["referrer"]["artifact_id"] == "collection-experience"
+            assert incoming["value"] == _collection(1).model_dump(mode="json")
+
+            candidate = (
+                await connection.execute(
+                    select(
+                        ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.artifact_refs,
+                        ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.memory_citations,
+                    ).where(ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.candidate_id == "cited-candidate")
+                )
+            ).one()
+            assert json.loads(candidate.artifact_refs) == [alpha.model_dump(mode="json")]
+            assert json.loads(candidate.memory_citations) == []
+
+            handoff = await contexts.repositories.artifacts.get(
+                connection, SCOPE, ArtifactRef(family="handoff", artifact_id="legacy-handoff", revision=1)
+            )
+            assert handoff.content.state[0].citations == (HandoffArtifactCitation(artifact_ref=alpha),)
+            assert handoff.lineage.artifacts == (alpha,)
+
+            source = (await contexts.repositories.sources.get(connection, SCOPE, OUTCOME)).value
+            assert isinstance(source, ContentSource)
+            converted = TaskOutcome.model_validate_json(source.content)
+            assert converted.observations[0].evidence == (HandoffArtifactCitation(artifact_ref=alpha),)
+            match = await RecurrenceRepository().find_match(
+                connection,
+                SCOPE,
+                OUTCOME,
+                TaskOutcomeItemRef(
+                    task_outcome_ref=OUTCOME,
+                    item_kind="observation",
+                    item_index=0,
+                    item_digest=item_digest(converted.observations[0]),
+                ),
+            )
+            assert match is not None
+            assert match.failure_ref.item_digest == item_digest(converted.observations[0])
+
+            dream = await DreamRepository().get(connection, SCOPE, "legacy-dream")
+            assert dream.request is None and dream.run.input_manifest is None
+            history = dream.run.historical_data
+            assert history is not None and isinstance(history["request"], dict)
+            assert history["request"]["memory_citations"] == [ALPHA_2.model_dump(mode="json")]
+            replay = await DreamRepository().find_request(connection, SCOPE, "migration-owner", DREAM_REQUEST)
+            assert replay is not None and replay.run.run_id == "legacy-dream"
+
+    asyncio.run(scenario())
+
+
+def test_candidate_left_without_evidence_blocks_until_an_explicit_replacement(tmp_path: Path) -> None:
+    config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'blocked.db'}")
+
+    async def blocked(_contexts, connection) -> None:
+        await _candidate(
+            connection, "collection-candidate", artifact_refs=[_collection(1).model_dump(mode="json")], citations=None
+        )
+
+    async def scenario() -> None:
+        await _seed(config, blocked)
+        refused = await _migrate(config)
+        assert not refused.ready
+        assert any("collection-candidate" in error and "replace decision" in error for error in refused.errors)
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            assert await _public_collection_rows(connection) == [1, 2]
+        decisions = load_decisions({
+            "format": DECISIONS_FORMAT,
+            "decisions": [
+                {
+                    "carrier": "candidate",
+                    "scope_id": SCOPE,
+                    "candidate_id": "collection-candidate",
+                    "version": 1,
+                    "field": "artifact_refs",
+                    "action": "replace",
+                    "artifact_refs": [EA.model_dump(mode="json")],
+                }
+            ],
+        })
+        applied = await _migrate(config, decisions)
+        assert applied.ready, applied.errors
+        async with SQLiteProfile.open(config, tables=()) as profile, profile.database.transaction() as connection:
+            refs = await connection.scalar(
+                select(ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.artifact_refs).where(
+                    ARTIFACT_CANDIDATE_VERSIONS_TABLE.c.candidate_id == "collection-candidate"
+                )
+            )
+            assert isinstance(refs, bytes) and json.loads(refs) == [EA.model_dump(mode="json")]
+            (incoming,) = (await _archive_metadata(connection, 1))["incoming_references"]
+            assert incoming["carrier"] == "candidate" and incoming["decision"] == "replace"
 
     asyncio.run(scenario())

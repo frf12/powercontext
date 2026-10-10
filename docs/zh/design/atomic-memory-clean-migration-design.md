@@ -2,7 +2,7 @@
 
 本设计对应[总体方案](atomic-memory-clean-migration-overview.md)，规定 entry 历史、证据、持久化引用、权限、任务和检索数据的转换方式。目标是将旧 Memory 从公共制品空间移到离线归档后，新版服务只通过标准 Atomic 接口完成读取和生成。旧专用表暂时保留，归档和旧表由后续版本清理。
 
-代码依据为 PR 1857 的 `2405d0aa33050ee28aa8f1aed45bd473f6ffff99`。下面的转换和清理流程是拟实施设计；该代码基线仍保留旧集合，并通过旧 entry 表解析导入记忆的依据。统一迁移控制使用 [RFC 1771](https://github.com/oceanbase/powercontext/pull/1771) 的备份、服务管理和数据库锁协议。本次保留旧内容并登记归档对象，不物理清理旧历史；后续版本按保留条件单独清理。
+代码依据为 [PR 1857](https://github.com/oceanbase/powercontext/pull/1857)。迁移由 `powercontext server atomic-memory-migrate` 执行，备份、停服和数据库锁沿用 [RFC 1771](https://github.com/oceanbase/powercontext/pull/1771) 的维护约定。旧内容保留在归档表和旧 entry 表中，不物理清理旧历史；后续版本按保留条件单独清理。
 
 ## 1. 数据与兼容边界
 
@@ -251,17 +251,13 @@ Source 的旧 `internal.target` 描述当时编辑的集合，迁入第 5.6 节�
 
 若某条 Handoff statement、已验证的 Work claim/check 或 Candidate 只以整集合为依据，移除后可能违反非空证据约束。这类记录可以由合法接口写入，不属于损坏数据。预检覆盖全部相关历史版本，在改写业务数据前统计数量，并列出记录身份、版本、字段位置和原引用。
 
-数量为零时继续迁移。存在此类记录时，迁移命令接受维护者提供的决策文件，每一项以 `(载体, 记录身份, 版本, 字段位置)` 定位一条阻断项，只允许以下动作：
+Handoff statement 和 Work claim/check 的 citation 是带 `kind` 的精确引用，`kind=memory` 总是指向单条 entry 版本，转换后仍是精确依据，不会因删除集合引用而变空。Task Outcome 的 `produced_artifacts` 没有非空约束。因此实际会被阻断的只有 Candidate：某个版本的 `artifact_refs` 只含整集合引用，且没有 Source 或可转换的精确 citation。
 
-| 动作 | 适用范围 | 效果 |
-| --- | --- | --- |
-| `replace` | 全部载体 | 用指定的精确 ArtifactRef 列表替换该位置的集合引用；目标必须在同一 Scope 中存在，并通过该载体现有的证据校验 |
-| `declare` | 已验证的 WorkClaim、TaskCheck | 将该条目从 verified 改为 declared，并移除集合引用 |
-| `reject` | 仍处于待审核状态的 Candidate | 通过 Candidate 的正常状态转换拒绝该候选，不再为它保留在线证据 |
+数量为零时继续迁移。存在此类记录时，迁移命令通过 `--decisions` 接受维护者提供的决策文件，每一项以 `(scope_id, candidate_id, version)` 和字段 `artifact_refs` 定位一条阻断项，动作只能是 `replace`：用指定的精确 ArtifactRef 列表作为该版本的依据，目标必须在同一 Scope 中存在且不是旧 Memory 集合。`declare` 或 `reject` 都无法让历史版本重新满足 Candidate 的证据约束，因此不提供。
 
-每一项处理前，原字段值、原状态和所用决策一并写入集合归档的 `metadata.incoming_references`。`--action plan` 只读执行同一预检，列出全部阻断项及决策文件覆盖情况；决策文件未覆盖全部阻断项、引用了不存在的阻断项，或动作不适用于该载体时，迁移在改写业务数据前停止。
+每一项处理前，原字段值、原位置和所用决策一并写入集合归档的 `metadata.incoming_references`。`--action plan` 只读执行同一预检，列出全部阻断项及决策文件覆盖情况；决策文件未覆盖全部阻断项、引用了不存在的阻断项、重复，或动作不是 `replace` 时，迁移在改写业务数据前停止。
 
-本次不为 Handoff、Work 或 Candidate 增加历史条目变体。仅修改当前 head 或新增记录不能解决旧版本中的阻断项；决策必须覆盖仍需迁移的历史版本。迁移不会在没有决策时删除原内容、清空必需证据或伪造 Source，也不会自动改变 verified 或审核状态。
+本次不为 Handoff、Work 或 Candidate 增加历史条目变体。仅修改当前 head 或新增记录不能解决旧版本中的阻断项；决策必须覆盖仍需迁移的历史版本。迁移不会在没有决策时删除原内容、清空必需证据或伪造 Source，也不会改变 verified 或审核状态。
 
 当前 Atomic 分支存在旧 Memory 特例，会沿集合 lineage 追溯 Source。本次删除该特例，明确停止提供整集合的在线溯源，不把删边描述成原行为完全不变。公共 lineage 的外键也要求在移出集合前完成关系清理。
 
@@ -329,17 +325,16 @@ pc_dream_runs.payload.run.candidate
     → 对应 Artifact 及同一 ID 的各个 revision
 ```
 
-按以下顺序处理：
+处理方式：
 
-1. 分页读取 Dream 运行记录，取出生成过的 Candidate ID。旧格式终态运行记录全部按第 5.6 节改成显式历史格式，包括旧引用字段为空的记录。
-2. 按 `(scope_id, candidate_id)` 查询 Candidate 当前 head 及其历史版本。Dream 保存的候选版本可能早于后续编辑和审批，批准结果以当前 head 为准。
+1. 分页读取 Dream 运行记录。旧格式终态运行记录全部按第 5.6 节改成显式历史格式，包括旧引用字段为空的记录；未结束且带旧引用的运行阻断迁移。
+2. Dream 产生的 Candidate 和批准结果，与手工提议的记录一样，由第 5.3 节的通用引用检查覆盖：Candidate 版本按 `memory_citations` 非空或 `artifact_refs` 含 `"memory"` 筛选，Artifact 按 `memory_citations` 非空筛选，只读取身份与引用字段。
 3. 转换候选证据中实际存在的旧引用，保留 Candidate ID、版本、审核状态、proposal 和 target/result。删除集合引用后无法满足证据约束的记录，必须已在第 5.2 节的预检中发现并阻断。
-4. 对已批准的结果，按 `(scope_id, family, artifact_id)` 查询其历史 revision，只读取身份与引用字段，转换仍含旧 citation 的版本。
-5. 相关 Artifact 的编号、revision 和正文不变；引用它的 Skill 或其他 Artifact 继续使用原地址，无需沿下游修改。
+4. 相关 Artifact 的编号、revision 和正文不变；引用它的 Skill 或其他 Artifact 继续使用原地址，无需沿下游修改。
 
 例如，Dream 从 E 提炼出 Experience X，之后又从 X 生成 Skill K。需要转换的是候选和 X 中指向 E 的证据，K 指向 X 的引用保持不变。单纯从 Source 生成、且没有旧 Memory 引用的候选和制品不改写。
 
-Candidate 和 Artifact 的主键可以支持上述定点读取。不为 Dream 迁移扫描全部 Candidate proposal 或全部 Experience、Skill 正文，也不计算覆盖所有候选整行内容的处理状态摘要。第 5.3 节的通用引用检查单独统计，避免把定点处理说成全库完整性检查。
+通用检查不读取 Candidate proposal 或 Experience、Skill 正文，也不计算覆盖所有候选整行内容的处理状态摘要；筛选条件仍可能让数据库遍历全部候选版本和 Artifact 行，成本按第 11.3 节单独记录。
 
 转换后，候选按对应入口现有的 ArtifactRef 规则校验证据和审批；新 Dream 可以通过这些 Experience 继续展开剩余的依据。迁移不为 Atomic 引用增加单独的生命周期或权限校验，公共入口已有的鉴权保持不变。
 
@@ -352,8 +347,8 @@ Candidate 和 Artifact 的主键可以支持上述定点读取。不为 Dream �
 | 历史载体 | 迁移后的表示 |
 | --- | --- |
 | 全部旧格式终态 Dream | 保留 run ID、状态、时间、结果等普通元数据；原 request、input manifest 及其原摘要移入 `historical_data`。旧字段即使为空也完成格式转换，不要求旧 request 通过新的请求模型校验 |
-| 历史 HandoffReceipt | 保留原状态、时间、来源和结果；仅用于说明过去不可用证据的旧结构移入 `historical_data`。使用明确的历史记录格式，不以清空证据列表冒充有效的新回执 |
-| 只描述过去操作的旧 target 或引用 | 原位置和原值迁入 `historical_data`，有效证据字段不再保留它；自由文本按原文保存 |
+| 历史 HandoffReceipt | `unavailable_evidence` 中的旧 citation 是精确 entry 引用，按第 6 节与其他 Work Source 一样转换为 Atomic 引用；回执状态和证据列表保持有效，不需要历史格式 |
+| ContentSource 的旧 `internal.target` | 只标记 lineage_only 写入回执的目标，运行时不据此读取旧 Memory，按原值保留 |
 
 上述历史数据写入各载体现有的 JSON 载荷，不新增历史表，也不为 Handoff statement、Work claim/check 或 Candidate 增加历史条目变体。失去必需证据的业务条目按第 5.2 节阻断升级。当前业务输入拒绝把这些无类型历史数据当作有效证据。
 
@@ -393,7 +388,7 @@ Source 与受影响账本在同一个事务中转换。失败则一起回滚，�
 
 ### 6.3 保持原文的历史信息
 
-ContentSource 的旧 `internal.target`、HandoffReceipt 中只记录过去不可用证据的内容，先迁入显式 `historical_data` 再保留原值。自由文本中的旧 ID 保留原文。运行时不通过这些内容读取旧 Memory，也不把无类型数据恢复成旧对象。
+ContentSource 的旧 `internal.target` 保留原值，自由文本中的旧 ID 保留原文。运行时不通过这些内容读取旧 Memory，也不把它们恢复成旧对象。
 
 不能把历史 receipt 的 `prepared_digest` 当作当前 Handoff 的摘要重新计算；它描述当时准备过的内容。若某条恢复任务必须重放旧的结构化请求，则按待处理任务规则处置。
 
@@ -468,14 +463,17 @@ Dream 的 `refine_experience` 和 Experience Candidate 使用 Atomic 的普通 A
 
 ### 9.1 公共迁移版本与数据任务
 
-使用 RFC 1771 的 `pc_schema_revision(version_num)` 和统一执行流程。Atomic 状态表和当前投影的结构版本是功能前置条件；本迁移新增归档表、解除旧专用表指向公共表的外键，并在转换后删除公共旧引用列。
+RFC 1771 的迁移执行器目前只管理四张 Artifact 表的结构版本，拒绝完整的服务端数据库，也没有数据任务执行器。因此归档、导入、引用转换和移除旧对象由 `atomic-memory-migrate` 自己执行，所需的结构变更（建立归档表、解除外键）也在同一命令中完成；它不另建私有进度表，完成状态由实际数据核验。Atomic 状态表和当前投影是功能前置条件。
 
-执行顺序为：
+`apply` 的执行顺序为：
 
-1. 结构迁移建立归档表，保留旧业务结构。
-2. 独立数据任务完成 A 的归档及导入、B 的引用转换、集合关系归档删除和历史字段改写，并核验结果。
-3. 结构迁移再次核验前置条件，删除两个旧集合外键和两张公共表的 `memory_citations` 列，不新建归档外键。
-4. 独立数据任务 C 移出公共表中的旧对象，最终 verify 通过后放行。
+1. 只读预检：旧格式、版本链、Owner、授权回执，以及第 5.2 节的阻断项和决策文件。有阻断项时不写任何数据。
+2. 建立归档表，按集合归档并核验，然后完成 A 的导入。
+3. 核对 Source 进度和待处理任务未变后，执行 B 的引用转换、集合关系归档删除和 Dream 历史格式改写。
+4. 解除两个旧 entry 表指向 `pc_artifacts` 的外键，不新建归档外键。新建数据库的表定义也不再包含这两个外键。
+5. 执行 C 移出公共表中的旧对象，最终 verify 通过后放行。
+
+两张公共表的 `memory_citations` 列在转换后只保存空列表，在移除运行时该字段的版本中一起删除。
 
 大量复制、引用改写和 embedding 不放在长 DDL 事务中。数据任务分批提交，失败后根据实际数据核验和重跑，不增加私有进度表，也不借用调度专属 schema/receipts。
 
@@ -483,7 +481,7 @@ Dream 的 `refine_experience` 和 Experience Candidate 使用 Atomic 的普通 A
 
 旧专用表和归档均登记为保留对象。后续删除这些对象再提交独立的结构迁移和清理计划，符合 RFC 1771 的延后清理要求。
 
-Atomic 维护命令只作为入口，结构步骤和数据任务都委托 RFC 1771 的公共执行器，不另做一套生产迁移框架。
+RFC 1771 执行器以后若支持完整数据库和数据任务，可把这里的结构步骤登记为公共修订；数据任务仍以实际数据核验作为完成条件。
 
 ### 9.2 阶段 A：归档并导入
 
@@ -520,7 +518,7 @@ head 已存在不表示 current 已发布。元数据提交后退出，重跑仍
 2. 清除所有旧 Memory 自身拥有的公共 lineage，避免旧集合相互引用阻碍移出。
 3. 按集合移除已归档的旧 tags、Owner 等公共元数据；迁到 Atomic 的授权保留并继续生效。
 4. 移除旧 Memory 的公共 head，最后移除 `pc_artifacts.family=memory` 的全部 revision。
-5. 核验公共表中无旧 Memory 对象、旧引用列或活动引用；归档完整，新权威和投影一致，完成公共执行器的最终 verify。
+5. 核验公共表中无旧 Memory 对象、旧外键或活动引用；归档完整，新权威和投影一致，完成最终 verify。
 
 不删除归档、旧 entry versions/heads 或旧专用索引，不向它们继续双写。公共表移出按批提交，失败重跑时通过归档与旧版本表重建所需对应关系；公共对象不存在且归档完整是已移出的状态，不是丢失数据。
 

@@ -6317,6 +6317,10 @@ components:
         model_config_id:
           type: string
           nullable: true
+        historical_data:
+          type: object
+          additionalProperties: true
+          description: Original request and input manifest of a terminal run migrated from the legacy Memory format. Present only on such runs; never accepted as evidence.
       required:
       - scope_id
       - run_id

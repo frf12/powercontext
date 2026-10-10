@@ -35,7 +35,6 @@ from starlette.middleware import Middleware
 
 from powercontext.builtin.persistence.atomic_memory_identity import legacy_entry_artifact_id
 from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
-    AtomicMemoryMigrationError,
     apply_atomic_memory_migration,
     plan_atomic_memory_migration,
     verify_atomic_memory_migration,
@@ -378,13 +377,9 @@ def test_migration_rejects_unverifiable_grant_receipts(tmp_path: Path, mutation:
                 (value, original.binding_id),
             )
     before = _snapshot(tmp_path, "pc_access_idempotency")
-    if already_migrated:
-        with pytest.raises(AtomicMemoryMigrationError, match="receipt"):
-            asyncio.run(_apply(tmp_path))
-    else:
-        result = asyncio.run(_apply(tmp_path))
-        assert not result.ready
-        assert any("receipt" in error for error in result.errors), result.errors
+    result = asyncio.run(_apply(tmp_path))
+    assert not result.ready
+    assert any("receipt" in error for error in result.errors), result.errors
     assert _snapshot(tmp_path, "pc_access_idempotency") == before
 
 

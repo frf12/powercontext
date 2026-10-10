@@ -2639,6 +2639,10 @@ export interface components {
             /** @default powercontext.dream.v1 */
             prompt_version: string;
             model_config_id: string | null;
+            /** @description Original request and input manifest of a terminal run migrated from the legacy Memory format. Present only on such runs; never accepted as evidence. */
+            historical_data?: {
+                [key: string]: unknown;
+            };
         };
         DreamRunPage: {
             runs: components["schemas"]["DreamRun"][];

@@ -941,6 +941,8 @@ MAX_MEMORY_ENTRY_KIND_LENGTH = 128
 MAX_MEMORY_HASH_LENGTH = 64
 
 
+# Retained, unused legacy entry history. It no longer references public
+# Artifact rows: migrated collections live only in the Memory archive.
 MEMORY_ENTRY_VERSIONS_TABLE = Table(
     "pc_memory_entry_versions",
     SHARED_METADATA,
@@ -971,16 +973,6 @@ MEMORY_ENTRY_VERSIONS_TABLE = Table(
         "entry_version_id",
         name="uq_pc_memory_entry_versions_identity",
     ),
-    ForeignKeyConstraint(
-        ("scope_id", "family", "memory_artifact_id", "created_in_revision"),
-        (
-            "pc_artifacts.scope_id",
-            "pc_artifacts.family",
-            "pc_artifacts.artifact_id",
-            "pc_artifacts.revision",
-        ),
-        ondelete="RESTRICT",
-    ),
     CheckConstraint("version > 0", name="ck_pc_memory_entry_versions_version_positive"),
     CheckConstraint(
         "created_in_revision > 0",
@@ -999,16 +991,6 @@ MEMORY_ENTRY_HEADS_TABLE = Table(
     Column("entry_version_id", identity_string(MAX_MEMORY_ENTRY_ID_LENGTH), nullable=False),
     Column("entry_content_hash", identity_string(MAX_MEMORY_HASH_LENGTH), nullable=False),
     Column("searchable_text", _entry_text_type(), nullable=False),
-    ForeignKeyConstraint(
-        ("scope_id", "family", "memory_artifact_id", "head_revision"),
-        (
-            "pc_artifacts.scope_id",
-            "pc_artifacts.family",
-            "pc_artifacts.artifact_id",
-            "pc_artifacts.revision",
-        ),
-        ondelete="RESTRICT",
-    ),
     ForeignKeyConstraint(
         ("scope_id", "memory_artifact_id", "entry_id", "entry_version_id"),
         (
