@@ -45,10 +45,12 @@ def scope_for_nickname(nickname: str) -> str:
 async def ensure_scope(client: PowerContextClient, nickname: str) -> str:
     """Get-or-create the visitor's server-side scope via an idempotency key."""
     slug = scope_for_nickname(nickname)
+    # title/summary 必须只由 slug 决定: 否则 "Amy"/"amy" 这类同 slug 不同原名的
+    # 两次进入会因摘要不一致被 Server 判为幂等冲突 (409)
     descriptor = await client.create_scope(
         CreateScopeRequest(
-            title=f"记忆体验访客 {nickname}",
-            summary=f"线下活动 Demo 访客 {nickname} 的独立记忆空间",
+            title=f"记忆体验访客 {slug}",
+            summary=f"线下活动 Demo 访客 {slug} 的独立记忆空间",
             idempotency_key=f"demo:{slug}",
         )
     )
@@ -115,11 +117,16 @@ async def startup(app: FastAPI) -> None:
     if getattr(app.state, "pc", None) is not None:
         return
     app.state.tokens = set()
-    # app.state.http 是外部 LLM 客户端, 保留 trust_env 默认值
-    app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
     pc = EmbeddedPowerContext(app.state.cfg.data_dir)
+    # 先启动内嵌服务, 成功后再创建其余客户端, 失败时不泄漏资源
     pc.start()
     app.state.pc = pc
+    print(
+        f"[demo] powercontext 就绪 {pc.base_url} "
+        f"generation={pc.inference.generation_model} embedding={pc.inference.embedding_model}"
+    )
+    # app.state.http 是外部 LLM 客户端, 保留 trust_env 默认值
+    app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
     # loopback 客户端显式 trust_env=False, 避免本机代理劫持 127.0.0.1 请求;
     # 注入的 httpx 客户端不归 PowerContextClient 所有, 单独存引用以便关闭
     app.state.pc_http = httpx.AsyncClient(trust_env=False, timeout=180)

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
@@ -36,8 +37,10 @@ from powercontext.server.settings import (
     ServerSettings,
     TracingConfig,
 )
+from pydantic import ValidationError
 
 _ENV_PREFIX = "POWERCONTEXT_SERVER_INFERENCE_"
+_LOGGER = logging.getLogger(__name__)
 
 
 def inference_from_env() -> InferenceConfig:
@@ -58,7 +61,16 @@ class EmbeddedPowerContext:
 
     def __init__(self, data_dir: Path, inference: InferenceConfig | None = None) -> None:
         self.data_dir = data_dir
-        self.inference = inference if inference is not None else inference_from_env()
+        if inference is not None:
+            self.inference = inference
+        else:
+            try:
+                self.inference = inference_from_env()
+            except (json.JSONDecodeError, ValidationError) as error:
+                raise RuntimeError(
+                    "解析 POWERCONTEXT_SERVER_INFERENCE_* 环境变量失败, "
+                    f"请检查 demo/.env 的 POWERCONTEXT_SERVER_INFERENCE_* 配置: {error}"
+                ) from error
         self.base_url = ""
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -101,6 +113,8 @@ class EmbeddedPowerContext:
             self._server.should_exit = True
         if self._thread is not None:
             self._thread.join(timeout=15)
+            if self._thread.is_alive():
+                _LOGGER.warning("内嵌 PowerContext 服务线程 15 秒内未退出, 可能仍有请求在处理")
         if self._listener is not None:
             self._listener.close()
         self._server = None

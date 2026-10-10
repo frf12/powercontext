@@ -102,6 +102,18 @@ def test_same_nickname_same_scope_different_nickname_different_scope() -> None:
     run_with_app(body)
 
 
+def test_same_slug_different_case_maps_to_same_scope() -> None:
+    async def body(client: httpx.AsyncClient, app: Any) -> None:
+        first = await _enter(client, "open-sesame", "Amy")
+        second = await _enter(client, "open-sesame", "amy")
+        assert first.status_code == 200
+        assert second.status_code == 200
+        # 大小写折叠到同一 slug, 不能因 title/summary 不同而幂等冲突
+        assert first.json()["scope_id"] == second.json()["scope_id"]
+
+    run_with_app(body)
+
+
 def test_session_without_token_is_401() -> None:
     async def body(client: httpx.AsyncClient, app: Any) -> None:
         resp = await client.get("/api/session")
