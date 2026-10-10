@@ -21,12 +21,21 @@ import re
 import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from powercontext.client import PowerContextClient
-from powercontext.http import CreateScopeRequest
+from powercontext.http import (
+    ArtifactReference,
+    CreateScopeRequest,
+    ListMemoryEntriesRequest,
+    MemoryCitation,
+    MemoryEntry,
+    RetireMemoryEntryRequest,
+    ReviseMemoryEntryRequest,
+)
 from pydantic import BaseModel, Field
 
 from .agent import run_chat_turn
@@ -72,6 +81,70 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     memory_on: bool = True
+
+
+# 前端把 entries 返回的整张卡片回传给 retire/revise, 多余字段被 pydantic 默认忽略
+class CitationBody(BaseModel):
+    entry_id: str
+    entry_version_id: str
+    artifact_id: str
+    revision: int
+
+
+class RetireBody(CitationBody):
+    pass
+
+
+class ReviseBody(CitationBody):
+    kind: str
+    text: str = Field(min_length=1, max_length=8000)
+
+
+def _entry_payload(entry: MemoryEntry) -> dict[str, Any]:
+    """MemoryEntry -> 前端记忆卡片的扁平字段, 这些字段会被原样回传给 retire/revise。"""
+    return {
+        "entry_id": entry.citation.entry_id,
+        "entry_version_id": entry.citation.entry_version_id,
+        "artifact_id": entry.citation.memory_ref.artifact_id,
+        "revision": entry.citation.memory_ref.revision,
+        "kind": entry.kind,
+        "text": entry.text,
+        "state": entry.state.value,
+        "version": entry.version,
+    }
+
+
+def _add_memory_routes(app: FastAPI) -> None:
+    def _citation(body: CitationBody) -> MemoryCitation:
+        return MemoryCitation(
+            memory_ref=ArtifactReference(family="memory", artifact_id=body.artifact_id, revision=body.revision),
+            entry_id=body.entry_id,
+            entry_version_id=body.entry_version_id,
+        )
+
+    @app.get("/api/memory/entries")
+    async def memory_entries(request: Request) -> dict[str, Any]:
+        scope = await require_session(request)
+        resp = await app.state.client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope))
+        return {"entries": [_entry_payload(entry) for entry in resp.entries]}
+
+    @app.post("/api/memory/retire")
+    async def memory_retire(body: RetireBody, request: Request) -> dict[str, bool]:
+        scope = await require_session(request)
+        await app.state.client.retire_memory_entry(
+            RetireMemoryEntryRequest(scope_id=scope, citation=_citation(body), reason="demo 面板遗忘")
+        )
+        return {"ok": True}
+
+    @app.post("/api/memory/revise")
+    async def memory_revise(body: ReviseBody, request: Request) -> dict[str, bool]:
+        scope = await require_session(request)
+        await app.state.client.revise_memory_entry(
+            ReviseMemoryEntryRequest(
+                scope_id=scope, citation=_citation(body), kind=body.kind, text=body.text, reason="demo 面板修改"
+            )
+        )
+        return {"ok": True}
 
 
 def create_demo_app(cfg: DemoConfig) -> FastAPI:
@@ -125,6 +198,8 @@ def create_demo_app(cfg: DemoConfig) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    _add_memory_routes(app)
 
     return app
 
