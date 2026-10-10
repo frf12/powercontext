@@ -78,8 +78,28 @@ def test_enter_then_session_and_scope() -> None:
     run_with_app(body)
 
 
+def test_nickname_roundtrip_with_tricky_characters() -> None:
+    async def body(client: httpx.AsyncClient, app: Any) -> None:
+        resp = await _enter(client, "open-sesame", "张 三")  # interior space, exercises percent-encoding
+        assert resp.status_code == 200
+        assert resp.json()["scope_id"] == "visitor-张-三"
+        session = await client.get("/api/session")
+        assert session.json() == {"nickname": "张 三", "scope_id": "visitor-张-三"}
+
+    run_with_app(body)
+
+
 def test_session_without_token_is_401() -> None:
     async def body(client: httpx.AsyncClient, app: Any) -> None:
+        resp = await client.get("/api/session")
+        assert resp.status_code == 401
+
+    run_with_app(body)
+
+
+def test_unknown_token_is_401() -> None:
+    async def body(client: httpx.AsyncClient, app: Any) -> None:
+        client.cookies.set("demo_token", "bogus")
         resp = await client.get("/api/session")
         assert resp.status_code == 401
 
