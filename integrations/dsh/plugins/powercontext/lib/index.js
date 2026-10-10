@@ -1891,6 +1891,7 @@ const PUBLIC_ERROR_CODES = new Set([
 	"candidate_terminal",
 	"scope_version_conflict",
 	"scope_idempotency_conflict",
+	"scope_binding_target_missing",
 	"artifact_publication_conflict",
 	"connector_checkpoint_conflict",
 	"generation_conflict",
@@ -1925,6 +1926,7 @@ const PUBLIC_ERROR_CODES = new Set([
 function publicErrorCode(code) {
 	return typeof code === "string" && PUBLIC_ERROR_CODES.has(code) ? code : void 0;
 }
+const SCOPE_BINDING_TARGET_MISSING_RECOVERY = "A persisted Scope binding points to a missing Scope. An operator must investigate the data loss and restore the original Scope or explicitly repair the binding. Do not automatically create a replacement Scope.";
 function isVersionMismatch(error) {
 	return error.statusCode === 404 && error.code === void 0 && COMPATIBILITY_OR_AVAILABILITY_PATHS.has(error.path);
 }
@@ -1941,7 +1943,8 @@ function responseDiagnostic(event, outcome, error) {
 		outcome,
 		http_status: error.statusCode,
 		...error.requestId ? { request_id: error.requestId } : {},
-		...code ? { error_code: code } : {}
+		...code ? { error_code: code } : {},
+		...error.statusCode === 409 && code === "scope_binding_target_missing" ? { recovery: SCOPE_BINDING_TARGET_MISSING_RECOVERY } : {}
 	};
 }
 /**
@@ -2622,13 +2625,22 @@ function mapServerErrorCore(error) {
 			...requestIdField(error.requestId)
 		};
 	}
-	if (error.statusCode === 409) return {
-		ok: false,
-		code: code ?? "conflict",
-		message: "PowerContext operation conflicts with the current state. Inspect the current reference before retrying.",
-		status: 409,
-		...requestIdField(error.requestId)
-	};
+	if (error.statusCode === 409) {
+		if (code === "scope_binding_target_missing") return {
+			ok: false,
+			code,
+			message: SCOPE_BINDING_TARGET_MISSING_RECOVERY,
+			status: 409,
+			...requestIdField(error.requestId)
+		};
+		return {
+			ok: false,
+			code: code ?? "conflict",
+			message: "PowerContext operation conflicts with the current state. Inspect the current reference before retrying.",
+			status: 409,
+			...requestIdField(error.requestId)
+		};
+	}
 	if (error.statusCode === 410) return {
 		ok: false,
 		code: code ?? "cursor_expired",

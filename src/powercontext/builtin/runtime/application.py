@@ -170,6 +170,7 @@ from powercontext.builtin.runtime.artifact_search import ArtifactSearchService
 from powercontext.builtin.runtime.atomic_memory import AtomicMemorySearchHit
 from powercontext.builtin.runtime.decision_model import DecisionModel
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
+from powercontext.builtin.runtime.extraction_diagnostics import ExtractionDiagnostics
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
@@ -179,6 +180,7 @@ from powercontext.builtin.runtime.models import (
     ExperienceIncubationResult,
     ExternalSkillList,
     ExternalSkillScanResult,
+    ExtractionStatus,
     GenerateExperienceRequest,
     GenerateSkillRequest,
     GetArtifactCandidateRequest,
@@ -2827,6 +2829,7 @@ class BuiltinRuntime:
         *,
         provider: PowerContextProvider[BuiltinSources, BuiltinArtifacts, BuiltinTriggers],
         capabilities: RuntimeCapabilities,
+        extraction_diagnostics: ExtractionDiagnostics | None = None,
         code_service: CodeService | None = None,
         source_window_limit: int = 100,
         context_assembly_max_entries: int = 8,
@@ -2889,6 +2892,7 @@ class BuiltinRuntime:
             raise _RuntimeConfigurationError("scope_cache_size")
         self._provider = provider
         self._capabilities = capabilities
+        self._extraction_diagnostics = extraction_diagnostics
         self._review_service = review_service
         self.profiles = profiles
         self.subject_sources = subject_sources
@@ -3000,6 +3004,13 @@ class BuiltinRuntime:
     async def capabilities(self) -> RuntimeCapabilities:
         async with self._operation():
             return self._capabilities
+
+    def extraction_status(self) -> ExtractionStatus | None:
+        """Read local observations without querying storage or calling a model."""
+
+        if self._extraction_diagnostics is None:
+            return None
+        return self._extraction_diagnostics.snapshot(self.artifact_processing_supervisor)
 
     async def readiness(self) -> RuntimeReadiness:
         """Check whether the Runtime and its assembled dependencies can accept work."""
@@ -3258,7 +3269,15 @@ class BuiltinRuntime:
         ) as runtime_context:
             window_limit = self.source_window_limit if limit is None else limit
             async with self._locked(scope_id):
-                return await runtime_context.triggers.flush(limit=window_limit, atomic_context=context)
+                try:
+                    result = await runtime_context.triggers.flush(limit=window_limit, atomic_context=context)
+                except Exception as error:
+                    if self._extraction_diagnostics is not None:
+                        self._extraction_diagnostics.failed(error)
+                    raise
+                if result.processed and self._extraction_diagnostics is not None:
+                    self._extraction_diagnostics.succeeded()
+                return result
 
     @asynccontextmanager
     async def _locked(self, scope_id: str) -> AsyncIterator[None]:
