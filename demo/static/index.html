@@ -34,6 +34,7 @@
           background: #fff; transition: left .2s; }
   .switch input:checked + .track { background: var(--accent); }
   .switch input:checked + .track .knob { left: 23px; }
+  .switch.disabled { opacity: .5; cursor: default; }
   button { background: var(--card); color: var(--text); border: 1px solid var(--line);
            border-radius: 8px; padding: 6px 14px; cursor: pointer; font: inherit;
            transition: border-color .15s, background .15s, opacity .15s; }
@@ -61,7 +62,9 @@
   input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   input:disabled, textarea:disabled { opacity: .6; }
   #main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-  #cols { flex: 1; display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+  /* minmax(0,1fr) 把唯一的隐式行钉在容器高内: 否则 auto 行随内容增长,
+     几轮对话后 header 连同开关/新会话被永久挤出视口 */
+  #cols { flex: 1; display: grid; grid-template-columns: 1fr 360px; grid-template-rows: minmax(0, 1fr); min-height: 0; }
   #chat { display: flex; flex-direction: column; min-width: 0; }
   #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
   .msg { max-width: 78%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
@@ -104,6 +107,13 @@
   .empty { color: var(--dim); font-size: 12px; }
   .footnote { color: var(--dim); font-size: 12px; margin-top: 18px; padding-top: 12px;
               border-top: 1px dashed var(--line); line-height: 1.7; }
+  @media (max-width: 860px) {
+    #cols { grid-template-columns: 1fr; }
+    #panel { display: none; }
+  }
+  @media (min-width: 1600px) {
+    body { font-size: 16px; }
+  }
 </style>
 </head>
 <body>
@@ -155,6 +165,9 @@
 
 <script>
 const state = { nickname: "", memoryOn: true, messages: [], known: new Set(), busy: false };
+
+// 一整轮聊天(召回+生成+后台写入)的兜底上限, 超过判定为连接超时
+const CHAT_TIMEOUT_MS = 8 * 60 * 1000;
 
 const $ = (id) => document.getElementById(id);
 
@@ -239,7 +252,7 @@ $("memorySwitch").addEventListener("change", (event) => {
 });
 
 $("newSession").addEventListener("click", () => {
-  if (state.busy) return;
+  if (state.busy) { toast("等小忆说完再开新会话"); return; }
   state.messages = [];
   $("messages").innerHTML = "";
   const divider = el("div", "divider", "—— 新会话：聊天记录已清空，但小忆的记忆还在 ——");
@@ -277,32 +290,39 @@ function logRecallError(message) {
   log.prepend(el("div", "logitem error", "⚠️ 召回失败：" + String(message || "").slice(0, 80)));
 }
 
+// 永不抛错: flushed 触发的刷新失败不能把已完成回合的气泡改写成错误;
+// 返回 false 让调用方(如 retire/revise 之后)恢复按钮状态
 async function refreshEntries() {
-  const resp = await fetch("/api/memory/entries");
-  if (!resp.ok) return;
-  const { entries } = await resp.json();
-  const holder = $("entries");
-  holder.innerHTML = "";
-  if (!entries.length) {
-    holder.append(el("p", "empty", "还没有记忆，先跟小忆聊聊你自己吧"));
-    return;
-  }
-  const added = [];
-  for (const entry of entries) {
-    const fresh = !state.known.has(entry.entry_id);
-    if (fresh) {
-      state.known.add(entry.entry_id);
-      if (state.messages.length) added.push(entry.text);
+  try {
+    const resp = await fetch("/api/memory/entries");
+    if (!resp.ok) return false;
+    const { entries } = await resp.json();
+    const holder = $("entries");
+    holder.innerHTML = "";
+    if (!entries.length) {
+      holder.append(el("p", "empty", "还没有记忆，先跟小忆聊聊你自己吧"));
+      return true;
     }
-    holder.append(renderCard(entry, fresh));
-  }
-  if (added.length) {
-    const log = $("writeLog");
-    log.querySelector(".empty")?.remove();
-    const item = el("div", "logitem fade-in");
-    item.append(el("span", "new", `新写入 ${added.length} 条：`));
-    item.append(document.createTextNode(added.join("；")));
-    log.prepend(item);
+    const added = [];
+    for (const entry of entries) {
+      const fresh = !state.known.has(entry.entry_id);
+      if (fresh) {
+        state.known.add(entry.entry_id);
+        if (state.messages.length) added.push(entry.text);
+      }
+      holder.append(renderCard(entry, fresh));
+    }
+    if (added.length) {
+      const log = $("writeLog");
+      log.querySelector(".empty")?.remove();
+      const item = el("div", "logitem fade-in");
+      item.append(el("span", "new", `新写入 ${added.length} 条：`));
+      item.append(document.createTextNode(added.join("；")));
+      log.prepend(item);
+    }
+    return true;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -333,13 +353,14 @@ async function postMemory(path, body) {
   return "ok";
 }
 
-// ok = 操作成功; conflict = 409 已被别人改过; 两种情况都要刷新面板
+// ok = 操作成功; conflict = 409 已被别人改过; 两种情况都要刷新面板;
+// 刷新本身失败时同样恢复按钮, 否则卡片的操作会被永久锁死
 async function applyMemoryOp(path, body, retireBtn, reviseBtn) {
   retireBtn.disabled = true;
   reviseBtn.disabled = true;
   const result = await postMemory(path, body);
-  if (result === "ok" || result === "conflict") await refreshEntries();
-  else { retireBtn.disabled = false; reviseBtn.disabled = false; }
+  const refreshed = (result === "ok" || result === "conflict") ? await refreshEntries() : false;
+  if (!refreshed) { retireBtn.disabled = false; reviseBtn.disabled = false; }
 }
 
 function renderCard(entry, fresh) {
@@ -367,35 +388,57 @@ function renderCard(entry, fresh) {
 }
 
 $("composer").addEventListener("submit", (event) => { event.preventDefault(); send(); });
+$("input").addEventListener("input", () => {
+  const node = $("input");
+  node.style.height = "auto";
+  node.style.height = Math.max(44, Math.min(node.scrollHeight, 120)) + "px";
+});
+// 中文输入法组词中的 Enter 是选字/上屏, 不是发送
 $("input").addEventListener("keydown", (event) => {
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
 });
+
+function setBusy(busy) {
+  state.busy = busy;
+  $("send").disabled = busy;
+  $("input").disabled = busy;
+  // 流式期间锁定记忆开关: 中途切换对进行中的这一轮不生效, 只会让对比演示更困惑
+  $("memorySwitch").disabled = busy;
+  $("switchLabel").classList.toggle("disabled", busy);
+}
 
 async function send() {
   const text = $("input").value.trim();
   if (!text || state.busy) return;
-  state.busy = true;
-  $("send").disabled = true;
-  $("input").disabled = true;
+  setBusy(true);
   $("input").value = "";
+  $("input").style.height = "";
   state.messages.push({ role: "user", content: text });
   $("messages").append(el("div", "msg user", text));
   scrollBottom();
   const bubble = el("div", "msg bot streaming", "");
   $("messages").append(bubble);
   let terminated = false;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: state.messages, memory_on: state.memoryOn }),
+      signal: controller.signal,
     });
     if (resp.status === 401) {
       terminated = true;
       bubble.textContent = "（会话已过期，请刷新页面重新进入）";
       return;
     }
-    if (!resp.ok || !resp.body) throw new Error("HTTP " + resp.status);
+    if (!resp.ok || !resp.body) {
+      let detail = "";
+      try { detail = (await resp.json()).detail || ""; } catch (e) { /* non-JSON body */ }
+      throw new Error(detail || `HTTP ${resp.status}`);
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -440,13 +483,14 @@ async function send() {
       bubble.textContent += (bubble.textContent ? "\n" : "") + "（连接中断，请重试）";
     }
   } catch (err) {
-    bubble.textContent += (bubble.textContent ? "\n" : "") + `（出错了：${err.message}）`;
+    const note = err && err.name === "AbortError" ? "（连接超时，请重试）" : `（出错了：${err.message}）`;
+    bubble.textContent += (bubble.textContent ? "\n" : "") + note;
   } finally {
+    clearTimeout(timeout);
     bubble.classList.remove("streaming");
-    state.busy = false;
-    $("send").disabled = false;
-    $("input").disabled = false;
-    scrollBottom();
+    setBusy(false);
+    // 用户往上翻看旧消息时不要强行拽回底部
+    if (nearBottom()) scrollBottom();
     $("input").focus();
   }
 }
