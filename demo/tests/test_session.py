@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from demo.app import create_demo_app, shutdown, startup
 from demo.config import DemoConfig
@@ -135,5 +136,28 @@ def test_blank_nickname_is_422() -> None:
     async def body(client: httpx.AsyncClient, app: Any) -> None:
         resp = await _enter(client, "open-sesame", "   ")
         assert resp.status_code == 422
+
+    run_with_app(body)
+
+
+def test_ensure_scope_installs_language_following_extraction_prompt(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 提示词定制能力要求 generation provider 已配置(不要求可达, 创建提示词不调用模型)
+    monkeypatch.setenv("POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL", "openai-chat:fake-extract")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_INFERENCE_GENERATION_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_INFERENCE_GENERATION_HEADERS", '{"Authorization":"Bearer x"}')
+
+    async def body(client: httpx.AsyncClient, app: Any) -> None:
+        resp = await _enter(client, "open-sesame", "张三")
+        assert resp.status_code == 200
+        scope_id = resp.json()["scope_id"]
+        configuration = await app.state.client.get_prompt_configuration(scope_id, "memory.extract")
+        assert configuration.mode == "custom"
+        assert configuration.effective is not None
+        assert "same language" in configuration.effective.instructions
+        # 再次进入(新进程场景外的重复调用)不应再追加覆写: mode 已是 custom
+        again = await _enter(client, "open-sesame", "张三")
+        assert again.json()["scope_id"] == scope_id
 
     run_with_app(body)

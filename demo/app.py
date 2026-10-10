@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.parse
 import uuid
@@ -30,10 +31,13 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.http import (
     ArtifactReference,
+    CreateArtifactRequest,
+    CreatePromptArtifactRequest,
     CreateScopeRequest,
     ListMemoryEntriesRequest,
     MemoryCitation,
     MemoryEntry,
+    PromptContent,
     RetireMemoryEntryRequest,
     ReviseMemoryEntryRequest,
 )
@@ -44,6 +48,9 @@ from .config import DemoConfig
 from .server import EmbeddedPowerContext
 
 _NICK_CLEAN = re.compile(r"[^0-9a-zA-Z一-鿿]+")
+
+# 本进程内已完成提示词覆写的 scope, 避免 require_session 每次多打一轮 GET
+_PROMPT_ENSURED: set[str] = set()
 
 # 前端单页路径在导入期解析一次: async 路由内直接用 pathlib 会触发 ASYNC240
 _INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
@@ -69,7 +76,47 @@ async def ensure_scope(client: PowerContextClient, nickname: str) -> str:
             idempotency_key=f"demo:{slug}",
         )
     )
-    return descriptor.scope_id
+    scope_id = descriptor.scope_id
+    if scope_id not in _PROMPT_ENSURED:
+        try:
+            await ensure_extraction_prompt(client, scope_id)
+        except Exception as exc:  # 提示词覆写失败不阻断进门, 只是记忆语言不保证跟随
+            logging.getLogger(__name__).warning("记忆提取提示词覆写失败: %s", exc)
+        _PROMPT_ENSURED.add(scope_id)
+    return scope_id
+
+
+_LANGUAGE_RULE = (
+    "\n- Write every candidate text in the same language the user used in the cited evidence "
+    "(e.g. a Chinese conversation must yield Chinese memory text)."
+)
+
+
+async def ensure_extraction_prompt(client: PowerContextClient, scope_id: str) -> None:
+    """Override the scope's memory.extract prompt so memories follow the user's language.
+
+    Uses the product's prompt-customization feature: keeps the active built-in
+    instructions (and the engine's invariants) and appends one language rule.
+    Idempotent: after the custom head exists, mode becomes "custom" and we no-op.
+    """
+    configuration = await client.get_prompt_configuration(scope_id, "memory.extract")
+    if configuration.mode == "custom" or configuration.builtin is None:
+        return
+    await client.create_artifact(
+        scope_id,
+        CreateArtifactRequest(
+            CreatePromptArtifactRequest(
+                family="prompt",
+                prompt_key="memory.extract",
+                content=PromptContent(
+                    schema_version="powercontext.prompt.v1",
+                    mode="custom",
+                    instructions=configuration.builtin.instructions + _LANGUAGE_RULE,
+                    demonstrations=[],
+                ),
+            )
+        ),
+    )
 
 
 class EnterRequest(BaseModel):

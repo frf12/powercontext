@@ -94,12 +94,6 @@
              border-radius: 999px; padding: 2px 12px; }
   .divider .on { color: var(--accent); }
   .divider .off { color: var(--dim); }
-  details.recall { align-self: flex-start; max-width: 78%; color: var(--dim); font-size: 12px; }
-  details.recall summary { cursor: pointer; color: var(--warm); user-select: none; }
-  details.recall summary:hover { color: var(--text); }
-  details.recall .hit { padding: 2px 0; border-bottom: 1px dashed var(--line); }
-  details.recall .hit:last-child { border-bottom: none; }
-  details.recall .score { color: var(--dim); margin-left: 6px; }
   #composer { display: flex; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line);
               background: var(--panel); flex: none; }
   #composer textarea { flex: 1; resize: none; height: 44px; }
@@ -170,8 +164,6 @@
     <aside id="panel">
       <h3>我的记忆</h3>
       <div id="entries"><p class="empty">还没有记忆，先跟小忆聊聊你自己吧</p></div>
-      <h3>召回日志</h3>
-      <div id="recallLog"><p class="empty">暂无</p></div>
       <h3>写入日志</h3>
       <div id="writeLog"><p class="empty">暂无</p></div>
       <p class="footnote">真实接入：PowerContext 提供 MCP / CLI / SDK 集成，任何 Agent 都能直接调用这些记忆能力。</p>
@@ -277,40 +269,7 @@ $("newSession").addEventListener("click", () => {
   $("input").focus();
 });
 
-function lastUserText() {
-  const mine = state.messages.filter((m) => m.role === "user");
-  return mine.length ? mine[mine.length - 1].content : "";
-}
-
-function renderRecall(hits, fallback) {
-  const details = el("details", "recall");
-  const summary = el(
-    "summary",
-    "",
-    fallback ? `🧠 没有直接命中，带上了最近的 ${hits.length} 条记忆` : `📎 本次召回了 ${hits.length} 条记忆`
-  );
-  details.append(summary);
-  for (const hit of hits) {
-    const row = el("div", "hit");
-    row.append(document.createTextNode(hit.text));
-    if (!fallback) row.append(el("span", "score", (hit.score ?? 0).toFixed(2)));
-    details.append(row);
-  }
-  const log = $("recallLog");
-  log.querySelector(".empty")?.remove();
-  const item = el("div", "logitem");
-  item.append(
-    el("b", "", fallback ? `「${lastUserText().slice(0, 24)}」带上了最近 ${hits.length} 条` : `「${lastUserText().slice(0, 24)}」召回了 ${hits.length} 条`)
-  );
-  log.prepend(item);
-  return details;
-}
-
-function logRecallError(message) {
-  const log = $("recallLog");
-  log.querySelector(".empty")?.remove();
-  log.prepend(el("div", "logitem error", "⚠️ 召回失败：" + String(message || "").slice(0, 80)));
-}
+// 召回命中不在界面上展示: 记忆效果由小忆的回答自己体现, 减少现场解释成本
 
 // 永不抛错: flushed 触发的刷新失败不能把已完成回合的气泡改写成错误;
 // 返回 false 让调用方(如 retire/revise 之后)恢复按钮状态
@@ -475,13 +434,8 @@ async function send() {
         if (!chunk.startsWith("data: ")) continue;
         let event;
         try { event = JSON.parse(chunk.slice(6)); } catch (e) { continue; }
-        if (event.type === "recall") {
-          const stick = nearBottom();
-          bubble.before(renderRecall(event.hits || [], Boolean(event.fallback)));
-          if (stick) scrollBottom();
-        } else if (event.type === "recall_error") {
-          logRecallError(event.message);
-        } else if (event.type === "delta") {
+        // recall / recall_error 静默忽略: 命中信息不展示给体验者
+        if (event.type === "delta") {
           const stick = nearBottom();
           bubble.textContent += event.text;
           if (stick) scrollBottom();
