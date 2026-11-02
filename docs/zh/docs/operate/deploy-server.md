@@ -217,6 +217,13 @@ Rust 可执行程序、联合 launcher、网关配置、私有通道认证、私
 已配置代码仓库。重放的内容因被引用的来源变化（例如 Agent 修改了被引用的文件）而不再通过检查时，网关丢弃该会话的重放，
 为该请求重新准备一次，而不是把 withhold 返回给客户端。
 
+### 网关输出上限
+
+enforcing 模式的 Server 要求每个生成请求都设置输出上限，而有些客户端从不发送；例如 Codex 0.145 不发送
+`max_output_tokens`。把 `PC_GATEWAY_DEFAULT_MAX_OUTPUT_TOKENS` 设为正整数后，网关为没有设置上限的 Chat 和 Responses
+请求补上该值。补值发生在送检之前，因此 Server 按目标的 `max_output_tokens` 检查最终的值；客户端自己设置的上限保持不变。
+该值只在启动时读取，配置了无效值时网关拒绝启动。
+
 ### 网关固定指令
 
 `PC_GATEWAY_STEERING_FILE` 指定一个文件，其中是一段简短的固定指令，网关把它加入 Responses 入口

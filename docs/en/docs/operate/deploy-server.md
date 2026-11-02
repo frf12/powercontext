@@ -238,6 +238,14 @@ off by default and requires a configured repository for the Scope. When a replay
 because a cited source changed (for example, the agent edited a cited file), the gateway discards that conversation's
 replay and prepares once more for the request instead of returning the withhold.
 
+### Gateway output limit
+
+An enforcing Server requires every generation request to set an output limit, and some clients never send one;
+Codex 0.145, for example, sends no `max_output_tokens`. Set `PC_GATEWAY_DEFAULT_MAX_OUTPUT_TOKENS` to a positive
+integer to add that limit to Chat and Responses requests that set none. The gateway adds it before the request is
+checked, so the Server checks the final value against the target's `max_output_tokens`; a limit the client sets is kept.
+The value is read once at startup, and an invalid value stops the gateway.
+
 ### Gateway instruction
 
 `PC_GATEWAY_STEERING_FILE` names a file with a short, fixed instruction that the gateway adds to every request on the
