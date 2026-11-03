@@ -193,7 +193,12 @@ def _opaque_document_source(source: object) -> bool:
     return True
 
 
-def contains_opaque_content(value: object, *, protocol: PrivacyProtocol | None = None) -> bool:
+def contains_opaque_content(  # noqa: C901 - bounded visitor keeps exceptions tied to protocol positions
+    value: object,
+    *,
+    protocol: PrivacyProtocol | None = None,
+    benchmark_allow_codex_encrypted_content: bool = False,
+) -> bool:
     """Inspect protocol envelopes and blocks without interpreting schemas as content.
 
     Tool declarations and output schemas describe user data, not model content
@@ -220,19 +225,44 @@ def contains_opaque_content(value: object, *, protocol: PrivacyProtocol | None =
             and any(isinstance(item, dict) and "id" in item and item.get("type") is None for item in inputs)
         ):
             return True
-        if any(key in _OPAQUE_KEYS for key in value):
-            return True
-        content_type = value.get("type")
-        if isinstance(content_type, str) and content_type in _OPAQUE_TYPES:
-            return True
-        if content_type == "document" and _opaque_document_source(value.get("source")):
-            return True
-        return any(
-            contains_opaque_content(child)
-            for field, child in value.items()
-            if field in _CONTENT_FIELDS and not (content_type == "tool_use" and field == "input")
-        )
-    return isinstance(value, list) and any(contains_opaque_content(child) for child in value)
+
+    benchmark_enabled = benchmark_allow_codex_encrypted_content and protocol == "openai-responses"
+
+    def visit(  # noqa: C901 - keep the experimental exception bound to exact protocol positions
+        item: object, *, root: bool = False, codex_item: bool = False, agent_part: bool = False, scan_all: bool = False
+    ) -> bool:
+        if isinstance(item, dict):
+            content_type = item.get("type")
+            allowed_encrypted = (
+                (codex_item and content_type == "reasoning")
+                or (agent_part and content_type == "encrypted_content" and set(item) == {"type", "encrypted_content"})
+            ) and isinstance(item.get("encrypted_content"), str)
+            if any(key in _OPAQUE_KEYS and not (key == "encrypted_content" and allowed_encrypted) for key in item):
+                return True
+            if content_type == "encrypted_content" and not allowed_encrypted:
+                return True
+            if isinstance(content_type, str) and content_type in _OPAQUE_TYPES:
+                return True
+            if content_type == "document" and _opaque_document_source(item.get("source")):
+                return True
+            # Experimental Codex items have no tool schemas. Inspect every other
+            # nested field so an allowed cipher cannot hide a second opaque carrier.
+            scan_all = scan_all or (codex_item and content_type in ("reasoning", "agent_message"))
+            for field, child in item.items():
+                if root and benchmark_enabled and field in {"input", "output"} and isinstance(child, list):
+                    if any(visit(part, codex_item=True) for part in child):
+                        return True
+                elif codex_item and content_type == "agent_message" and field == "content" and isinstance(child, list):
+                    if any(visit(part, agent_part=True, scan_all=True) for part in child):
+                        return True
+                elif (
+                    scan_all or (field in _CONTENT_FIELDS and not (content_type == "tool_use" and field == "input"))
+                ) and visit(child, scan_all=scan_all):
+                    return True
+            return False
+        return isinstance(item, list) and any(visit(child, scan_all=scan_all) for child in item)
+
+    return visit(value, root=True)
 
 
 def joined_content_text(value: object) -> tuple[str, ...]:

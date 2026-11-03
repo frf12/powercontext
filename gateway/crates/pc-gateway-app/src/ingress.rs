@@ -250,6 +250,7 @@ async fn ingress_common(
             conversation.is_some(),
         ),
         include_code: state.inject_code,
+        include_memory: state.inject_memory,
         conversation_id: conversation,
         sediment: state.sediment,
         prepared_contexts: Vec::new(),

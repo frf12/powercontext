@@ -154,6 +154,97 @@ def test_unverified_carriers_and_hidden_state_are_withheld(raw: bytes, reason: s
     assert result.coverage.complete is False
 
 
+def _codex_benchmark_policy() -> PrivacyPolicy:
+    protection = config()
+    strict = protection.targets["test"].model_copy(update={"protocol": "openai-responses"})
+    experimental = strict.model_copy(update={"benchmark_allow_codex_encrypted_content": True})
+    return PrivacyPolicy(protection.model_copy(update={"targets": {"strict": strict, "benchmark": experimental}}))
+
+
+def _codex_payload(item: dict[str, Any], phase: str) -> bytes:
+    value = (
+        {"model": "test-model", "input": [item], "store": False, "max_output_tokens": 10}
+        if phase == "before_send"
+        else {"model": "test-model", "status": "completed", "output": [item]}
+    )
+    return json.dumps(value).encode()
+
+
+@pytest.mark.parametrize("phase", ["before_send", "before_release"])
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "reasoning", "summary": [], "encrypted_content": "benchmark-cipher"},
+        {
+            "type": "agent_message",
+            "author": "agent-a",
+            "recipient": "agent-b",
+            "content": [
+                {"type": "input_text", "text": "visible context"},
+                {"type": "encrypted_content", "encrypted_content": "benchmark-cipher"},
+            ],
+        },
+    ],
+)
+def test_codex_ciphers_require_explicit_benchmark_target(item, phase) -> None:
+    policy = _codex_benchmark_policy()
+    raw = _codex_payload(item, phase)
+    strict = policy.inspect_json(raw, phase=phase, target_profile="strict")
+    assert strict.decision == "withhold" and strict.reason_codes == ("content_unsupported",)
+    admitted = policy.inspect_json(raw, phase=phase, target_profile="benchmark")
+    assert admitted.decision == "allow" and admitted.coverage.complete
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "reasoning", "encrypted_content": {"value": "cipher"}},
+        {"type": "compaction", "encrypted_content": "cipher"},
+        {"type": "message", "content": [{"type": "reasoning", "encrypted_content": "cipher"}]},
+        {"type": "reasoning", "encrypted_content": "cipher", "summary": [{"encrypted_content": "nested"}]},
+        {"type": "reasoning", "encrypted_content": "cipher", "content": [{"type": "input_image", "image_url": "url"}]},
+        {
+            "type": "reasoning",
+            "encrypted_content": "cipher",
+            "summary": [{"type": "tool_use", "input": {"encrypted_content": "nested"}}],
+        },
+        {"type": "agent_message", "content": [{"type": "encrypted_content", "encrypted_content": 7}]},
+        {
+            "type": "agent_message",
+            "content": [{"type": "encrypted_content", "encrypted_content": "cipher", "extra": "unexpected"}],
+        },
+        {"type": "function_call_output", "output": [{"type": "encrypted_content", "encrypted_content": "cipher"}]},
+    ],
+)
+def test_codex_benchmark_rejects_other_opaque_carriers(item) -> None:
+    result = _codex_benchmark_policy().inspect_json(
+        _codex_payload(item, "before_send"), phase="before_send", target_profile="benchmark"
+    )
+    assert result.decision == "withhold" and result.reason_codes == ("content_unsupported",)
+
+
+@pytest.mark.parametrize("phase", ["before_send", "before_release"])
+def test_codex_benchmark_keeps_plaintext_checks(phase) -> None:
+    item = {"type": "reasoning", "encrypted_content": "cipher", "summary": [{"type": "summary_text", "text": SECRET}]}
+    result = _codex_benchmark_policy().inspect_json(
+        _codex_payload(item, phase), phase=phase, target_profile="benchmark"
+    )
+    assert result.decision == "block" and result.reason_codes == ("forbidden_content",)
+
+
+def test_codex_benchmark_does_not_enable_other_protocols_or_relax_output_budget() -> None:
+    item = {"type": "reasoning", "encrypted_content": "cipher"}
+    chat = PrivacyPolicy(config(benchmark_allow_codex_encrypted_content=True))
+    rejected = chat.inspect_json(body([item]), phase="before_send", target_profile="test")
+    assert rejected.decision == "withhold" and rejected.reason_codes == ("content_unsupported",)
+    request = json.loads(_codex_payload(item, "before_send"))
+    request["max_output_tokens"] = 257
+    rejected = _codex_benchmark_policy().inspect_json(
+        json.dumps(request).encode(), phase="before_send", target_profile="benchmark"
+    )
+    assert rejected.decision == "withhold" and rejected.reason_codes == ("output_limit_required",)
+
+
 @pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses", "anthropic-messages"])
 @pytest.mark.parametrize("schema_location", ["tool", "output"])
 def test_text_schemas_can_define_opaque_carrier_property_names(protocol, schema_location) -> None:

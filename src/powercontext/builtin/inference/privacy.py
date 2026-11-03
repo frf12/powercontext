@@ -62,6 +62,8 @@ class UpstreamProfile(BaseModel):
     max_output_tokens: int | None = Field(default=None, ge=1)
     validated_utf8_token_bound: bool = False
     protocol_token_reserve: int = Field(default=64, ge=0, le=65536)
+    # Temporary benchmark opt-in; does not establish cipher provenance or inspect its plaintext.
+    benchmark_allow_codex_encrypted_content: bool = False
 
     @field_validator("endpoint")
     @classmethod
@@ -380,7 +382,11 @@ class PrivacyPolicy:
             return self.decision(phase, "block", "forbidden_content", complete=True)
         if duplicate:
             return self.decision(phase, "withhold", "json_duplicate_key")
-        if contains_opaque_content(value, protocol=profile.protocol):
+        if contains_opaque_content(
+            value,
+            protocol=profile.protocol,
+            benchmark_allow_codex_encrypted_content=profile.benchmark_allow_codex_encrypted_content,
+        ):
             return self.decision(phase, "withhold", "content_unsupported")
         if not all(
             complete_tool_arguments(item, self.config.max_json_depth)

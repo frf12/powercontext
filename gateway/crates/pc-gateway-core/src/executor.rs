@@ -63,6 +63,8 @@ pub struct ManagedCall {
     pub headers: Vec<(String, String)>,
     pub degrade_policy: DegradePolicy,
     pub inject_context: bool,
+    /// 是否召回历史记忆；关闭时仍可独立请求代码证据。
+    pub include_memory: bool,
     /// 注入时同时请求代码证据（默认关）。
     pub include_code: bool,
     /// 宿主提供的会话 ID（`X-PowerContext-Conversation-ID`）。只有带它的请求才在会话内重放准备结果。
@@ -196,6 +198,7 @@ where
                                 headers: call.headers.clone(),
                                 degrade_policy: DegradePolicy::Pause,
                                 inject_context: false,
+                                include_memory: false,
                                 include_code: false,
                                 conversation_id: None,
                                 sediment: false,
@@ -480,7 +483,8 @@ where
         call: &ManagedCall,
         evidence: &dyn EvidenceSink,
     ) -> Option<(Option<PreparedBlock>, Option<String>)> {
-        let query = last_user_text(&call.request)?;
+        // Core limits the retrieval query to 8192 characters; keep the model input intact.
+        let query = last_user_text(&call.request)?.chars().take(8192).collect();
         let prepared = match self
             .gate
             .prepare(PrepareContextRequest {
@@ -489,9 +493,14 @@ where
                 max_bytes: 8192,
                 include_reuse: true,
                 include_code: call.include_code,
-                // P2 review：限定 memory-only（#2313 reuse 只支持 atomic-memory），
-                // 防止 Experience/Topic 加入后 check 拒绝导致注入静默失效。
-                assembly: Some(pc_gateway_types::ContextAssembly::memory_only()),
+                // 空 sections 关闭所有历史家族，include_code 独立控制代码证据。
+                assembly: Some(if call.include_memory {
+                    pc_gateway_types::ContextAssembly::memory_only()
+                } else {
+                    pc_gateway_types::ContextAssembly {
+                        sections: Vec::new(),
+                    }
+                }),
             })
             .await
         {

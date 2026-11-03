@@ -1,0 +1,12 @@
+--- a/gateway/crates/pc-gateway-core/src/executor.rs
++++ b/gateway/crates/pc-gateway-core/src/executor.rs
+@@ -483,8 +483,7 @@
+         call: &ManagedCall,
+         evidence: &dyn EvidenceSink,
+     ) -> Option<(Option<PreparedBlock>, Option<String>)> {
+-        // Core limits the retrieval query to 8192 characters; keep the model input intact.
+-        let query = last_user_text(&call.request)?.chars().take(8192).collect();
++        let query = last_user_text(&call.request)?;
+         let prepared = match self
+             .gate
+             .prepare(PrepareContextRequest {

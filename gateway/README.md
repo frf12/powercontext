@@ -93,6 +93,8 @@ PC_GATEWAY_UPSTREAM_API_KEY_CHAT=... \
 # PC_GATEWAY_INJECTION=on injects every request, PC_GATEWAY_INJECTION=off disables injection, and
 # PC_GATEWAY_INJECTION_RESPONSES=off keeps the Responses route uninjected, and PC_GATEWAY_INJECTION_CODE=on adds code
 # evidence from the Scope's code index (off by default).
+# PC_GATEWAY_INJECTION_MEMORY=off disables historical memory recall while leaving code evidence independently
+# controlled by PC_GATEWAY_INJECTION_CODE. Pair with PC_GATEWAY_SEDIMENT=off for a code-only benchmark.
 # Optional: PC_GATEWAY_DEFAULT_MAX_OUTPUT_TOKENS (output limit added to requests that set none, for clients such as
 # Codex that never send one; an enforcing Core requires a limit), PC_GATEWAY_STEERING_FILE (a fixed operator instruction added to Responses requests after the client's
 # base prompt; read and validated at startup), PC_GATEWAY_SEDIMENT=on (capture after release),

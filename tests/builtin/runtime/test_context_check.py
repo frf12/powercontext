@@ -182,6 +182,41 @@ async def test_raw_request_and_response_block_without_echoing_content():
 
 
 @pytest.mark.anyio
+async def test_benchmark_cipher_admission_preserves_exact_payload_binding():
+    config = _config()
+    profile = config.targets["test"].model_copy(
+        update={"protocol": "openai-responses", "benchmark_allow_codex_encrypted_content": True}
+    )
+    config = config.model_copy(update={"targets": {"test": profile}})
+    codec = BindingCodec()
+    digests = []
+    for cipher in ("first-cipher", "changed-cipher"):
+        payload = _payload({
+            "model": "test",
+            "store": False,
+            "max_output_tokens": 64,
+            "input": [{"type": "reasoning", "summary": [], "encrypted_content": cipher}],
+        })
+        original = payload.body
+        result = await _check(_send(payload=payload), codec, config=config)
+        assert result.decision == "allow" and result.binding
+        assert payload.body == original and cipher in payload.body
+        granted = codec.open(result.binding, purpose="context-check.before_send", now=NOW)
+        expected = sha256(b'[["content-type","application/json"]]\x00' + original.encode()).hexdigest()
+        assert granted["payload_digest"] == expected
+        digests.append(granted["payload_digest"])
+        released = await _check(
+            _release(result.binding).model_copy(
+                update={"payload": _payload({"model": "test", "status": "completed", "output": []})}
+            ),
+            codec,
+            config=config,
+        )
+        assert released.decision == "allow" and released.binding
+    assert digests[0] != digests[1]
+
+
+@pytest.mark.anyio
 async def test_shadow_never_issues_an_execution_binding():
     result = await _check(_send(), BindingCodec(), config=_config(mode="shadow"))
     assert result.decision == "withhold" and not result.coverage.complete and result.binding is None

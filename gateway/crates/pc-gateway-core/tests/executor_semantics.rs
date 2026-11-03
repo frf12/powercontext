@@ -79,6 +79,7 @@ struct FakeGate {
     prepared_seen: Mutex<Vec<Vec<PreparedContextLocation>>>,
     prepare_result: Mutex<Option<Result<PrepareContextResult, GateError>>>,
     prepare_queries: Mutex<Vec<String>>,
+    prepare_requests: Mutex<Vec<serde_json::Value>>,
     /// 每次 prepare 是否请求了代码证据。
     prepare_include_code: Mutex<Vec<bool>>,
     captured: Mutex<Vec<(String, String)>>,
@@ -125,6 +126,10 @@ impl GateClient for FakeGate {
         &self,
         request: PrepareContextRequest,
     ) -> impl Future<Output = Result<PrepareContextResult, GateError>> + Send {
+        self.prepare_requests
+            .lock()
+            .unwrap()
+            .push(serde_json::to_value(&request).unwrap());
         self.prepare_queries.lock().unwrap().push(request.query);
         self.prepare_include_code
             .lock()
@@ -252,6 +257,7 @@ fn call(degrade: DegradePolicy) -> ManagedCall {
         degrade_policy: degrade,
         inject_context: false,
         include_code: false,
+        include_memory: true,
         conversation_id: None,
         sediment: false,
         prepared_contexts: Vec::new(),
@@ -340,6 +346,7 @@ fn harness(
         prepare_queue: Mutex::new(VecDeque::new()),
         prepare_holds: Mutex::new(VecDeque::new()),
         prepare_queries: Mutex::new(Vec::new()),
+        prepare_requests: Mutex::new(Vec::new()),
         prepare_include_code: Mutex::new(Vec::new()),
         captured: Mutex::new(Vec::new()),
         capture_error: Mutex::new(None),
@@ -743,6 +750,43 @@ async fn responses_injection_targets_input_text_and_declares_input_pointer() {
     assert_eq!(body["input"][1]["content"][1]["text"], "in util.py");
     assert_eq!(body["input"][0]["role"], "developer");
     assert_eq!(transport.sends.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn prepare_query_respects_core_character_limit_without_truncating_model_input() {
+    let prefix = format!("{}中", "🧪".repeat(8191));
+    for user_text in [prefix.clone(), format!("{prefix} task suffix")] {
+        let (executor, _renderer, transport, gate) =
+            harness(allow_runs(1), vec![raw_response()], 2);
+        let block = "CODE_CONTEXT";
+        *gate.prepare_result.lock().unwrap() = Some(Ok(reuse_result(block)));
+        let mut c = call(DegradePolicy::Pause);
+        c.inject_context = true;
+        c.include_code = true;
+        c.include_memory = false;
+        c.request.messages[0].content = vec![serde_json::json!({
+            "type": "input_text", "text": user_text,
+        })];
+        let outcome = executor
+            .run(
+                c,
+                &pc_gateway_protocol::OpenAiResponsesRenderer,
+                &NoopEvidenceSink,
+            )
+            .await;
+        assert!(matches!(outcome, ManagedOutcome::Released { .. }));
+
+        let queries = gate.prepare_queries.lock().unwrap();
+        assert_eq!(queries[0].chars().count(), 8192);
+        assert_eq!(queries[0], prefix);
+        let sent = transport.sends.lock().unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&sent[0]).unwrap();
+        assert_eq!(
+            body["input"][0]["content"][0]["text"],
+            format!("{block}\n\n{user_text}")
+        );
+        assert_eq!(sent[0].as_ref(), gate.seen.lock().unwrap()[0].1.as_bytes());
+    }
 }
 
 #[tokio::test]
@@ -1214,18 +1258,12 @@ async fn prepare_requests_memory_only_assembly() {
     executor
         .run(c, &RendererRef(renderer.clone()), &NoopEvidenceSink)
         .await;
-    // FakeGate 的 prepare_queries 记录了 query，但没有记录 assembly——
-    // 需要检查 PrepareContextRequest 是否携带 assembly。
-    // 由于 FakeGate::prepare 只记录 query，我们在 fake gate 上加一个 assembly 捕获。
-    // 但为了不改动现有 harness，这里直接验证 ContextAssembly::memory_only() 的结构。
-    let assembly = pc_gateway_types::ContextAssembly::memory_only();
-    assert_eq!(assembly.sections.len(), 1);
-    assert_eq!(assembly.sections[0].family, "memory");
-    assert_eq!(assembly.sections[0].limit, 8);
-    // 序列化后形态与 #2313 契约一致
-    let json = serde_json::to_string(&assembly).unwrap();
-    assert!(json.contains(r#""family":"memory""#));
-    assert!(json.contains(r#""limit":8"#));
+    let requests = gate.prepare_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]["assembly"]["sections"],
+        serde_json::json!([{"family": "memory", "limit": 8}])
+    );
 }
 
 // ---------- P2 allow 完整性验证探针 ----------
@@ -2377,4 +2415,22 @@ async fn code_evidence_is_requested_only_when_enabled() {
         *gate.prepare_include_code.lock().unwrap(),
         vec![false, true]
     );
+}
+
+#[tokio::test]
+async fn memory_recall_can_be_disabled_while_requesting_code() {
+    let (executor, renderer, _transport, gate) =
+        harness(allow_runs(1), vec![raw_response()], 2);
+    let mut c = call(DegradePolicy::Pause);
+    c.inject_context = true;
+    c.include_memory = false;
+    c.include_code = true;
+    executor
+        .run(c, &RendererRef(renderer), &NoopEvidenceSink)
+        .await;
+    let requests = gate.prepare_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["assembly"]["sections"], serde_json::json!([]));
+    assert_eq!(requests[0]["include_code"], true);
+    assert_eq!(requests[0]["include_reuse"], true);
 }

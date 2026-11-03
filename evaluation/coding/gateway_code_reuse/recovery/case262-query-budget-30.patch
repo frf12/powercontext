@@ -1,0 +1,10 @@
+--- a/evaluation/coding/gateway_code_reuse/runner.py
++++ b/evaluation/coding/gateway_code_reuse/runner.py
+@@ -575,6 +575,7 @@
+         core_url = f"http://127.0.0.1:{core_port}"
+         core_file = directory / "core.env"
+         code: dict[str, Any] = {"enabled": True, "repositories": {}, "cache_dir": str(directory / "code-cache")}
++        code["limits"] = {"query_seconds": 30}
+         env = core_environment(args, directory, code)
+         write_env(core_file, env)
+         service_env = {k: v for k, v in os.environ.items() if not k.startswith("POWERCONTEXT_SERVER_")}

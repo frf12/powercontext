@@ -61,6 +61,8 @@ pub struct AppState {
     pub inject_responses: bool,
     /// 注入时同时请求代码证据：`PC_GATEWAY_INJECTION_CODE=on`（默认关）。
     pub inject_code: bool,
+    /// `PC_GATEWAY_INJECTION_MEMORY=off` 关闭历史记忆召回，默认开启。
+    pub inject_memory: bool,
     /// 过检后同步沉淀对话（默认关）。
     pub sediment: bool,
     /// 运维配置的固定指令（`PC_GATEWAY_STEERING_FILE`），只插入 Responses 请求；未配置时为空。
@@ -155,6 +157,10 @@ async fn main() {
         inject_code: matches!(
             std::env::var("PC_GATEWAY_INJECTION_CODE").as_deref(),
             Ok("on")
+        ),
+        inject_memory: !matches!(
+            std::env::var("PC_GATEWAY_INJECTION_MEMORY").as_deref(),
+            Ok("off")
         ),
         inject_responses: !matches!(
             std::env::var("PC_GATEWAY_INJECTION_RESPONSES").as_deref(),
