@@ -8,11 +8,11 @@
 <text x="54" y="195" font-size="67" font-weight="750" letter-spacing="-2" fill="#f2f5ff">Less overhead.</text><text x="54" y="274" font-size="67" font-weight="750" letter-spacing="-2" fill="#a3b2ff">More progress.</text><text x="57" y="323" font-size="25" fill="#b0bed4">Make context work for your agent.</text>
 <line x1="733" y1="140" x2="733" y2="330" stroke="#34425e"/>
 <text x="798" y="239" font-size="108" font-weight="750" letter-spacing="-5" fill="#f2f5ff">40.30<tspan font-size="48" letter-spacing="0">%</tspan></text>
-<text x="804" y="286" font-size="24" fill="#b8c7e1">fewer primary-model tokens</text><rect x="804" y="310" width="156" height="30" rx="15" fill="#263658"/><text x="882" y="331" text-anchor="middle" font-size="15" fill="#c7d5f7" letter-spacing="1">MEASURED · MCS</text>
+<text x="804" y="286" font-size="24" fill="#b8c7e1">fewer primary-model tokens</text><rect x="804" y="310" width="156" height="30" rx="15" fill="#263658"/><text x="882" y="331" text-anchor="middle" font-size="15" fill="#c7d5f7" letter-spacing="1">24 TASKS</text>
 <rect x="32" y="385" width="1216" height="222" rx="16" fill="#131e32" stroke="#293750"/>
 <text x="57" y="421" font-size="20" fill="#c2cde1">24 shared coding tasks · 16 solved in each arm</text>
 <text x="58" y="471" font-size="17" fill="#99abc6">BASELINE · GATEWAY OFF</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#36445c"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#c2cde1" font-weight="600">26.41M</text>
-<text x="58" y="534" font-size="19" fill="#e0e7ff" font-weight="600">PowerContext · MCS</text><rect x="360" y="512" width="400" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#d5e1ff" font-weight="700">15.77M</text>
+<text x="58" y="534" font-size="19" fill="#e0e7ff" font-weight="600">PowerContext</text><rect x="360" y="512" width="400" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#d5e1ff" font-weight="700">15.77M</text>
 <text x="58" y="581" font-size="17" fill="#8e9fbd">SWE-bench Pro · GPT-5.6 Sol · Original / frozen selections</text>
-<text x="54" y="651" font-size="19" fill="#9eacc3">Input + output, including cache. Memory generation and other auxiliary work are extra.</text>
+<text x="54" y="651" font-size="19" fill="#9eacc3">Codex solving usage, including cached input and output. Post-task memory generation is extra.</text>
 </g></svg>

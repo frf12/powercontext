@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-en.svg" width="100%" alt="PowerContext — 40.30% fewer primary-model tokens across 24 shared coding tasks. MCS and Gateway OFF each solved 16/24; auxiliary costs excluded." />
+  <img src="docs/assets/readme-hero-en.svg" width="100%" alt="PowerContext — 40.30% fewer primary-model tokens across 24 shared coding tasks. PowerContext and the gateway control each solved 16/24; auxiliary costs excluded." />
 </p>
 
 <p align="center">
@@ -33,18 +33,20 @@ Configure the capabilities you need. Context is organized into **Scopes**, acces
 
 <table>
 <tr>
-<td width="33%" align="center"><h3>40.30% ↓</h3><b>Total tokens · 24 tasks</b><br/>MCS vs. Gateway OFF<br/><sub>16/24 solved in each arm</sub></td>
-<td width="33%" align="center"><h3>36.18% ↓</h3><b>Total tokens · 121 tasks</b><br/>CS vs. Gateway OFF<br/><sub>82/121 vs. 83/121 solved</sub></td>
-<td width="33%" align="center"><h3>85.71% ↓</h3><b>Best paired task</b><br/>CS · navidrome · case 302<br/><sub>Both passed; not an average</sub></td>
+<td width="33%" align="center"><h3>40.30% ↓</h3><b>Total tokens · 24 tasks</b><br/>CodeGraph + Steering + Memory<br/><sub>16/24 solved in each arm</sub></td>
+<td width="33%" align="center"><h3>36.18% ↓</h3><b>Total tokens · 121 tasks</b><br/>CodeGraph + Steering<br/><sub>82/121 vs. 83/121 solved</sub></td>
+<td width="33%" align="center"><h3>85.71% ↓</h3><b>Best paired task</b><br/>CodeGraph + Steering · case 302<br/><sub>Both passed; not an average</sub></td>
 </tr>
 </table>
 
 **One concrete task:** case 302 went from **1,240,658 → 177,343 tokens**, with both runs passing the official task grader.
 
-Figures count primary-model input + output, including cache, using original/frozen selections. **Not billing reductions.** MCS memory generation is additional. [Task-level evidence and full comparisons →](docs/benchmarks/token-savings/README.md)
+Figures count primary-model input + output, including cache, using original/frozen selections. **Not billing reductions.** Post-task memory generation is additional. These figures come from Codex turn usage, not all gateway requests. [Task-level evidence and full comparisons →](docs/benchmarks/token-savings/README.md)
 
 <details>
 <summary>Test scope, auxiliary costs, and retries</summary>
+
+In the detailed results, **C = CodeGraph, S = Steering, M = Memory**. Combined letters mean those features are enabled together. **Gateway OFF** is the control with all three disabled.
 
 - On the same 24 tasks: S saves 27.12% (15/24 solved), CS 33.06% (15/24), MCS 40.30% (16/24); Gateway OFF solves 16/24. This is a completed-task intersection, not a random sample.
 - MCS adds 2,041,992 post-task memory-generation tokens. Including them gives a 32.57% reduction, before other auxiliary work. No nonempty Memory injection was observed during solving; the savings do not establish cross-task memory benefits.
