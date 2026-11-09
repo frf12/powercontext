@@ -1,100 +1,139 @@
 # PowerContext
 
-**Agent Context Runtime · 降低长任务 Token 开销**
+**Spend fewer tokens getting the work done.**
 
-| 单题最高输入量下降 | 平均输入 Token 减少 |
-| :---: | :---: |
-| **约 75%** | **25.4%** |
+An open-source context runtime for AI agents: bring relevant code and project knowledge into the task, guide focused work, and keep useful context for the next session.
 
-![PowerContext 能力示意：按需读取上下文、跨 Agent 接续任务、按策略保护隐私](docs/assets/readme-runtime-zh.gif)
+[PyPI](https://pypi.org/project/powercontext/) · [Apache 2.0](LICENSE) · [Discord](https://discord.com/invite/74cF8vbNEs)
 
-<sub>能力示意；评测数字来自所选 SWE-bench Pro 任务。</sub>
+[English](README.md) · [中文](README_CN.md)
 
-## 省 Token：少重复读取，少重复输入
+[Why PowerContext](#why-powercontext) · [What it is](#what-is-powercontext) · [Proof](#proof-it-works) · [Quick start](#quick-start) · [Docs](https://powercontext.oceanbase.io/en/docs/)
 
-按需读取当前任务需要的背景、记忆和经验，减少重复输入。
+## Why PowerContext?
 
-复用已准备的记忆上下文，减少重复检索与组装；在内部记忆与经验请求中共享相同内容，减少重复传递。
+Long coding tasks spend tokens on more than the fix: searching the repository, reading files, carrying those results into later requests, and revisiting failed approaches. PowerContext gives you control over the context and guidance your agent receives.
 
-[按需召回](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/workflows/prepare-context-text.md) · [上下文复用](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/operate/context-protection.md) · [输入共享](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/operate/input-encoding.md)
+**40.30% fewer primary-model tokens on 24 shared coding tasks**, with 16 tasks solved in both MCS and the control. Here is the full comparison, including the simpler configurations:
 
-## 跨 Agent 共享：上下文随任务延续
+| Configuration | Total tokens | Reduction vs. OFF | Tasks solved |
+| :--- | ---: | ---: | ---: |
+| Gateway OFF — control | 26,410,221 | — | 16/24 |
+| Steering (S) | 19,247,973 | **27.12%** | 15/24 |
+| CodeGraph + Steering (CS) | 17,680,166 | **33.06%** | 15/24 |
+| Memory + CodeGraph + Steering (MCS) | 15,766,986 | **40.30%** | 16/24 |
 
-Codex 已经分析的问题、选定的方案、尚未完成的步骤，保存到 PowerContext 后，Claude Code 可以接着使用。
+Same 24 tasks, same model configuration; original/frozen selections, including failed solutions. Token totals include cached input and output. They are **not billing reductions**. MCS also used 2,041,992 tokens for post-task memory generation; including that component makes its reduction **32.57%**, before other auxiliary work. [Accounting and task-level data →](docs/benchmarks/token-savings/README.md)
 
-共享任务记忆，交接当前状态与下一步。换会话、换 Agent 或交给同事时，已经确认的决策和进展都能继续使用。
+![Measured primary-model token totals for the same 24 tasks: Gateway OFF 26.41M, S 19.25M, CS 17.68M, MCS 15.77M. Memory generation is additional.](docs/assets/token-savings-24.gif)
 
-[记忆与任务交接](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/workflows/memory-and-handoff.md) · [Codex 接入](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/codex.md) · [Claude Code 接入](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/claude-code.md)
+## What is PowerContext?
 
-## 隐私可控：自己决定上下文如何使用
+**PowerContext manages the context around your agent.** It provides a shared service for code context, project memory, and task handoffs, with HTTP, MCP, Python, and agent integrations. You keep your agent and model; configure which context capabilities to use.
 
-上下文可以存储在本地，通过访问权限管理共享范围，查看内容的来源与修订记录。
+| Capability | What it does | What it is meant to avoid |
+| :--- | :--- | :--- |
+| **CodeGraph** | Retrieves code evidence tied to a repository snapshot; freshness checks guard reuse. | Starting every search from the whole repository. |
+| **Steering** | Adds explicit task guidance about targeted reads, batched work, and focused validation. | Unnecessary tool round trips and extended environment-repair detours. |
+| **Memory** | Saves useful decisions and facts, then recalls relevant context within a budget. | Rediscovering project knowledge in later sessions. |
 
-PowerContext 对自身模型请求与响应按策略执行隐私检查，命中禁止规则时阻断。
+The benchmark's S configuration used an explicit [489-byte guidance text](docs/benchmarks/token-savings/steering.txt). It is an experimental setting, **not a claim that installing PowerContext automatically enables it**. CodeGraph and Memory need their own configuration; agent integrations expose different capabilities.
 
-[存储与部署](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/get-started/install-and-run.md) · [访问控制](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/workflows/scopes-and-access.md) · [推理隐私保护](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/operate/inference-protection.md)
+```text
+Your task + project context
+             ↓
+ PowerContext selects context for the task
+             ↓
+ Your agent searches, edits and validates
+             ↓
+ Useful outcomes can become context for later sessions
+```
 
-## 快速开始
+Context belongs to a **Scope**, so a project can retain its decisions and handoffs across sessions and supported agents. Memory and Handoff also have value beyond token reduction: the next person can inspect the saved state and continue the work.
 
-使用 [uv](https://docs.astral.sh/uv/getting-started/installation/) 安装 CLI 与 Server：
+## Proof it works
+
+### Does it hold beyond the 24-task subset?
+
+The completed **121-task** comparison shows lower primary-model token totals with Steering enabled:
+
+| Configuration | Total tokens | Reduction vs. Gateway OFF | Tasks solved |
+| :--- | ---: | ---: | ---: |
+| Gateway OFF | 141,869,214 | — | 83/121 |
+| Steering (S) | 91,284,652 | **35.66%** | 81/121 |
+| CodeGraph + Steering (CS) | 90,544,517 | **36.18%** | 82/121 |
+
+These are the original settled results, not success-selected retries. CS solved one fewer task than OFF; this run does not establish equal quality. CodeGraph alone used **10.53% more** tokens than Gateway OFF, so adding a capability is not a guarantee of savings. [All five configurations and retry accounting →](docs/benchmarks/token-savings/README.md)
+
+### Can I inspect a concrete task?
+
+On **case 302, navidrome/navidrome**, both Gateway OFF and CS passed the official task grader:
+
+| Gateway OFF | CodeGraph + Steering | Tokens saved |
+| ---: | ---: | ---: |
+| 1,240,658 | 177,343 | **85.71%** |
+
+This is the largest paired CS reduction in the 121-task set, not its average. Model choices, implementation routes, and validation steps vary between runs; the observed reduction is not a causal attribution to retrieval alone.
+
+### Can I check the numbers?
+
+The [evidence package](docs/benchmarks/token-savings/README.md) includes task IDs, per-record usage, outcomes, source digests, original and retry-selected results, and an offline verifier:
+
+```bash
+python3 docs/benchmarks/token-savings/verify.py
+```
+
+It recomputes the published totals without running a model. Full raw trajectories are retained separately; the numeric export is sufficient to recompute these tables, not to independently reproduce the task grades.
+
+**What this test says about Memory:** every attempt started with a new empty database. The 24 MCS records show no nonempty memory injection during solving; memory was generated afterward. These results measure a configuration's token usage, not a demonstrated benefit from cross-task memory reuse. The MCS experiment was not completed over all 121 tasks.
+
+## Quick start
+
+### 1. Start your context service
+
+You need Python 3.11+, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/). The pinned setup below uses PowerContext 1.5.0 on macOS or Linux.
 
 ```bash
 uv tool install --force "powercontext[cli,server]==1.5.0"
+mkdir -p powercontext-config && cd powercontext-config
+powercontext config init --language en --output .env
+powercontext config validate --env-file .env
+powercontext server run --env-file .env
 ```
 
-按[快速开始](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/get-started/quickstart.md)接入 Agent，体验“保存上下文 → 新会话召回”。也可参考[手动启动](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/get-started/manual-start.md)。
+Keep the server running. The wizard writes `.env.next-steps.md` with the steps for your selected storage and agent. Start with **Basic memory** for explicit saves and recall without a separate server model API. Automatic extraction requires Generation and Embedding credentials. Keep `.env` private.
 
-## 接入你的 Agent
+### 2. Connect an agent
 
-优先从 [Codex](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/codex.md) 或 [Claude Code](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/claude-code.md) 开始。也可接入 [OpenCode](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/opencode.md)、[OpenClaw](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/openclaw.md)、[Pi](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/pi.md) 等宿主；各集成支持的能力见[能力矩阵](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/integrations/capabilities.md)。
+Follow the generated next steps to create and bind a Scope, then install the matching integration. For Codex:
 
-应用可以通过 Python Client、HTTP API、MCP 或进程内 Core SDK 使用 PowerContext，详见[接口说明](https://powercontext.oceanbase.io/zh/docs/develop/interfaces/)。
+```bash
+powercontext setup codex --ref powercontext-v1.5.0
+powercontext doctor codex
+```
 
-## 评测口径
+Open a new agent session and enable/trust its PowerContext hooks where required. Use the same server and Scope in both sessions to try saving a project decision and recalling it later.
 
-<details>
-<summary>SWE-bench Pro 输入 Token 对照</summary>
+[Codex setup](https://powercontext.oceanbase.io/en/docs/integrations/codex/) · [Claude Code setup](https://powercontext.oceanbase.io/en/docs/integrations/claude-code/) · [Manual startup](https://powercontext.oceanbase.io/en/docs/get-started/manual-start/)
 
-在所选 SWE-bench Pro 任务上，使用相同模型、任务与推理配置，对比启用和未启用 PowerContext：
+### 3. Measure it on your work
 
-| 指标 | 未启用 | 启用 | 输入 Token 减少 |
-| --- | ---: | ---: | ---: |
-| 单题最高输入量 | 2,358 万 | 590 万 | 约 75% |
-| 平均用量，折算每 100 题 | 3.0218 亿 | 2.2532 亿 | 25.4% |
+The setup above starts the context service; **it does not recreate the benchmark configuration**. Those runs used a frozen development build, a specific gateway route, and explicit feature switches. See the [tested configuration](docs/benchmarks/token-savings/README.md#tested-configuration) before comparing results.
 
-“单题最高输入量”分别取两组任务输入量的最大值，不表示某一道题的最大降幅。以上仅统计输入 Token；动图为能力示意。
+For your own paired test, keep the agent, model, task, and validation criteria fixed. Record total input, cached input, output, task success, and any extra PowerContext model calls. Compare the complete task, not just one shortened prompt.
 
-其他评测：[评测目录](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/evaluation/README.md) · [官网评测页](https://powercontext.oceanbase.io/zh/benchmarks/)。
+## Fits your workflow
 
-</details>
+| Start with | Guide |
+| :--- | :--- |
+| Codex or Claude Code | [Agent integrations](https://powercontext.oceanbase.io/en/docs/integrations/) |
+| OpenCode, OpenClaw, Pi, or another supported host | [Capability matrix](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/) |
+| Your own application | [Python, HTTP, MCP, and Core interfaces](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) |
+| Shared project context | [Memory and Handoff](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/) |
+| Local storage and controlled access | [Deployment](https://powercontext.oceanbase.io/en/docs/get-started/install-and-run/) · [Scopes and access](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/) |
 
-## 文档与贡献
+## Learn more and contribute
 
-[![PyPI version](https://img.shields.io/pypi/v/powercontext)](https://pypi.org/project/powercontext/)
-[![License Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-community-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/74cF8vbNEs)
-[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-147DFF)](https://deepwiki.com/oceanbase/powercontext)
+[Documentation](https://powercontext.oceanbase.io/en/docs/) · [Benchmark evidence](docs/benchmarks/token-savings/README.md) · [Report an issue](https://github.com/oceanbase/powercontext/issues) · [Contributing](https://github.com/oceanbase/powercontext/blob/main/CONTRIBUTING.md) · [Discord](https://discord.com/invite/74cF8vbNEs)
 
-*[English](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/README.md) · [中文](README_CN.md) · [日本語](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/README_JP.md)*
-
-[网站](https://powercontext.oceanbase.io/zh/) · [快速开始](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/docs/zh/docs/get-started/quickstart.md) · [接入 Agent](https://powercontext.oceanbase.io/zh/docs/integrations/) · [评测](#评测口径) · [文档](https://powercontext.oceanbase.io/zh/docs/)
-
-- [使用指南](https://powercontext.oceanbase.io/zh/docs/) · [部署与运维](https://powercontext.oceanbase.io/zh/docs/operate/) · [开发与 API](https://powercontext.oceanbase.io/zh/docs/develop/)
-- [桌面预览](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/desktop/README.zh.md) · [评测工具](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/evaluation/README.md)
-- [贡献指南](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/CONTRIBUTING.md) · [报告问题](https://github.com/oceanbase/powercontext/issues) · [加入 Discord](https://discord.com/invite/74cF8vbNEs)
-
-PowerContext 是 [PowerMem](https://www.powermem.ai/) 的后续项目。
-
-### 贡献者
-
-感谢每一位为 PowerContext 作出贡献的伙伴。
-
-<a href="https://github.com/oceanbase/powercontext/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=oceanbase/powercontext&amp;max=100&amp;columns=12" alt="PowerContext 贡献者" />
-</a>
-
-[查看全部贡献者](https://github.com/oceanbase/powercontext/graphs/contributors) · [参与贡献](https://github.com/oceanbase/powercontext/blob/20f64d72b13594ad834fcd342f5927d0d0102abb/CONTRIBUTING.md)
-
-### 许可证
-
-PowerContext 基于 [Apache License 2.0](LICENSE) 发布。
+PowerContext is the successor to [PowerMem](https://www.powermem.ai/). Released under [Apache 2.0](LICENSE).
