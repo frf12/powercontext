@@ -1,97 +1,64 @@
-# PowerContext
+<p align="center">
+  <img src="docs/assets/readme-hero-en.svg" width="100%" alt="PowerContext — 40.30% fewer primary-model tokens across 24 shared coding tasks. MCS and Gateway OFF each solved 16/24; auxiliary costs excluded." />
+</p>
 
-**Spend fewer tokens getting the work done.**
-
-An open-source context runtime for AI agents: bring relevant code and project knowledge into the task, guide focused work, and keep useful context for the next session.
-
-[PyPI](https://pypi.org/project/powercontext/) · [Apache 2.0](LICENSE) · [Discord](https://discord.com/invite/74cF8vbNEs)
-
-[English](README.md) · [中文](README_CN.md)
-
-[Why PowerContext](#why-powercontext) · [What it is](#what-is-powercontext) · [Proof](#proof-it-works) · [Quick start](#quick-start) · [Docs](https://powercontext.oceanbase.io/en/docs/)
+<p align="center">
+  <a href="#quick-start"><b>Get started</b></a> &nbsp; · &nbsp;
+  <a href="#proof-it-works">See the proof</a> &nbsp; · &nbsp;
+  <a href="https://powercontext.oceanbase.io/en/docs/">Documentation</a> &nbsp; · &nbsp;
+  <a href="https://discord.com/invite/74cF8vbNEs">Discord</a>
+</p>
+<p align="center">
+  <a href="README.md">English</a> · <a href="README_CN.md">中文</a> &nbsp; / &nbsp;
+  <a href="https://pypi.org/project/powercontext/">Python package</a> · <a href="LICENSE">Apache 2.0</a>
+</p>
 
 ## Why PowerContext?
 
-Long coding tasks spend tokens on more than the fix: searching the repository, reading files, carrying those results into later requests, and revisiting failed approaches. PowerContext gives you control over the context and guidance your agent receives.
+**Your agent's tokens should move the task forward.** Less repeated searching, fewer unproductive round trips, and project knowledge that is still useful when the next session starts.
 
-**40.30% fewer primary-model tokens on 24 shared coding tasks**, with 16 tasks solved in both MCS and the control. Here is the full comparison, including the simpler configurations:
-
-| Configuration | Total tokens | Reduction vs. OFF | Tasks solved |
-| :--- | ---: | ---: | ---: |
-| Gateway OFF — control | 26,410,221 | — | 16/24 |
-| Steering (S) | 19,247,973 | **27.12%** | 15/24 |
-| CodeGraph + Steering (CS) | 17,680,166 | **33.06%** | 15/24 |
-| Memory + CodeGraph + Steering (MCS) | 15,766,986 | **40.30%** | 16/24 |
-
-Same 24 tasks, same model configuration; original/frozen selections, including failed solutions. Token totals include cached input and output. They are **not billing reductions**. MCS also used 2,041,992 tokens for post-task memory generation; including that component makes its reduction **32.57%**, before other auxiliary work. [Accounting and task-level data →](docs/benchmarks/token-savings/README.md)
-
-![Measured primary-model token totals for the same 24 tasks: Gateway OFF 26.41M, S 19.25M, CS 17.68M, MCS 15.77M. Memory generation is additional.](docs/assets/token-savings-24.gif)
+- **Focus on the task.** Bring relevant code and clear working guidance into the agent's path to a fix.
+- **Keep your agent.** Connect Codex, Claude Code, and other supported hosts, or integrate with your own application.
+- **Keep what you learn.** Retain decisions, constraints, and handoffs across sessions, agents, and teammates.
 
 ## What is PowerContext?
 
-**PowerContext manages the context around your agent.** It provides a shared service for code context, project memory, and task handoffs, with HTTP, MCP, Python, and agent integrations. You keep your agent and model; configure which context capabilities to use.
+**An open-source context runtime for AI agents.** It manages code context, project memory, and task handoffs, bringing relevant context into the workflow when it is needed.
 
-| Capability | What it does | What it is meant to avoid |
-| :--- | :--- | :--- |
-| **CodeGraph** | Retrieves code evidence tied to a repository snapshot; freshness checks guard reuse. | Starting every search from the whole repository. |
-| **Steering** | Adds explicit task guidance about targeted reads, batched work, and focused validation. | Unnecessary tool round trips and extended environment-repair detours. |
-| **Memory** | Saves useful decisions and facts, then recalls relevant context within a budget. | Rediscovering project knowledge in later sessions. |
+<img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
 
-The benchmark's S configuration used an explicit [489-byte guidance text](docs/benchmarks/token-savings/steering.txt). It is an experimental setting, **not a claim that installing PowerContext automatically enables it**. CodeGraph and Memory need their own configuration; agent integrations expose different capabilities.
-
-```text
-Your task + project context
-             ↓
- PowerContext selects context for the task
-             ↓
- Your agent searches, edits and validates
-             ↓
- Useful outcomes can become context for later sessions
-```
-
-Context belongs to a **Scope**, so a project can retain its decisions and handoffs across sessions and supported agents. Memory and Handoff also have value beyond token reduction: the next person can inspect the saved state and continue the work.
+Configure the capabilities you need. Context is organized into **Scopes**, accessible through HTTP, MCP, Python, and agent integrations. [How it fits together →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
 
 ## Proof it works
 
-### Does it hold beyond the 24-task subset?
+<table>
+<tr>
+<td width="33%" align="center"><h3>40.30% ↓</h3><b>Total tokens · 24 tasks</b><br/>MCS vs. Gateway OFF<br/><sub>16/24 solved in each arm</sub></td>
+<td width="33%" align="center"><h3>36.18% ↓</h3><b>Total tokens · 121 tasks</b><br/>CS vs. Gateway OFF<br/><sub>82/121 vs. 83/121 solved</sub></td>
+<td width="33%" align="center"><h3>85.71% ↓</h3><b>Best paired task</b><br/>CS · navidrome · case 302<br/><sub>Both passed; not an average</sub></td>
+</tr>
+</table>
 
-The completed **121-task** comparison shows lower primary-model token totals with Steering enabled:
+**One concrete task:** case 302 went from **1,240,658 → 177,343 tokens**, with both runs passing the official task grader.
 
-| Configuration | Total tokens | Reduction vs. Gateway OFF | Tasks solved |
-| :--- | ---: | ---: | ---: |
-| Gateway OFF | 141,869,214 | — | 83/121 |
-| Steering (S) | 91,284,652 | **35.66%** | 81/121 |
-| CodeGraph + Steering (CS) | 90,544,517 | **36.18%** | 82/121 |
+Figures count primary-model input + output, including cache, using original/frozen selections. **Not billing reductions.** MCS memory generation is additional. [Task-level evidence and full comparisons →](docs/benchmarks/token-savings/README.md)
 
-These are the original settled results, not success-selected retries. CS solved one fewer task than OFF; this run does not establish equal quality. CodeGraph alone used **10.53% more** tokens than Gateway OFF, so adding a capability is not a guarantee of savings. [All five configurations and retry accounting →](docs/benchmarks/token-savings/README.md)
+<details>
+<summary>Test scope, auxiliary costs, and retries</summary>
 
-### Can I inspect a concrete task?
+- On the same 24 tasks: S saves 27.12% (15/24 solved), CS 33.06% (15/24), MCS 40.30% (16/24); Gateway OFF solves 16/24. This is a completed-task intersection, not a random sample.
+- MCS adds 2,041,992 post-task memory-generation tokens. Including them gives a 32.57% reduction, before other auxiliary work. No nonempty Memory injection was observed during solving; the savings do not establish cross-task memory benefits.
+- Across 121 tasks, CodeGraph alone uses 10.53% more tokens. CS solves one fewer task than OFF. Implementation and validation routes vary; these runs do not guarantee savings on every task or equal quality.
+- Conditional retry selections, all-attempt costs, cached and uncached tokens are separate in the evidence report. They are not mixed into the headline. MCS did not finish all 121 tasks.
+- Tested with Codex CLI 0.162.1, GPT-5.6 Sol medium, a frozen development build and fresh databases per attempt. S is explicit guidance, not an installation default. OFF is an earlier frozen batch.
 
-On **case 302, navidrome/navidrome**, both Gateway OFF and CS passed the official task grader:
+[Methodology](docs/benchmarks/token-savings/README.md) · [Data](docs/benchmarks/token-savings/results.json) · [Offline verifier](docs/benchmarks/token-savings/verify.py)
 
-| Gateway OFF | CodeGraph + Steering | Tokens saved |
-| ---: | ---: | ---: |
-| 1,240,658 | 177,343 | **85.71%** |
-
-This is the largest paired CS reduction in the 121-task set, not its average. Model choices, implementation routes, and validation steps vary between runs; the observed reduction is not a causal attribution to retrieval alone.
-
-### Can I check the numbers?
-
-The [evidence package](docs/benchmarks/token-savings/README.md) includes task IDs, per-record usage, outcomes, source digests, original and retry-selected results, and an offline verifier:
-
-```bash
-python3 docs/benchmarks/token-savings/verify.py
-```
-
-It recomputes the published totals without running a model. Full raw trajectories are retained separately; the numeric export is sufficient to recompute these tables, not to independently reproduce the task grades.
-
-**What this test says about Memory:** every attempt started with a new empty database. The 24 MCS records show no nonempty memory injection during solving; memory was generated afterward. These results measure a configuration's token usage, not a demonstrated benefit from cross-task memory reuse. The MCS experiment was not completed over all 121 tasks.
+</details>
 
 ## Quick start
 
-### 1. Start your context service
-
-You need Python 3.11+, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/). The pinned setup below uses PowerContext 1.5.0 on macOS or Linux.
+You need Python 3.11+, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/). This setup pins version 1.5.0 for macOS and Linux.
 
 ```bash
 uv tool install --force "powercontext[cli,server]==1.5.0"
@@ -101,39 +68,27 @@ powercontext config validate --env-file .env
 powercontext server run --env-file .env
 ```
 
-Keep the server running. The wizard writes `.env.next-steps.md` with the steps for your selected storage and agent. Start with **Basic memory** for explicit saves and recall without a separate server model API. Automatic extraction requires Generation and Embedding credentials. Keep `.env` private.
+Keep the service running. Follow **`.env.next-steps.md`** to create and bind your Scope. Start with Basic memory; automatic extraction requires Generation and Embedding credentials.
 
-### 2. Connect an agent
-
-Follow the generated next steps to create and bind a Scope, then install the matching integration. For Codex:
+For Codex, install the matching integration in another terminal:
 
 ```bash
 powercontext setup codex --ref powercontext-v1.5.0
 powercontext doctor codex
 ```
 
-Open a new agent session and enable/trust its PowerContext hooks where required. Use the same server and Scope in both sessions to try saving a project decision and recalling it later.
+Start a new session and trust the hooks when prompted. Save a project decision, then recall it in a later session. [Full setup guide →](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 
-[Codex setup](https://powercontext.oceanbase.io/en/docs/integrations/codex/) · [Claude Code setup](https://powercontext.oceanbase.io/en/docs/integrations/claude-code/) · [Manual startup](https://powercontext.oceanbase.io/en/docs/get-started/manual-start/)
-
-### 3. Measure it on your work
-
-The setup above starts the context service; **it does not recreate the benchmark configuration**. Those runs used a frozen development build, a specific gateway route, and explicit feature switches. See the [tested configuration](docs/benchmarks/token-savings/README.md#tested-configuration) before comparing results.
-
-For your own paired test, keep the agent, model, task, and validation criteria fixed. Record total input, cached input, output, task success, and any extra PowerContext model calls. Compare the complete task, not just one shortened prompt.
+<sub>This starts the context service. It does not automatically reproduce the benchmark's Gateway, CodeGraph, or Steering configuration; see the evidence report.</sub>
 
 ## Fits your workflow
 
-| Start with | Guide |
-| :--- | :--- |
-| Codex or Claude Code | [Agent integrations](https://powercontext.oceanbase.io/en/docs/integrations/) |
-| OpenCode, OpenClaw, Pi, or another supported host | [Capability matrix](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/) |
-| Your own application | [Python, HTTP, MCP, and Core interfaces](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) |
-| Shared project context | [Memory and Handoff](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/) |
-| Local storage and controlled access | [Deployment](https://powercontext.oceanbase.io/en/docs/get-started/install-and-run/) · [Scopes and access](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/) |
+**Agents** — [Codex](https://powercontext.oceanbase.io/en/docs/integrations/codex/) · [Claude Code](https://powercontext.oceanbase.io/en/docs/integrations/claude-code/) · [OpenCode, OpenClaw, Pi and capability matrix](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/)
 
-## Learn more and contribute
+**Apps & teams** — [Python / HTTP / MCP](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) · [Memory & Handoff](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/) · [Deployment & access](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
 
-[Documentation](https://powercontext.oceanbase.io/en/docs/) · [Benchmark evidence](docs/benchmarks/token-savings/README.md) · [Report an issue](https://github.com/oceanbase/powercontext/issues) · [Contributing](https://github.com/oceanbase/powercontext/blob/main/CONTRIBUTING.md) · [Discord](https://discord.com/invite/74cF8vbNEs)
+---
+
+[Documentation](https://powercontext.oceanbase.io/en/docs/) · [Contribute](https://github.com/oceanbase/powercontext/blob/main/CONTRIBUTING.md) · [Issues](https://github.com/oceanbase/powercontext/issues) · [Discord](https://discord.com/invite/74cF8vbNEs)
 
 PowerContext is the successor to [PowerMem](https://www.powermem.ai/). Released under [Apache 2.0](LICENSE).

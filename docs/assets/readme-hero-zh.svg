@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="700" viewBox="0 0 1280 700" role="img" aria-labelledby="title desc">
+<title id="title">PowerContext — 少一些消耗。 多一些进展。</title><desc id="desc">MCS used 15,766,986 primary tokens versus 26,410,221 for Gateway OFF on 24 tasks: 40.30% fewer. Each solved 16 of 24. Auxiliary costs are extra.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101a32"/><stop offset="1" stop-color="#090e1b"/></linearGradient><radialGradient id="glow"><stop stop-color="#4a64f4" stop-opacity=".26"/><stop offset="1" stop-color="#4a64f4" stop-opacity="0"/></radialGradient><linearGradient id="bar"><stop stop-color="#6d83ff"/><stop offset="1" stop-color="#99c7ff"/></linearGradient><pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#aec1e4" opacity=".10"/></pattern></defs>
+<rect width="1280" height="700" rx="24" fill="url(#bg)"/><rect width="1280" height="700" rx="24" fill="url(#dots)"/><ellipse cx="1030" cy="185" rx="470" ry="390" fill="url(#glow)"/>
+<g font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,Microsoft YaHei,Arial,sans-serif">
+<g transform="translate(54 43)"><rect width="44" height="44" rx="12" fill="#8097ff"/><path d="M12 31V13h12a6 6 0 0 1 0 12h-6" fill="none" stroke="#0b1226" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="33" r="3" fill="#0b1226"/></g>
+<text x="112" y="75" font-size="31" font-weight="700" fill="#f2f5ff">PowerContext</text><text x="1225" y="72" text-anchor="end" font-size="16" letter-spacing="2" fill="#a0abc2">OPEN SOURCE · CONTEXT RUNTIME</text>
+<text x="54" y="195" font-size="67" font-weight="750" letter-spacing="-2" fill="#f2f5ff">少一些消耗。</text><text x="54" y="274" font-size="67" font-weight="750" letter-spacing="-2" fill="#a3b2ff">多一些进展。</text><text x="57" y="323" font-size="25" fill="#b0bed4">让上下文为任务服务。</text>
+<line x1="733" y1="140" x2="733" y2="330" stroke="#34425e"/>
+<text x="798" y="239" font-size="108" font-weight="750" letter-spacing="-5" fill="#f2f5ff">40.30<tspan font-size="48" letter-spacing="0">%</tspan></text>
+<text x="804" y="286" font-size="24" fill="#b8c7e1">主模型 Token 减少</text><rect x="804" y="310" width="156" height="30" rx="15" fill="#263658"/><text x="882" y="331" text-anchor="middle" font-size="15" fill="#c7d5f7" letter-spacing="1">MEASURED · MCS</text>
+<rect x="32" y="385" width="1216" height="222" rx="16" fill="#131e32" stroke="#293750"/>
+<text x="57" y="421" font-size="20" fill="#c2cde1">同 24 道编码题 · 两组均通过 16 题</text>
+<text x="58" y="471" font-size="17" fill="#99abc6">对照组 · Gateway OFF</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#36445c"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#c2cde1" font-weight="600">26.41M</text>
+<text x="58" y="534" font-size="19" fill="#e0e7ff" font-weight="600">PowerContext · MCS</text><rect x="360" y="512" width="400" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#d5e1ff" font-weight="700">15.77M</text>
+<text x="58" y="581" font-size="17" fill="#8e9fbd">SWE-bench Pro · GPT-5.6 Sol · Original / frozen selections</text>
+<text x="54" y="651" font-size="19" fill="#9eacc3">含缓存输入与输出；额外记忆生成及其他辅助开销另计。</text>
+</g></svg>
