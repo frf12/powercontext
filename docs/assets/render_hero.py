@@ -6,7 +6,8 @@
 
 Run: uv run docs/assets/render_hero.py
 Uses installed Chrome on macOS, otherwise Playwright Chromium.
-SVG/PNG files are static first-frame fallbacks; GIFs hold each state for 6 seconds.
+SVG/PNG files are stable first-stage fallbacks. GIFs animate a six-second loop,
+with 1.3 seconds of readable values and 0.7 seconds of motion per stage.
 """
 
 import io
@@ -20,7 +21,11 @@ from playwright.sync_api import sync_playwright
 
 ASSETS = Path(__file__).resolve().parent
 EVIDENCE = ASSETS.parent / "benchmarks" / "token-savings"
-DURATION_MS = 6000
+FRAME_MS = 50
+HOLD_MS = 1300
+TRANSITION_MS = 700
+STAGE_MS = HOLD_MS + TRANSITION_MS
+LOOP_MS = STAGE_MS * 3
 
 
 def metrics():
@@ -95,42 +100,169 @@ def frame(template, lang, index, values):
     return re.sub(r'<desc id="desc">.*?</desc>', f'<desc id="desc">{escape(desc)}</desc>', svg)
 
 
+
+TIMELINE_JS = r"""
+const ns = 'http://www.w3.org/2000/svg';
+const root = document.querySelector('svg');
+const parser = new DOMParser();
+const states = window.heroSVGs.map(s => parser.parseFromString(s, 'image/svg+xml'));
+const at = (scope, x, y) => scope.querySelector(`text[x="${x}"][y="${y}"]`);
+const main = at(root, 798, 202).parentElement;
+const make = (name, attrs) => {
+  const e = document.createElementNS(ns, name);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k,v);
+  return e;
+};
+const tokens = at(root, 798, 202), costs = at(root, 798, 309);
+const offTotal = at(root, 1208, 473), pcTotal = at(root, 1208, 536);
+const bar = root.querySelector('rect[x="360"][y="512"]');
+for (const e of [tokens,costs,offTotal,pcTotal]) e.style.fontVariantNumeric = 'tabular-nums';
+const labels = [[804,131],[804,237],[804,343],[57,421],[58,581]].map(([x,y]) => {
+  const outgoing = at(root,x,y);
+  const incoming = outgoing.cloneNode(true);
+  incoming.setAttribute('opacity','0');
+  outgoing.after(incoming);
+  return {outgoing,incoming,texts:states.map(s=>at(s,x,y).textContent)};
+});
+const tabText = [0,1,2].map(i => at(root,98+i*400,646));
+const tabMarks = [0,1,2].map(i => root.querySelector(`rect[x="${54+i*400}"][y="637"]`));
+const defs = root.querySelector('defs');
+const clip = make('clipPath',{id:'motion-bar-clip'});
+const clipRect = make('rect',{x:360,y:512,width:400,height:30,rx:7});
+clip.append(clipRect); defs.append(clip);
+const gradient = make('linearGradient',{id:'motion-glint'});
+for (const [offset,opacity] of [['0',0],['.5',.24],['1',0]]) {
+  gradient.append(make('stop',{offset,'stop-color':'white','stop-opacity':opacity}));
+}
+defs.append(gradient);
+const glint = make('rect',{x:360,y:512,width:90,height:30,fill:'url(#motion-glint)','clip-path':'url(#motion-bar-clip)'});
+bar.after(glint);
+main.append(make('rect',{x:54,y:672,width:1172,height:3,rx:1.5,fill:'#dce6f5'}));
+const progress = make('rect',{x:54,y:672,width:0,height:3,rx:1.5,fill:'#0866ee'});
+main.append(progress);
+const smooth = t => t*t*(3-2*t);
+const mix = (a,b,t) => a+(b-a)*t;
+const blue = [8,102,238], grey = [99,115,141];
+const tint = strength => `rgb(${grey.map((v,i)=>Math.round(mix(v,blue[i],strength))).join(',')})`;
+window.seekHero = milliseconds => {
+  const elapsed = ((milliseconds % window.loopMS)+window.loopMS)%window.loopMS;
+  const stage = Math.floor(elapsed/window.stageMS);
+  const next = (stage+1)%3;
+  const local = elapsed-stage*window.stageMS;
+  const transition = Math.max(0,Math.min(1,(local-window.holdMS)/window.transitionMS));
+  const eased = smooth(transition);
+  const v = window.heroMetrics[stage].map((a,i)=>mix(a,window.heroMetrics[next][i],eased));
+  const [off,pc,offCost,pcCost] = v;
+  tokens.firstChild.data = ((1-pc/off)*100).toFixed(2);
+  costs.firstChild.data = ((1-pcCost/offCost)*100).toFixed(2);
+  offTotal.textContent = (off/1e6).toFixed(2)+'M';
+  pcTotal.textContent = (pc/1e6).toFixed(2)+'M';
+  const width = 670*pc/off;
+  bar.setAttribute('width',width); clipRect.setAttribute('width',width);
+  const lift = Math.sin(Math.PI*transition)*3;
+  tokens.setAttribute('transform',`translate(0 ${-lift})`);
+  costs.setAttribute('transform',`translate(0 ${-lift})`);
+  for (const {outgoing,incoming,texts} of labels) {
+    outgoing.textContent = texts[stage]; incoming.textContent = texts[next];
+    const same = texts[stage]===texts[next];
+    outgoing.setAttribute('opacity',same?1:Math.max(0,1-2*eased));
+    incoming.setAttribute('opacity',same?0:Math.max(0,2*eased-1));
+    outgoing.setAttribute('transform',`translate(0 ${same?0:-12*eased})`);
+    incoming.setAttribute('transform',`translate(0 ${12*(1-eased)})`);
+  }
+  for (let i=0;i<3;i++) {
+    const active = i===stage?1-eased:(i===next?eased:0);
+    tabText[i].setAttribute('fill',tint(active));
+    tabMarks[i].setAttribute('fill',tint(active));
+    tabMarks[i].setAttribute('width',32);
+  }
+  progress.setAttribute('width',1172*elapsed/window.loopMS);
+  // A gentle moving highlight and progress keep the readable hold alive.
+  glint.setAttribute('x',360-90+(width+180)*local/window.stageMS);
+  root.dataset.stage = String(stage);
+  root.dataset.progress = String(transition);
+  root.dataset.values = JSON.stringify(v);
+  return {stage,next,transition,values:v,tokens:tokens.firstChild.data,cost:costs.firstChild.data};
+};
+window.seekHero(0);
+if (new URLSearchParams(location.search).has('play')) {
+  const start=performance.now();
+  const tick = now => {window.seekHero(now-start); requestAnimationFrame(tick);};
+  requestAnimationFrame(tick);
+}
+"""
+
+
+def preview_html(svgs, values):
+    config = {
+        "heroSVGs": svgs,
+        "heroMetrics": values,
+        "holdMS": HOLD_MS,
+        "transitionMS": TRANSITION_MS,
+        "stageMS": STAGE_MS,
+        "loopMS": LOOP_MS,
+    }
+    setup = "\n".join(f"window.{key} = {json.dumps(value)};" for key, value in config.items())
+    return ('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:#fff}'
+            'svg{display:block}</style>' + svgs[0] + '<script>' + setup + '(() => {' + TIMELINE_JS + '})();</script>')
+
+
 def main():
     values = metrics()
+    frame_count = LOOP_MS // FRAME_MS
     with sync_playwright() as p:
         chrome = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
         browser = p.chromium.launch(**({'executable_path': str(chrome)} if chrome.exists() else {}))
-        page = browser.new_page(viewport={"width": 1280, "height": 700}, device_scale_factor=2)
+        static = browser.new_page(viewport={"width": 1280, "height": 700}, device_scale_factor=2)
+        motion = browser.new_page(viewport={"width": 1280, "height": 700}, device_scale_factor=1)
         for lang in ["zh", "en"]:
             template_path = ASSETS / f"readme-hero-{lang}.svg"
             template = template_path.read_text()
-            frames = []
-            for index, value in enumerate(values):
-                svg = frame(template, lang, index, value)
-                page.set_content('<style>html,body{margin:0}</style>' + svg)
-                page.evaluate('document.fonts.ready')
-                assert page.locator('image').evaluate('(e)=>e.getAttribute("href").startsWith("data:image/")')
-                assert page.locator('text').evaluate_all('(es)=>es.every(e=>{let b=e.getBBox();return b.x>=0 && b.x+b.width<1258})'), (lang, index)
-                raw = page.screenshot()
-                frames.append(Image.open(io.BytesIO(raw)).convert('RGB'))
+            svgs = [frame(template,lang,index,value) for index,value in enumerate(values)]
+            for index,svg in enumerate(svgs):
+                static.set_content('<style>html,body{margin:0}</style>' + svg)
+                static.evaluate('document.fonts.ready')
+                assert static.locator('text').evaluate_all('(es)=>es.every(e=>{let b=e.getBBox();return b.x>=0 && b.x+b.width<1258})'), (lang,index)
                 if index == 0:
                     template_path.write_text(svg)
-                    template_path.with_suffix('.png').write_bytes(raw)
-            # One shared palette prevents color shifts between states.
-            sample = Image.new('RGB', (640, 350 * len(frames)))
-            for index, image in enumerate(frames):
-                sample.paste(image.resize((640, 350)), (0, index * 350))
+                    template_path.with_suffix('.png').write_bytes(static.screenshot())
+            html = preview_html(svgs,values)
+            preview = Path('/tmp') / f'pc-hero-motion-{lang}.html'
+            preview.write_text(html)
+            motion.set_content(html)
+            motion.evaluate('document.fonts.ready')
+            assert motion.evaluate('document.querySelector("svg").dataset.stage') == '0'
+            assert motion.locator('image').evaluate('(e)=>e.getAttribute("href").startsWith("data:image/")')
+            frames = []
+            for tick in range(frame_count):
+                state = motion.evaluate('(time)=>window.seekHero(time)', tick*FRAME_MS)
+                if tick % (STAGE_MS//FRAME_MS) == 0:
+                    expected = values[state['stage']]
+                    assert state['values'] == list(expected)
+                    assert state['tokens'] == f"{(1-expected[1]/expected[0])*100:.2f}"
+                    assert state['cost'] == f"{(1-expected[3]/expected[2])*100:.2f}"
+                    assert motion.locator('text[x="798"][y="202"]').text_content() == state['tokens'] + '%'
+                raw = motion.screenshot()
+                frames.append(Image.open(io.BytesIO(raw)).convert('RGB'))
+            # A shared palette keeps the stationary canvas unchanged across GIF frames.
+            samples = [frames[i] for i in [0,26,33,40,66,73,80,106,113]]
+            sample = Image.new('RGB',(640,350*len(samples)))
+            for index,image in enumerate(samples):
+                sample.paste(image.resize((640,350)),(0,index*350))
             palette = sample.quantize(colors=256)
-            encoded = [image.quantize(palette=palette) for image in frames]
+            encoded = [image.quantize(palette=palette,dither=Image.Dither.NONE) for image in frames]
             output = template_path.with_suffix('.gif')
-            encoded[0].save(output, save_all=True, append_images=encoded[1:],
-                            duration=DURATION_MS, loop=0, optimize=True, disposal=1)
+            encoded[0].save(output,save_all=True,append_images=encoded[1:],
+                            duration=FRAME_MS,loop=0,optimize=True,disposal=1)
             with Image.open(output) as animation:
-                assert animation.n_frames == 3 and animation.size == (2560, 1400)
-                for index in range(3):
+                assert 3 < animation.n_frames <= frame_count and animation.size == (1280,700)
+                duration = 0
+                for index in range(animation.n_frames):
                     animation.seek(index)
-                    assert animation.info['duration'] == DURATION_MS
-            print(f"{output.name}: 3 frames, {DURATION_MS} ms each, {output.stat().st_size:,} bytes")
+                    duration += animation.info['duration']
+                assert duration == LOOP_MS
+                assert animation.info['loop'] == 0
+                print(f"{output.name}: {animation.n_frames} frames, {duration} ms loop, {output.stat().st_size:,} bytes; {preview}",flush=True)
         browser.close()
 
 

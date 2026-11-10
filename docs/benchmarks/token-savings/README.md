@@ -132,12 +132,12 @@ In the detailed results, **C = CodeGraph, S = Steering, M = Memory**. Combined l
 
 ## README animation data
 
-| Frame | Fewer tokens | Lower model cost (estimated) | Scope |
+| Stage | Fewer tokens | Lower model cost (estimated) | Scope |
 | --- | ---: | ---: | --- |
 | Solving only | 40.30% | 23.51% | Same 24 tasks, excluding memory generation |
 | With memory generation | 32.57% | 15.42% | Same 24 tasks, solving + memory generation |
 | Best single task | 63.49% | 51.98% | Case 456, including memory generation; both passed |
 
-Solving-only cost uses the fixed experiment rates: 460.52434 points for the control versus 352.25020 for PowerContext, a 23.51% reduction. The memory-inclusive frames use the cache extrapolation described above. Points are not an actual bill.
+Solving-only cost uses the fixed experiment rates: 460.52434 points for the control versus 352.25020 for PowerContext, a 23.51% reduction. The memory-inclusive stages use the cache extrapolation described above. Points are not an actual bill.
 
-Each frame holds for 6 seconds; [static first frame](../../assets/readme-hero-en.png). To maintain the assets, edit the corresponding SVG template and run `uv run docs/assets/render_hero.py`. The script derives metrics from the evidence in this directory and renders both language GIFs and static first frames.
+The animation loops in about 6 seconds, with 1.3 seconds of reading time and a 0.7-second transition per stage. Counters, bars, and progress animate together. [Static first frame](../../assets/readme-hero-en.png). To maintain the assets, edit the corresponding SVG template and run `uv run docs/assets/render_hero.py`. The script derives metrics from the evidence in this directory and renders both language GIFs and static first frames.
