@@ -1,0 +1,18 @@
+{
+  "scope": "24 original selected paired tasks; solving plus memory generation; excludes embedding, readiness and other auxiliary work",
+  "observed_memory_input": 846962,
+  "observed_memory_cached": 821504,
+  "missing_cache_input": 1171777,
+  "missing_cache_records": 55,
+  "memory_input": 2018739,
+  "memory_output": 23253,
+  "pc_solving_points": 352.2502,
+  "off_solving_points": 460.52434,
+  "points_per_million": {
+    "uncached_input": 100,
+    "cached_input": 10,
+    "output": 500
+  },
+  "assumption": "Apply observed input-weighted cache-hit rate to missing cache records; prefix and ordinary generation populations may differ",
+  "actual_bill": null
+}

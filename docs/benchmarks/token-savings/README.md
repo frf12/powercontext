@@ -1,5 +1,16 @@
 # Token savings: evidence and accounting
 
+## Estimated cost including memory generation
+
+On the same 24 tasks, solving plus memory generation uses 17,808,978 tokens versus 26,410,221 for the control: **32.57% fewer**. Apply the input-weighted observed cache-hit rate `821,504 / 846,962 = 96.994%` to 1,171,777 input tokens across 55 records with missing cache fields.
+
+At the frozen rates of 100 points per million uncached input tokens, 10 per million cached input tokens, and 500 per million output tokens, memory generation is estimated at 37.27503 points. Adding 352.25020 solving points gives **389.52523**, versus **460.52434** for the control: **15.42% lower estimated cost**. Points are not currency or an actual bill.
+
+This assumes prefix-extraction cache hits generalize to ordinary generation and may be optimistic. Without that assumption, solving plus memory generation costs 386.35531–491.81524 points, so a reduction is not established. Embedding, readiness, and other auxiliary costs are excluded.
+
+[Estimate inputs](cost-estimate.json). Token totals are measured; costs are estimated. Missing fields remain unknown in the source data.
+
+
 [Project README](../../../README.md) · [中文](README_CN.md) · [Per-task table](cases.md) · [Machine-readable evidence](results.json)
 
 These are project-run SWE-bench Pro comparisons, not an official leaderboard submission. The tables use our own runs; colleague-provided ON/OFF results and external CodeGraph experiments are excluded. Export date: 2026-11-10.

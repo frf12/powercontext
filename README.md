@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-en.svg" width="100%" alt="PowerContext — 40.30% fewer primary-model tokens across 24 shared coding tasks. PowerContext and the gateway control each solved 16/24; auxiliary costs excluded." />
+  <img src="docs/assets/readme-hero-en.svg" width="100%" alt="PowerContext: 32.57% fewer tokens including memory generation on 24 tasks; estimated model cost 15.42% lower at the observed cache-hit rate. Auxiliary costs excluded." />
 </p>
 
 <p align="center">
@@ -33,15 +33,17 @@ Configure the capabilities you need. Context is organized into **Scopes**, acces
 
 <table>
 <tr>
-<td width="33%" align="center"><h3>40.30% ↓</h3><b>Total tokens · 24 tasks</b><br/>CodeGraph + Steering + Memory<br/><sub>16/24 solved in each arm</sub></td>
-<td width="33%" align="center"><h3>36.18% ↓</h3><b>Total tokens · 121 tasks</b><br/>CodeGraph + Steering<br/><sub>82/121 vs. 83/121 solved</sub></td>
-<td width="33%" align="center"><h3>85.71% ↓</h3><b>Best paired task</b><br/>CodeGraph + Steering · case 302<br/><sub>Both passed; not an average</sub></td>
+<td width="33%" align="center"><h3>32.57% ↓</h3><b>Fewer tokens</b><br/>24 tasks · memory generation included<br/><sub>Measured: 26.41M → 17.81M</sub></td>
+<td width="33%" align="center"><h3>15.42% ↓</h3><b>Lower estimated model cost</b><br/>Same 24 tasks · memory generation included<br/><sub>Extrapolated from observed cache hits</sub></td>
+<td width="33%" align="center"><h3>16 / 24</h3><b>Tasks solved</b><br/>Same count in both groups<br/><sub>CodeGraph + Steering + Memory enabled</sub></td>
 </tr>
 </table>
 
-**One concrete task:** case 302 went from **1,240,658 → 177,343 tokens**, with both runs passing the official task grader.
+On the same 24 tasks, PowerContext used **17,808,978 tokens** for solving and memory generation, versus **26,410,221 tokens** for the control. The control uses the same gateway with CodeGraph, Steering, and Memory disabled.
 
-Figures count primary-model input + output, including cache, using original/frozen selections. **Not billing reductions.** Post-task memory generation is additional. These figures come from Codex turn usage, not all gateway requests. [Task-level evidence and full comparisons →](docs/benchmarks/token-savings/README.md)
+**Tokens are measured; cost is estimated.** Cache fields are missing from 55 memory-generation records. The estimate applies the **96.994%** input-token cache-hit rate observed in the remaining records, at the experiment's fixed rates. Observed records are prefix extractions; missing records are ordinary generation calls, so this extrapolation may be optimistic. Embedding, readiness checks, and other auxiliary costs are excluded. This is not an actual bill. [Task-level results and calculation →](docs/benchmarks/token-savings/README.md)
+
+Across all 121 tasks, CodeGraph + Steering used **36.18% fewer solving tokens**, with 82 tasks solved versus 83 for the control. The largest single-task reduction was **85.71%**: case 302 used 177,343 versus 1,240,658 tokens, and both runs passed. This is not an average.
 
 <details>
 <summary>Test scope, auxiliary costs, and retries</summary>

@@ -80,3 +80,13 @@ for name, arms in summaries.items():
     for arm, r in arms.items():
         print(f"{arm:12} {r['total_tokens']:>12,} tokens  {r['reduction_percent']:>7.2f}% fewer  {r['passed']}/{r['cases']} passed")
 print('\nVerified: case alignment, token arithmetic, record selection and README totals. No inference or grading performed.')
+
+# Recompute the explicitly modeled cache-cost estimate, without altering missing observations.
+estimate = json.loads(Path(__file__).with_name("cost-estimate.json").read_text())
+ratio = estimate["observed_memory_cached"] / estimate["observed_memory_input"]
+cache = estimate["observed_memory_cached"] + estimate["missing_cache_input"] * ratio
+memory_points = ((estimate["memory_input"] - cache) * 100 + cache * 10 + estimate["memory_output"] * 500) / 1_000_000
+saving = (1 - (estimate["pc_solving_points"] + memory_points) / estimate["off_solving_points"]) * 100
+assert round(saving, 2) == 15.42
+assert round(ratio * 100, 3) == 96.994
+print(f"Estimated memory generation: {memory_points:.5f} points; estimated saving: {saving:.2f}% (not an observed bill).")
