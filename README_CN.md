@@ -33,11 +33,16 @@
 
 <table>
 <tr>
-<td width="33%" align="center"><h3>32.57% ↓</h3><b>Token 总量减少</b><br/>24 题 · 已计入记忆生成<br/><sub>实测 2,641 万 → 1,781 万</sub></td>
-<td width="33%" align="center"><h3>15.42% ↓</h3><b>估算模型成本减少</b><br/>同 24 题 · 已计入记忆生成<br/><sub>按已观测缓存命中率推算</sub></td>
-<td width="33%" align="center"><h3>16 / 24</h3><b>通过题数</b><br/>PowerContext 与对照组相同<br/><sub>开启代码检索、工作指导和记忆</sub></td>
+<td width="50%" align="center"><h3>32.57% ↓</h3><b>整批 Token 总量减少</b><br/><sub>24 题 · 已计入记忆生成</sub></td>
+<td width="50%" align="center"><h3>15.42% ↓</h3><b>整批估算模型成本减少</b><br/><sub>同 24 题 · 已计入记忆生成</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><h3>63.49% ↓</h3><b>单题最高 Token 降幅</b><br/><sub>第 456 题 · 两组均通过</sub></td>
+<td width="50%" align="center"><h3>51.98% ↓</h3><b>单题最高估算成本降幅</b><br/><sub>第 456 题 · 两组均通过</sub></td>
 </tr>
 </table>
+
+两组均通过 **16/24 题**。单题最高降幅来自第 456 题：计入记忆生成后，Token 从 **2,301,174 降至 840,186**，估算成本从 **33.53 降至 16.10 点**。单题最高值不代表每道题都能达到。
 
 同样的 24 道题，PowerContext 解题和生成记忆合计 **17,808,978 Token**，对照组为 **26,410,221 Token**。对照组通过同一网关调用模型，关闭代码检索、工作指导和记忆。
 

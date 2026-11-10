@@ -90,3 +90,16 @@ saving = (1 - (estimate["pc_solving_points"] + memory_points) / estimate["off_so
 assert round(saving, 2) == 15.42
 assert round(ratio * 100, 3) == 96.994
 print(f"Estimated memory generation: {memory_points:.5f} points; estimated saving: {saving:.2f}% (not an observed bill).")
+
+paired = estimate["paired_case_bounds"]
+assert len(paired) == 24
+def token_saving(row):
+    return (1 - row["pc_solving_plus_memory"] / row["off_solving"]) * 100
+def estimated_cost_saving(row):
+    cost = row["pc_plus_memory_points_max"] - (row["pc_plus_memory_points_max"] - row["pc_plus_memory_points_min"]) * ratio
+    return (1 - cost / row["off_solving_points"]) * 100
+for metric, expected in [(token_saving, 63.49), (estimated_cost_saving, 51.98)]:
+    peak = max(paired, key=metric)
+    assert peak["case"] == 456 and peak["powercontext_pass"] and peak["off_pass"]
+    assert round(metric(peak), 2) == expected
+print("Verified 24-task peaks: case 456, 63.49% tokens and 51.98% estimated cost; both passed.")

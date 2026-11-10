@@ -15,6 +15,6 @@
 <text x="57" y="421" font-size="20" fill="#c2cde1">24 shared coding tasks · 16 solved in each arm</text>
 <text x="58" y="471" font-size="17" fill="#99abc6">BASELINE · GATEWAY OFF</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#36445c"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#c2cde1" font-weight="600">26.41M</text>
 <text x="58" y="534" font-size="19" fill="#e0e7ff" font-weight="600">PowerContext</text><rect x="360" y="512" width="452" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#d5e1ff" font-weight="700">17.81M</text>
-<text x="58" y="581" font-size="17" fill="#8e9fbd">SWE-bench Pro · GPT-5.6 Sol · Original / frozen selections</text>
+<text x="58" y="581" font-size="17" fill="#8e9fbd">Best task: 63.49% fewer tokens · 51.98% lower estimated cost · both passed</text>
 <text x="54" y="639" font-size="18" fill="#9eacc3">Memory generation included. Cost extrapolates the observed cache-hit rate.</text><text x="54" y="669" font-size="18" fill="#9eacc3">Excludes embedding and other auxiliary costs; not an actual bill.</text>
 </g></svg>

@@ -33,11 +33,16 @@ Configure the capabilities you need. Context is organized into **Scopes**, acces
 
 <table>
 <tr>
-<td width="33%" align="center"><h3>32.57% ↓</h3><b>Fewer tokens</b><br/>24 tasks · memory generation included<br/><sub>Measured: 26.41M → 17.81M</sub></td>
-<td width="33%" align="center"><h3>15.42% ↓</h3><b>Lower estimated model cost</b><br/>Same 24 tasks · memory generation included<br/><sub>Extrapolated from observed cache hits</sub></td>
-<td width="33%" align="center"><h3>16 / 24</h3><b>Tasks solved</b><br/>Same count in both groups<br/><sub>CodeGraph + Steering + Memory enabled</sub></td>
+<td width="50%" align="center"><h3>32.57% ↓</h3><b>Fewer tokens across 24 tasks</b><br/><sub>Memory generation included</sub></td>
+<td width="50%" align="center"><h3>15.42% ↓</h3><b>Lower estimated cost across 24 tasks</b><br/><sub>Memory generation included</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><h3>63.49% ↓</h3><b>Largest single-task token reduction</b><br/><sub>Case 456 · both runs passed</sub></td>
+<td width="50%" align="center"><h3>51.98% ↓</h3><b>Largest single-task estimated cost reduction</b><br/><sub>Case 456 · both runs passed</sub></td>
 </tr>
 </table>
+
+Both groups solved **16/24 tasks**. Both single-task peaks come from case 456: including memory generation, tokens fell from **2,301,174 to 840,186**, and estimated cost from **33.53 to 16.10 points**. These peaks are not typical or guaranteed savings.
 
 On the same 24 tasks, PowerContext used **17,808,978 tokens** for solving and memory generation, versus **26,410,221 tokens** for the control. The control uses the same gateway with CodeGraph, Steering, and Memory disabled.
 

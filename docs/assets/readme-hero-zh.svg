@@ -15,6 +15,6 @@
 <text x="57" y="421" font-size="20" fill="#c2cde1">同样的 24 道编程题 · 两组均通过 16 题</text>
 <text x="58" y="471" font-size="17" fill="#99abc6">对照组</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#36445c"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#c2cde1" font-weight="600">26.41M</text>
 <text x="58" y="534" font-size="19" fill="#e0e7ff" font-weight="600">PowerContext</text><rect x="360" y="512" width="452" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#d5e1ff" font-weight="700">17.81M</text>
-<text x="58" y="581" font-size="17" fill="#8e9fbd">SWE-bench Pro · GPT-5.6 Sol · 原始运行记录</text>
+<text x="58" y="581" font-size="17" fill="#8e9fbd">单题最高：Token 减少 63.49% · 估算成本减少 51.98% · 两组均通过</text>
 <text x="54" y="639" font-size="18" fill="#9eacc3">已计入记忆生成；成本按已观测缓存命中率推算。</text><text x="54" y="669" font-size="18" fill="#9eacc3">未计 Embedding 等辅助费用，非实际账单。</text>
 </g></svg>

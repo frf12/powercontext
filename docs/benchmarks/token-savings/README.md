@@ -2,6 +2,8 @@
 
 ## Estimated cost including memory generation
 
+Both peaks in the same 24-task cohort come from case 456, with both runs passing: tokens 2,301,174 → 840,186 (**63.49% fewer**); estimated cost 33.52836 → 16.09925 points (**51.98% lower**). Both include memory generation; cost uses the cache extrapolation below.
+
 On the same 24 tasks, solving plus memory generation uses 17,808,978 tokens versus 26,410,221 for the control: **32.57% fewer**. Apply the input-weighted observed cache-hit rate `821,504 / 846,962 = 96.994%` to 1,171,777 input tokens across 55 records with missing cache fields.
 
 At the frozen rates of 100 points per million uncached input tokens, 10 per million cached input tokens, and 500 per million output tokens, memory generation is estimated at 37.27503 points. Adding 352.25020 solving points gives **389.52523**, versus **460.52434** for the control: **15.42% lower estimated cost**. Points are not currency or an actual bill.
