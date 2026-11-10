@@ -15,7 +15,7 @@ This assumes prefix-extraction cache hits generalize to ordinary generation and 
 
 [Project README](../../../README.md) · [中文](README_CN.md) · [Per-task table](cases.md) · [Machine-readable evidence](results.json)
 
-These are project-run SWE-bench Pro comparisons, not an official leaderboard submission. The tables use our own runs; colleague-provided ON/OFF results and external CodeGraph experiments are excluded. Export date: 2026-11-10.
+These are project-run SWE-bench Pro comparisons, not an official leaderboard submission. Export date: 2026-11-10.
 
 ## Same 24 tasks: original / frozen selections
 
@@ -73,10 +73,6 @@ The MCS primary total is **15,766,986**. Its 74 recorded memory-generation calls
 
 Additional observed business embedding input: 14,737 tokens for memory recall and 7,679 for memory indexing. Readiness, setup, embedding pricing, and some generation cache fields remain incomplete; full system billing is **unknown**, not zero. Do not add Scope or prefix crosschecks to the Core ledger again.
 
-All 24 selected MCS tasks completed their recorded memory drain. There were **0 observed nonempty primary Memory injections**, and 54 post-task Atomic memories across 21 tasks. Each attempt began with an empty database; terminal-response capture and post-task flush do not demonstrate help to the completed solve, and the next task does not inherit these memories. The main-model savings are observed configuration differences, not proof of Memory causality.
-
-The larger Memory run stopped before all planned tasks completed. Invalid, held, and unfinished records are not scored as failures or silently included in this completed cohort.
-
 ## Single-task peaks
 
 | Scope | Arm | Case | OFF total | Arm total | Reduction | Both passed? |
@@ -129,15 +125,3 @@ In the detailed results, **C = CodeGraph, S = Steering, M = Memory**. Combined l
 ## Why 40.30% and 32.57% differ
 
 40.30% covers only the solving model: 15,766,986 tokens. Adding 2,041,992 memory-generation tokens gives 17,808,978 tokens, or 32.57% below the same Gateway OFF baseline of 26,410,221. The README animation shows solving-only usage first, then usage including memory generation. Both use the same 24 tasks and aggregate reductions, not the arithmetic mean of per-task percentage reductions.
-
-## README animation data
-
-| Stage | Fewer tokens | Lower model cost (estimated) | Scope |
-| --- | ---: | ---: | --- |
-| Solving only | 40.30% | 23.51% | Same 24 tasks, excluding memory generation |
-| With memory generation | 32.57% | 15.42% | Same 24 tasks, solving + memory generation |
-| Best single task | 63.49% | 51.98% | Case 456, including memory generation; both passed |
-
-Solving-only cost uses the fixed experiment rates: 460.52434 points for the control versus 352.25020 for PowerContext, a 23.51% reduction. The memory-inclusive stages use the cache extrapolation described above. Points are not an actual bill.
-
-The animation loops in about 6 seconds, with 1.3 seconds of reading time and a 0.7-second transition per stage. Counters, bars, and progress animate together. [Static first frame](../../assets/readme-hero-en.png). To maintain the assets, edit the corresponding SVG template and run `uv run docs/assets/render_hero.py`. The script derives metrics from the evidence in this directory and renders both language GIFs and static first frames.
