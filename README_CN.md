@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-zh.svg" width="100%" alt="PowerContext：同 24 题，计入记忆生成后 Token 减少 32.57%；按已观测缓存命中率估算，模型成本减少 15.42%。辅助费用未计入。" />
+  <img src="docs/assets/readme-hero-zh.png" width="100%" alt="PowerContext：同 24 题，计入记忆生成后 Token 减少 32.57%；按已观测缓存命中率估算，模型成本减少 15.42%。辅助费用未计入。" />
 </p>
 
 <p align="center">

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-en.svg" width="100%" alt="PowerContext: 32.57% fewer tokens including memory generation on 24 tasks; estimated model cost 15.42% lower at the observed cache-hit rate. Auxiliary costs excluded." />
+  <img src="docs/assets/readme-hero-en.png" width="100%" alt="PowerContext: 32.57% fewer tokens including memory generation on 24 tasks; estimated model cost 15.42% lower at the observed cache-hit rate. Auxiliary costs excluded." />
 </p>
 
 <p align="center">
