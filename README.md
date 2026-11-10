@@ -23,11 +23,13 @@
 
 ## What is PowerContext?
 
-**An open-source context runtime for AI agents.** It manages code context, project memory, and task handoffs, bringing relevant context into the workflow when it is needed.
+**PowerContext is an open-source context service for AI agents that keeps work moving across sessions, agents, and teams.** It stores decisions, constraints, evidence, and progress outside a single conversation, so the next session or teammate can pick up from the current state.
 
-<img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
+- **Memory and handoffs:** retain useful information, task progress, and next steps.
+- **Experience and skills:** turn proven approaches into reusable lessons and procedures, reviewed before reuse.
+- **Traceable context:** isolate projects in Scopes, preserve revisions and provenance, and retrieve context for the task at hand.
 
-Configure the capabilities you need. Context is organized into **Scopes**, accessible through HTTP, MCP, Python, and agent integrations. [How it fits together →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
+Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed Core in your own application. [Explore the product and workflows →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
 
 ## Proof it works
 
@@ -37,7 +39,15 @@ Both groups solved **16/24 tasks**. Both single-task peaks come from case 456: i
 
 On the same 24 tasks from **SWE-bench Pro**, PowerContext used **17,808,978 tokens** for solving and memory generation, versus **26,410,221 tokens** for the control. The control uses the same gateway with CodeGraph, Steering, and Memory disabled.
 
-**Tokens are measured; cost is estimated.** Cache fields are missing from 55 memory-generation records. The estimate applies the **96.994%** input-token cache-hit rate observed in the remaining records, at the experiment's fixed rates. Observed records are prefix extractions; missing records are ordinary generation calls, so this extrapolation may be optimistic. Embedding, readiness checks, and other auxiliary costs are excluded. This is not an actual bill. [Task-level results and calculation →](docs/benchmarks/token-savings/README.md)
+**Tokens are measured; cost is estimated from the observed cache-hit rate and fixed experiment rates. Embedding, readiness checks, and other auxiliary costs are excluded.** [Task-level results and calculation →](docs/benchmarks/token-savings/README.md)
+
+### What this benchmark measures
+
+This evaluation focuses on coding token usage in **gateway mode**, with code retrieval, working guidance, and project memory enabled together. These are the benchmark settings; PowerContext also supports cross-session memory, task handoffs, and reusable experience and skills.
+
+<img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
+
+**Memory extraction can reuse the prefix cache, too.** In gateway mode, PowerContext can enable prefix-cached memory extraction, reusing the context prefix from solving requests for memory generation. When the upstream model supports caching and the prefix hits, this reduces repeated input processing and its billed cost. Memory generation remains a separate request; its tokens are included in these results.
 
 Across all 121 tasks, CodeGraph + Steering used **36.18% fewer solving tokens**, with 82 tasks solved versus 83 for the control. The largest single-task reduction was **85.71%**: case 302 used 177,343 versus 1,240,658 tokens, and both runs passed. This is not an average.
 

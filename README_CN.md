@@ -23,11 +23,13 @@
 
 ## PowerContext 是什么？
 
-**PowerContext 为 AI Agent 管理上下文。** 代码检索、工作指导、项目记忆，按需开启；可以接入 Codex、Claude Code，也可以通过 API 接入自己的应用。
+**PowerContext 是面向 AI Agent 的开源上下文服务，让工作跨会话、跨 Agent、跨团队延续。** 把决定、约束、证据和进度保存在对话之外，换个会话或接手人，也能从当前状态继续。
 
-<img src="docs/assets/readme-capabilities-zh.svg" width="100%" alt="代码检索：查找相关代码，检查代码是否已更新。工作指导：明确读取、修改和验证要求。项目记忆：保存项目决定，供后续会话使用。" />
+- **记忆与任务交接：** 保存有用信息，交代任务做到哪一步、下一步做什么。
+- **经验与技能：** 把实践中验证过的方法整理为可复用的经验和流程，经审核后再使用。
+- **可追溯的上下文：** 按 Scope 隔离项目，保留内容版本和来源，按当前任务需要检索。
 
-不同项目的上下文可以分别存放在 **Scope** 中，通过 HTTP、MCP 或 Python 访问。[了解记忆与任务交接 →](https://powercontext.oceanbase.io/zh/docs/workflows/memory-and-handoff/)
+可以直接运行服务，通过 HTTP、MCP、Python 或 Agent 集成接入，也可以将 Core 嵌入自己的应用。[了解产品与工作流 →](https://powercontext.oceanbase.io/zh/docs/workflows/memory-and-handoff/)
 
 ## 效果证据
 
@@ -37,7 +39,15 @@
 
 在 **SWE-bench Pro** 的同 24 道题上，PowerContext 解题和生成记忆合计 **17,808,978 Token**，对照组为 **26,410,221 Token**。对照组通过同一网关调用模型，关闭代码检索、工作指导和记忆。
 
-**Token 是实测，成本是估算。** 记忆生成有 55 条记录缺少缓存字段；这里按其余记录中 **96.994%** 的输入 Token 缓存命中率推算，并使用实验固定费率。已知记录来自前缀提取，缺失记录来自普通生成，外推可能偏乐观。成本未包含 Embedding、就绪检查等辅助请求，不是实际账单。[查看逐题结果与计算方法 →](docs/benchmarks/token-savings/README_CN.md)
+**Token 是实测，成本按已观测缓存命中率和实验固定费率估算，未计入 Embedding、就绪检查等辅助费用。** [查看逐题结果与计算方法 →](docs/benchmarks/token-savings/README_CN.md)
+
+### 这次测了什么？
+
+本次聚焦编程场景的 Token 开销，采用**网关模式**，组合开启代码检索、工作指导和项目记忆。这是本次评测的配置，PowerContext 也支持跨会话记忆、任务交接、经验和技能复用。
+
+<img src="docs/assets/readme-capabilities-zh.svg" width="100%" alt="代码检索：查找相关代码，检查代码是否已更新。工作指导：明确读取、修改和验证要求。项目记忆：保存项目决定，供后续会话使用。" />
+
+**记忆提取也能复用前缀缓存。** 在网关模式下，PowerContext 可以开启前缀缓存记忆提取，让记忆生成请求复用解题请求中已有的上下文前缀。上游模型支持且缓存命中时，可减少这部分输入的重复计算和计费开销。记忆生成仍是独立请求，本次结果已计入它的 Token 用量。
 
 完整 121 题中，开启代码检索和工作指导后，解题 Token 减少 **36.18%**，通过 82 题，对照组通过 83 题。单题最高减少 **85.71%**：第 302 题从 1,240,658 降到 177,343 Token，两组均通过；这不是平均降幅。
 
