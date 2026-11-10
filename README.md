@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-en.png" width="100%" alt="PowerContext: 32.57% fewer tokens including memory generation on 24 tasks; estimated model cost 15.42% lower." />
+  <img src="docs/assets/readme-hero-en.gif" width="100%" alt="PowerContext: 24 SWE-bench Pro tasks. Solving only: 40.30% fewer tokens, 23.51% lower estimated model cost. Including memory generation: 32.57% and 15.42%. Best task: 63.49% and 51.98%." />
 </p>
 
 <p align="center">

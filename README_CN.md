@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-zh.png" width="100%" alt="PowerContext：同 24 题，计入记忆生成后 Token 减少 32.57%；估算模型成本减少 15.42%。" />
+  <img src="docs/assets/readme-hero-zh.gif" width="100%" alt="PowerContext：SWE-bench Pro 同24题，仅解题 Token 减少40.30%、估算模型成本减少23.51%；含记忆生成后分别减少32.57%、15.42%；单题最高分别减少63.49%、51.98%。" />
 </p>
 
 <p align="center">
