@@ -31,16 +31,7 @@ Configure the capabilities you need. Context is organized into **Scopes**, acces
 
 ## Proof it works
 
-<table>
-<tr>
-<td width="50%" align="center"><h3>32.57% ↓</h3><b>Fewer tokens across 24 tasks</b><br/><sub>Memory generation included</sub></td>
-<td width="50%" align="center"><h3>15.42% ↓</h3><b>Lower estimated cost across 24 tasks</b><br/><sub>Memory generation included</sub></td>
-</tr>
-<tr>
-<td width="50%" align="center"><h3>63.49% ↓</h3><b>Largest single-task token reduction</b><br/><sub>Case 456 · both runs passed</sub></td>
-<td width="50%" align="center"><h3>51.98% ↓</h3><b>Largest single-task estimated cost reduction</b><br/><sub>Case 456 · both runs passed</sub></td>
-</tr>
-</table>
+<img src="docs/assets/readme-results-en.png" width="100%" alt="24 tasks: 32.57% fewer tokens, 15.42% lower estimated cost. Best task: 63.49% fewer tokens, 51.98% lower estimated cost. Memory generation included." />
 
 Both groups solved **16/24 tasks**. Both single-task peaks come from case 456: including memory generation, tokens fell from **2,301,174 to 840,186**, and estimated cost from **33.53 to 16.10 points**. These peaks are not typical or guaranteed savings.
 
@@ -92,7 +83,14 @@ Start a new session and trust the hooks when prompted. Save a project decision, 
 
 ## Fits your workflow
 
-**Agents** — [Codex](https://powercontext.oceanbase.io/en/docs/integrations/codex/) · [Claude Code](https://powercontext.oceanbase.io/en/docs/integrations/claude-code/) · [OpenCode, OpenClaw, Pi and capability matrix](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/)
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="23%" alt="Codex" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="23%" alt="Claude Code" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="23%" alt="OpenCode" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="23%" alt="OpenClaw" /></a>
+</p>
+
+[More integrations and capability comparison →](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/)
 
 **Apps & teams** — [Python / HTTP / MCP](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) · [Memory & Handoff](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/) · [Deployment & access](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
 

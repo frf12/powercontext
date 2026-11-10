@@ -31,16 +31,7 @@
 
 ## 效果证据
 
-<table>
-<tr>
-<td width="50%" align="center"><h3>32.57% ↓</h3><b>整批 Token 总量减少</b><br/><sub>24 题 · 已计入记忆生成</sub></td>
-<td width="50%" align="center"><h3>15.42% ↓</h3><b>整批估算模型成本减少</b><br/><sub>同 24 题 · 已计入记忆生成</sub></td>
-</tr>
-<tr>
-<td width="50%" align="center"><h3>63.49% ↓</h3><b>单题最高 Token 降幅</b><br/><sub>第 456 题 · 两组均通过</sub></td>
-<td width="50%" align="center"><h3>51.98% ↓</h3><b>单题最高估算成本降幅</b><br/><sub>第 456 题 · 两组均通过</sub></td>
-</tr>
-</table>
+<img src="docs/assets/readme-results-zh.png" width="100%" alt="同24题：Token减少32.57%，估算成本减少15.42%；单题最高分别减少63.49%和51.98%。已计入记忆生成。" />
 
 两组均通过 **16/24 题**。单题最高降幅来自第 456 题：计入记忆生成后，Token 从 **2,301,174 降至 840,186**，估算成本从 **33.53 降至 16.10 点**。单题最高值不代表每道题都能达到。
 
@@ -93,7 +84,14 @@ powercontext doctor codex
 
 ## 接入你的工作流
 
-**Agent** — [Codex](https://powercontext.oceanbase.io/zh/docs/integrations/codex/) · [Claude Code](https://powercontext.oceanbase.io/zh/docs/integrations/claude-code/) · [OpenCode、OpenClaw、Pi及能力矩阵](https://powercontext.oceanbase.io/zh/docs/integrations/capabilities/)
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="23%" alt="Codex" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="23%" alt="Claude Code" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="23%" alt="OpenCode" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="23%" alt="OpenClaw" /></a>
+</p>
+
+[其他集成与能力对照 →](https://powercontext.oceanbase.io/zh/docs/integrations/capabilities/)
 
 **应用与团队** — [Python / HTTP / MCP](https://powercontext.oceanbase.io/zh/docs/develop/interfaces/) · [记忆与任务交接](https://powercontext.oceanbase.io/zh/docs/workflows/memory-and-handoff/) · [部署与访问控制](https://powercontext.oceanbase.io/zh/docs/workflows/scopes-and-access/)
 
