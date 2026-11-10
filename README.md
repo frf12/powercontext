@@ -35,7 +35,7 @@ Configure the capabilities you need. Context is organized into **Scopes**, acces
 
 Both groups solved **16/24 tasks**. Both single-task peaks come from case 456: including memory generation, tokens fell from **2,301,174 to 840,186**, and estimated cost from **33.53 to 16.10 points**. These peaks are not typical or guaranteed savings.
 
-On the same 24 tasks, PowerContext used **17,808,978 tokens** for solving and memory generation, versus **26,410,221 tokens** for the control. The control uses the same gateway with CodeGraph, Steering, and Memory disabled.
+On the same 24 tasks from **SWE-bench Pro**, PowerContext used **17,808,978 tokens** for solving and memory generation, versus **26,410,221 tokens** for the control. The control uses the same gateway with CodeGraph, Steering, and Memory disabled.
 
 **Tokens are measured; cost is estimated.** Cache fields are missing from 55 memory-generation records. The estimate applies the **96.994%** input-token cache-hit rate observed in the remaining records, at the experiment's fixed rates. Observed records are prefix extractions; missing records are ordinary generation calls, so this extrapolation may be optimistic. Embedding, readiness checks, and other auxiliary costs are excluded. This is not an actual bill. [Task-level results and calculation →](docs/benchmarks/token-savings/README.md)
 
@@ -84,11 +84,30 @@ Start a new session and trust the hooks when prompted. Save a project decision, 
 ## Fits your workflow
 
 <p align="center">
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="23%" alt="Codex" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="23%" alt="Claude Code" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="23%" alt="OpenCode" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="23%" alt="OpenClaw" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="19%" alt="Codex" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="19%" alt="Claude Code" /></a>
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/minimax#readme"><img src="docs/assets/integration-minimax-code.png" width="19%" alt="MiniMax Code" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/dsh/"><img src="docs/assets/integration-deepseek.png" width="19%" alt="DeepSeek Harness" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/zcode/"><img src="docs/assets/integration-zcode.png" width="19%" alt="ZCode" /></a>
 </p>
+
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/kimi-code/"><img src="docs/assets/integration-kimi.png" width="19%" alt="Kimi Code" /></a>
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/hermes#readme"><img src="docs/assets/integration-hermes.png" width="19%" alt="Hermes Agent" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/pi/"><img src="docs/assets/integration-pi.png" width="19%" alt="Pi Coding Agent" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="19%" alt="OpenClaw" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="19%" alt="OpenCode" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/workbuddy#readme"><img src="docs/assets/integration-workbuddy.png" width="19%" alt="WorkBuddy" /></a>
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/bub#readme"><img src="docs/assets/integration-bub.png" width="19%" alt="Bub" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/pydantic-ai/"><img src="docs/assets/integration-pydantic.png" width="19%" alt="Pydantic AI" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/langchain/"><img src="docs/assets/integration-langchain.png" width="19%" alt="LangChain" /></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/langgraph/"><img src="docs/assets/integration-langgraph.png" width="19%" alt="LangGraph" /></a>
+</p>
+
+Codex is officially maintained; other Agent and Python framework integrations are community-maintained. Bub is for evaluation only. See the capability matrix for supported features.
 
 [More integrations and capability comparison →](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/)
 

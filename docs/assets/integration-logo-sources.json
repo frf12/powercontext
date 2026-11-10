@@ -1,0 +1,92 @@
+[
+  {
+    "product": "Codex",
+    "asset": "codex.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/codex.png",
+    "sha256": "fcea9ddbaafdca236a8380cef2ecd3342ecd9914a7b080873873cf45f415686d"
+  },
+  {
+    "product": "Claude Code",
+    "asset": "claude-code.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/claude-code.png",
+    "sha256": "9ef1d98492f68c5c7766162af827dd4e0c9cb0d76b78fce22798985a792fca63"
+  },
+  {
+    "product": "MiniMax Code",
+    "asset": "minimax-code.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/minimax-code.png",
+    "sha256": "dac3aa5b02ae124e80ccd132387110518ddcac0610b4d51d763e9ba6bdc08e6b"
+  },
+  {
+    "product": "DeepSeek Harness",
+    "asset": "deepseek.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/deepseek.png",
+    "sha256": "f98596fd7802ca0c5290c498fec578fa823988646332ee36c43b7920dc4936eb"
+  },
+  {
+    "product": "ZCode",
+    "asset": "zcode.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/zcode.png",
+    "sha256": "1ec553f7eaeae4492c673e9d636692a3898d11800d912628d8c1e667222d6d19"
+  },
+  {
+    "product": "Kimi Code",
+    "asset": "kimi.png",
+    "source": "https://github.com/MoonshotAI.png?size=120",
+    "sha256": "d0a3b2824e1a02457ad487908fa10340c3df1d65439f24ac97e0c37a537057fc"
+  },
+  {
+    "product": "Hermes Agent",
+    "asset": "hermes.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/hermes.png",
+    "sha256": "a4eacd7022af9551688a573cb2cccc5baa3ceb5fcb22728658ce444ef7449567"
+  },
+  {
+    "product": "Pi Coding Agent",
+    "asset": "pi.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/pi.png",
+    "sha256": "debf685b16716a4df4b212185c58416cf6a1eecfec7a8b69f4f9421e7e707b48"
+  },
+  {
+    "product": "OpenClaw",
+    "asset": "openclaw.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/openclaw.png",
+    "sha256": "c6b3eaf0a8f21c343e9af8fa20b8d75523308b01917a5c5775420f8b118b6251"
+  },
+  {
+    "product": "OpenCode",
+    "asset": "opencode.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/opencode.png",
+    "sha256": "8dd736cfa2628863a6e008a134d2094da69727d7359caca5bd05fe322ab13905"
+  },
+  {
+    "product": "WorkBuddy",
+    "asset": "workbuddy.svg",
+    "source": "https://download.codebuddy.ai/web/workbuddy/05fd33c3609bc9cf5ae1fc387a142a2ad0fab64e/assets/logo.svg",
+    "sha256": "10ccbc099e7bc3d5ff12c315c4edd7b21386aa7166c1ec19997b3d55010d5c7d"
+  },
+  {
+    "product": "Bub",
+    "asset": "bub.png",
+    "source": "https://github.com/bubbuild.png?size=120",
+    "sha256": "fb44e231a934ec49b7d8ba1d7f41615a8b7dc1ab2b961e677da274d73140294a"
+  },
+  {
+    "product": "Pydantic AI",
+    "asset": "pydantic.png",
+    "source": "https://github.com/pydantic.png?size=120",
+    "sha256": "d2cbc7f9a5b5a521dfa4de88f3744804302d1cf7ebf0cdd1c7fd6955824b2992"
+  },
+  {
+    "product": "LangChain",
+    "asset": "langchain.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/langchain.png",
+    "sha256": "a9be5f43d862898a6c627e071a5392080f75044024c8c61fb927335a250d3bf2"
+  },
+  {
+    "product": "LangGraph",
+    "asset": "langgraph.png",
+    "source": "https://github.com/oceanbase/powercontext/blob/cc752d8accb0bc4ffade2d4b84ef6e48206e122d/assets/langgraph.png",
+    "sha256": "c857e5fabdfa81ca74a910585eb9b3ef428047bc2861d6b3b85ad49f4d5a0943"
+  }
+]

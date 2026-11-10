@@ -35,7 +35,7 @@
 
 两组均通过 **16/24 题**。单题最高降幅来自第 456 题：计入记忆生成后，Token 从 **2,301,174 降至 840,186**，估算成本从 **33.53 降至 16.10 点**。单题最高值不代表每道题都能达到。
 
-同样的 24 道题，PowerContext 解题和生成记忆合计 **17,808,978 Token**，对照组为 **26,410,221 Token**。对照组通过同一网关调用模型，关闭代码检索、工作指导和记忆。
+在 **SWE-bench Pro** 的同 24 道题上，PowerContext 解题和生成记忆合计 **17,808,978 Token**，对照组为 **26,410,221 Token**。对照组通过同一网关调用模型，关闭代码检索、工作指导和记忆。
 
 **Token 是实测，成本是估算。** 记忆生成有 55 条记录缺少缓存字段；这里按其余记录中 **96.994%** 的输入 Token 缓存命中率推算，并使用实验固定费率。已知记录来自前缀提取，缺失记录来自普通生成，外推可能偏乐观。成本未包含 Embedding、就绪检查等辅助请求，不是实际账单。[查看逐题结果与计算方法 →](docs/benchmarks/token-savings/README_CN.md)
 
@@ -85,11 +85,30 @@ powercontext doctor codex
 ## 接入你的工作流
 
 <p align="center">
-  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="23%" alt="Codex" /></a>
-  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="23%" alt="Claude Code" /></a>
-  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="23%" alt="OpenCode" /></a>
-  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="23%" alt="OpenClaw" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="19%" alt="Codex" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="19%" alt="Claude Code" /></a>
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/minimax#readme"><img src="docs/assets/integration-minimax-code.png" width="19%" alt="MiniMax Code" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/dsh/"><img src="docs/assets/integration-deepseek.png" width="19%" alt="DeepSeek Harness" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/zcode/"><img src="docs/assets/integration-zcode.png" width="19%" alt="ZCode" /></a>
 </p>
+
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/kimi-code/"><img src="docs/assets/integration-kimi.png" width="19%" alt="Kimi Code" /></a>
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/hermes#readme"><img src="docs/assets/integration-hermes.png" width="19%" alt="Hermes Agent" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/pi/"><img src="docs/assets/integration-pi.png" width="19%" alt="Pi Coding Agent" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="19%" alt="OpenClaw" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="19%" alt="OpenCode" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/workbuddy#readme"><img src="docs/assets/integration-workbuddy.png" width="19%" alt="WorkBuddy" /></a>
+  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/bub#readme"><img src="docs/assets/integration-bub.png" width="19%" alt="Bub" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/pydantic-ai/"><img src="docs/assets/integration-pydantic.png" width="19%" alt="Pydantic AI" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/langchain/"><img src="docs/assets/integration-langchain.png" width="19%" alt="LangChain" /></a>
+  <a href="https://powercontext.oceanbase.io/zh/docs/integrations/langgraph/"><img src="docs/assets/integration-langgraph.png" width="19%" alt="LangGraph" /></a>
+</p>
+
+Codex 为官方维护；其余 Agent 和 Python 框架集成为社区维护；Bub 仅用于评测。各项支持范围见能力对照。
 
 [其他集成与能力对照 →](https://powercontext.oceanbase.io/zh/docs/integrations/capabilities/)
 
