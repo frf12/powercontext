@@ -7,7 +7,7 @@
 <text x="54" y="195" font-size="61" font-weight="750" letter-spacing="-2" fill="#101d39">少花 Token，</text><text x="54" y="274" font-size="61" font-weight="750" letter-spacing="-2" fill="#0866ee">把事情做完。</text><text x="57" y="323" font-size="25" fill="#51617c">代码检索 · 工作指导 · 项目记忆</text>
 <line x1="733" y1="140" x2="733" y2="330" stroke="#ccd9ec"/>
 <text x="798" y="202" font-size="75" font-weight="750" letter-spacing="-3" fill="#101d39">32.57<tspan font-size="36">%</tspan></text>
-<text x="804" y="237" font-size="20" fill="#51617c">Token 减少 · 已计入记忆生成成本</text>
+<text x="804" y="237" font-size="20" fill="#51617c">Token 减少（已计入记忆生成成本）</text>
 <text x="798" y="309" font-size="66" font-weight="750" letter-spacing="-3" fill="#0866ee">15.42<tspan font-size="33">%</tspan></text>
 <text x="804" y="343" font-size="22" fill="#51617c">估算模型成本减少</text>
 <rect x="32" y="385" width="1216" height="222" rx="16" fill="#ffffff" stroke="#d7e2f2"/>

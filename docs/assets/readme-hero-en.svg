@@ -7,7 +7,7 @@
 <text x="54" y="195" font-size="67" font-weight="750" letter-spacing="-2" fill="#101d39">Less overhead.</text><text x="54" y="274" font-size="67" font-weight="750" letter-spacing="-2" fill="#0866ee">More progress.</text><text x="57" y="323" font-size="25" fill="#51617c">Make context work for your agent.</text>
 <line x1="733" y1="140" x2="733" y2="330" stroke="#ccd9ec"/>
 <text x="798" y="202" font-size="75" font-weight="750" letter-spacing="-3" fill="#101d39">32.57<tspan font-size="36">%</tspan></text>
-<text x="804" y="237" font-size="16" fill="#51617c">fewer tokens · memory generation overhead included</text>
+<text x="804" y="237" font-size="16" fill="#51617c">fewer tokens (memory generation overhead included)</text>
 <text x="798" y="309" font-size="66" font-weight="750" letter-spacing="-3" fill="#0866ee">15.42<tspan font-size="33">%</tspan></text>
 <text x="804" y="343" font-size="22" fill="#51617c">lower estimated model cost</text>
 <rect x="32" y="385" width="1216" height="222" rx="16" fill="#ffffff" stroke="#d7e2f2"/>
