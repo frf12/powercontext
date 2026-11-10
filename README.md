@@ -37,6 +37,8 @@ Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed C
 
 <img src="docs/assets/readme-results-en.png" width="100%" alt="24 tasks: 32.57% fewer tokens, 15.42% lower estimated cost. Best task: 63.49% fewer tokens, 51.98% lower estimated cost. Memory generation included." />
 
+**Solving alone uses 40.30% fewer tokens; including memory generation overhead, the reduction is 32.57%.** Saved memories can be reused in later sessions, extending the value of accumulated knowledge. This benchmark measures the current run; future reuse benefits have not been measured here.
+
 **Best task: 63.49% fewer tokens and 51.98% lower estimated model cost.** Both runs passed case 456, with tokens falling from 2.30 million to 0.84 million, including memory generation.
 
 [Explore the full benchmark: task results, methodology, and setup →](docs/benchmarks/token-savings/README.md)

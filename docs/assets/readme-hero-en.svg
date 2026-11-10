@@ -7,7 +7,7 @@
 <text x="54" y="195" font-size="67" font-weight="750" letter-spacing="-2" fill="#101d39">Less overhead.</text><text x="54" y="274" font-size="67" font-weight="750" letter-spacing="-2" fill="#0866ee">More progress.</text><text x="57" y="323" font-size="25" fill="#51617c">Make context work for your agent.</text>
 <line x1="733" y1="140" x2="733" y2="330" stroke="#ccd9ec"/>
 <text x="798" y="202" font-size="75" font-weight="750" letter-spacing="-3" fill="#101d39">32.57<tspan font-size="36">%</tspan></text>
-<text x="804" y="237" font-size="18" fill="#51617c">fewer tokens · memory generation included</text>
+<text x="804" y="237" font-size="16" fill="#51617c">fewer tokens · memory generation overhead included</text>
 <text x="798" y="309" font-size="66" font-weight="750" letter-spacing="-3" fill="#0866ee">15.42<tspan font-size="33">%</tspan></text>
 <text x="804" y="343" font-size="22" fill="#51617c">lower estimated model cost</text>
 <rect x="32" y="385" width="1216" height="222" rx="16" fill="#ffffff" stroke="#d7e2f2"/>
@@ -15,5 +15,5 @@
 <text x="58" y="471" font-size="17" fill="#63738d">BASELINE · GATEWAY OFF</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#c9d5e7"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#283b5a" font-weight="600">26.41M</text>
 <text x="58" y="534" font-size="19" fill="#14315d" font-weight="600">PowerContext</text><rect x="360" y="512" width="452" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#0866ee" font-weight="700">17.81M</text>
 <text x="58" y="581" font-size="17" fill="#63738d">Best task: 63.49% fewer tokens · 51.98% lower estimated cost · both passed</text>
-<text x="54" y="650" font-size="18" fill="#63738d">SWE-bench Pro · Gateway mode · Memory generation included · Full benchmark below</text>
+<text x="54" y="650" font-size="18" fill="#63738d">Solving alone: 40.30% fewer tokens (excludes memory generation) · Full benchmark below</text>
 </g></svg>

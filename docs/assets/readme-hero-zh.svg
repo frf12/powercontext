@@ -7,7 +7,7 @@
 <text x="54" y="195" font-size="61" font-weight="750" letter-spacing="-2" fill="#101d39">少花 Token，</text><text x="54" y="274" font-size="61" font-weight="750" letter-spacing="-2" fill="#0866ee">把事情做完。</text><text x="57" y="323" font-size="25" fill="#51617c">代码检索 · 工作指导 · 项目记忆</text>
 <line x1="733" y1="140" x2="733" y2="330" stroke="#ccd9ec"/>
 <text x="798" y="202" font-size="75" font-weight="750" letter-spacing="-3" fill="#101d39">32.57<tspan font-size="36">%</tspan></text>
-<text x="804" y="237" font-size="22" fill="#51617c">Token 减少 · 已计入记忆生成</text>
+<text x="804" y="237" font-size="20" fill="#51617c">Token 减少 · 已计入记忆生成成本</text>
 <text x="798" y="309" font-size="66" font-weight="750" letter-spacing="-3" fill="#0866ee">15.42<tspan font-size="33">%</tspan></text>
 <text x="804" y="343" font-size="22" fill="#51617c">估算模型成本减少</text>
 <rect x="32" y="385" width="1216" height="222" rx="16" fill="#ffffff" stroke="#d7e2f2"/>
@@ -15,5 +15,5 @@
 <text x="58" y="471" font-size="17" fill="#63738d">对照组</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#c9d5e7"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#283b5a" font-weight="600">26.41M</text>
 <text x="58" y="534" font-size="19" fill="#14315d" font-weight="600">PowerContext</text><rect x="360" y="512" width="452" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#0866ee" font-weight="700">17.81M</text>
 <text x="58" y="581" font-size="17" fill="#63738d">单题最高：Token 减少 63.49% · 估算成本减少 51.98% · 两组均通过</text>
-<text x="54" y="650" font-size="18" fill="#63738d">SWE-bench Pro · 网关模式 · 含记忆生成 · 完整评测见下方</text>
+<text x="54" y="650" font-size="18" fill="#63738d">仅解题 Token 减少 40.30%（不含记忆生成） · 完整评测见下方</text>
 </g></svg>
