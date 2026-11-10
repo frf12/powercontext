@@ -112,3 +112,20 @@ python3 docs/benchmarks/token-savings/verify.py
 The verifier checks task alignment, record arithmetic, conditional selection, and published totals using [results.json](results.json). It makes no API calls, starts no agents, and reruns no graders. Primary usage comes from CLI `turn.completed`: `total = input + output`; cached input is already in input, and reasoning is already in output.
 
 The export contains all 121 original records for the five baseline arms, S/CS/Gateway retry selections and extra attempts, and 24 MCS selections. Outcome digests identify the source records where supplied by the source report. Full prompts, raw traces, credentials, and local file paths are not bundled. Source hashes identify provenance; they do not make unavailable raw traces publicly auditable. Numerical verification is not independent grade reproduction.
+
+
+## Configuration and result interpretation
+
+In the detailed results, **C = CodeGraph, S = Steering, M = Memory**. Combined letters mean those features are enabled together. **Gateway OFF** is the control with all three disabled.
+
+- On the same 24 tasks: S saves 27.12% (15/24 solved), CS 33.06% (15/24), MCS 40.30% (16/24); Gateway OFF solves 16/24. This is a completed-task intersection, not a random sample.
+- MCS adds 2,041,992 post-task memory-generation tokens. Including them gives a 32.57% reduction, before other auxiliary work. No nonempty Memory injection was observed during solving; the savings do not establish cross-task memory benefits.
+- Across 121 tasks, CodeGraph alone uses 10.53% more tokens. CS solves one fewer task than OFF. Implementation and validation routes vary; these runs do not guarantee savings on every task or equal quality.
+- Conditional retry selections, all-attempt costs, cached and uncached tokens are separate in the evidence report. They are not mixed into the headline. MCS did not finish all 121 tasks.
+- Tested with Codex CLI 0.162.1, GPT-5.6 Sol medium, a frozen development build and fresh databases per attempt. S is explicit guidance, not an installation default. OFF is an earlier frozen batch.
+
+[Methodology](README.md) · [Data](results.json) · [Offline verifier](verify.py)
+
+## Why 40.30% and 32.57% differ
+
+40.30% covers only the solving model: 15,766,986 tokens. Adding 2,041,992 memory-generation tokens gives 17,808,978 tokens, or 32.57% below the same Gateway OFF baseline of 26,410,221. The project README consistently uses the memory-inclusive figure.

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-hero-en.png" width="100%" alt="PowerContext: 32.57% fewer tokens including memory generation on 24 tasks; estimated model cost 15.42% lower at the observed cache-hit rate. Auxiliary costs excluded." />
+  <img src="docs/assets/readme-hero-en.png" width="100%" alt="PowerContext: 32.57% fewer tokens including memory generation on 24 tasks; estimated model cost 15.42% lower." />
 </p>
 
 <p align="center">
@@ -33,38 +33,21 @@ Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed C
 
 ## Proof it works
 
+**Spend fewer tokens. Lower model costs.** On the same 24 SWE-bench Pro tasks, PowerContext used **32.57% fewer tokens** and delivered **15.42% lower estimated model cost**, including memory generation. Both groups solved **16 tasks**.
+
 <img src="docs/assets/readme-results-en.png" width="100%" alt="24 tasks: 32.57% fewer tokens, 15.42% lower estimated cost. Best task: 63.49% fewer tokens, 51.98% lower estimated cost. Memory generation included." />
 
-Both groups solved **16/24 tasks**. Both single-task peaks come from case 456: including memory generation, tokens fell from **2,301,174 to 840,186**, and estimated cost from **33.53 to 16.10 points**. These peaks are not typical or guaranteed savings.
+**Best task: 63.49% fewer tokens and 51.98% lower estimated model cost.** Both runs passed case 456, with tokens falling from 2.30 million to 0.84 million, including memory generation.
 
-On the same 24 tasks from **SWE-bench Pro**, PowerContext used **17,808,978 tokens** for solving and memory generation, versus **26,410,221 tokens** for the control. The control uses the same gateway with CodeGraph, Steering, and Memory disabled.
+[Explore the full benchmark: task results, methodology, and setup →](docs/benchmarks/token-savings/README.md)
 
-**Tokens are measured; cost is estimated from the observed cache-hit rate and fixed experiment rates. Embedding, readiness checks, and other auxiliary costs are excluded.** [Task-level results and calculation →](docs/benchmarks/token-savings/README.md)
+### Coding: put context to work
 
-### What this benchmark measures
-
-This evaluation focuses on coding token usage in **gateway mode**, with code retrieval, working guidance, and project memory enabled together. These are the benchmark settings; PowerContext also supports cross-session memory, task handoffs, and reusable experience and skills.
+This benchmark runs in **gateway mode**, with code retrieval, working guidance, and project memory enabled together:
 
 <img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
 
-**Memory extraction can reuse the prefix cache, too.** In gateway mode, PowerContext can enable prefix-cached memory extraction, reusing the context prefix from solving requests for memory generation. When the upstream model supports caching and the prefix hits, this reduces repeated input processing and its billed cost. Memory generation remains a separate request; its tokens are included in these results.
-
-Across all 121 tasks, CodeGraph + Steering used **36.18% fewer solving tokens**, with 82 tasks solved versus 83 for the control. The largest single-task reduction was **85.71%**: case 302 used 177,343 versus 1,240,658 tokens, and both runs passed. This is not an average.
-
-<details>
-<summary>Test scope, auxiliary costs, and retries</summary>
-
-In the detailed results, **C = CodeGraph, S = Steering, M = Memory**. Combined letters mean those features are enabled together. **Gateway OFF** is the control with all three disabled.
-
-- On the same 24 tasks: S saves 27.12% (15/24 solved), CS 33.06% (15/24), MCS 40.30% (16/24); Gateway OFF solves 16/24. This is a completed-task intersection, not a random sample.
-- MCS adds 2,041,992 post-task memory-generation tokens. Including them gives a 32.57% reduction, before other auxiliary work. No nonempty Memory injection was observed during solving; the savings do not establish cross-task memory benefits.
-- Across 121 tasks, CodeGraph alone uses 10.53% more tokens. CS solves one fewer task than OFF. Implementation and validation routes vary; these runs do not guarantee savings on every task or equal quality.
-- Conditional retry selections, all-attempt costs, cached and uncached tokens are separate in the evidence report. They are not mixed into the headline. MCS did not finish all 121 tasks.
-- Tested with Codex CLI 0.162.1, GPT-5.6 Sol medium, a frozen development build and fresh databases per attempt. S is explicit guidance, not an installation default. OFF is an earlier frozen batch.
-
-[Methodology](docs/benchmarks/token-savings/README.md) · [Data](docs/benchmarks/token-savings/results.json) · [Offline verifier](docs/benchmarks/token-savings/verify.py)
-
-</details>
+**Extract memory. Reuse the cache.** In gateway mode, PowerContext supports prefix-cached memory extraction, reusing context prefixes from solving requests to lower input costs on cache hits. Keep useful memories while reducing the overhead of creating them.
 
 ## Quick start
 

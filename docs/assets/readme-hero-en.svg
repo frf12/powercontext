@@ -15,5 +15,5 @@
 <text x="58" y="471" font-size="17" fill="#63738d">BASELINE · GATEWAY OFF</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#c9d5e7"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#283b5a" font-weight="600">26.41M</text>
 <text x="58" y="534" font-size="19" fill="#14315d" font-weight="600">PowerContext</text><rect x="360" y="512" width="452" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#0866ee" font-weight="700">17.81M</text>
 <text x="58" y="581" font-size="17" fill="#63738d">Best task: 63.49% fewer tokens · 51.98% lower estimated cost · both passed</text>
-<text x="54" y="639" font-size="18" fill="#63738d">Memory generation included. Cost extrapolates the observed cache-hit rate.</text><text x="54" y="669" font-size="18" fill="#63738d">Excludes embedding and other auxiliary costs; not an actual bill.</text>
+<text x="54" y="650" font-size="18" fill="#63738d">SWE-bench Pro · Gateway mode · Memory generation included · Full benchmark below</text>
 </g></svg>

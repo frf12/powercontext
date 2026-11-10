@@ -15,5 +15,5 @@
 <text x="58" y="471" font-size="17" fill="#63738d">对照组</text><rect x="360" y="450" width="670" height="28" rx="7" fill="#c9d5e7"/><text x="1208" y="473" text-anchor="end" font-size="25" fill="#283b5a" font-weight="600">26.41M</text>
 <text x="58" y="534" font-size="19" fill="#14315d" font-weight="600">PowerContext</text><rect x="360" y="512" width="452" height="30" rx="7" fill="url(#bar)"/><text x="1208" y="536" text-anchor="end" font-size="27" fill="#0866ee" font-weight="700">17.81M</text>
 <text x="58" y="581" font-size="17" fill="#63738d">单题最高：Token 减少 63.49% · 估算成本减少 51.98% · 两组均通过</text>
-<text x="54" y="639" font-size="18" fill="#63738d">已计入记忆生成；成本按已观测缓存命中率推算。</text><text x="54" y="669" font-size="18" fill="#63738d">未计 Embedding 等辅助费用，非实际账单。</text>
+<text x="54" y="650" font-size="18" fill="#63738d">SWE-bench Pro · 网关模式 · 含记忆生成 · 完整评测见下方</text>
 </g></svg>
