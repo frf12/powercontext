@@ -93,29 +93,30 @@ Start a new session and trust the hooks when prompted. Save a project decision, 
 
 ## Fits your workflow
 
-<p align="center">
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/codex/"><img src="docs/assets/integration-codex.png" width="19%" alt="Codex" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/claude-code/"><img src="docs/assets/integration-claude-code.png" width="19%" alt="Claude Code" /></a>
-  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/minimax#readme"><img src="docs/assets/integration-minimax-code.png" width="19%" alt="MiniMax Code" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/dsh/"><img src="docs/assets/integration-deepseek.png" width="19%" alt="DeepSeek Harness" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/zcode/"><img src="docs/assets/integration-zcode.png" width="19%" alt="ZCode" /></a>
-</p>
-
-<p align="center">
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/kimi-code/"><img src="docs/assets/integration-kimi.png" width="19%" alt="Kimi Code" /></a>
-  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/hermes#readme"><img src="docs/assets/integration-hermes.png" width="19%" alt="Hermes Agent" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/pi/"><img src="docs/assets/integration-pi.png" width="19%" alt="Pi Coding Agent" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/openclaw/"><img src="docs/assets/integration-openclaw.png" width="19%" alt="OpenClaw" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/opencode/"><img src="docs/assets/integration-opencode.png" width="19%" alt="OpenCode" /></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/workbuddy#readme"><img src="docs/assets/integration-workbuddy.png" width="19%" alt="WorkBuddy" /></a>
-  <a href="https://github.com/oceanbase/powercontext/tree/master/integrations/bub#readme"><img src="docs/assets/integration-bub.png" width="19%" alt="Bub" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/pydantic-ai/"><img src="docs/assets/integration-pydantic.png" width="19%" alt="Pydantic AI" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/langchain/"><img src="docs/assets/integration-langchain.png" width="19%" alt="LangChain" /></a>
-  <a href="https://powercontext.oceanbase.io/en/docs/integrations/langgraph/"><img src="docs/assets/integration-langgraph.png" width="19%" alt="LangGraph" /></a>
-</p>
+<!-- Add integrations using an original logo asset, a product name, and a documentation link. -->
+<table width="100%">
+  <tr>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/codex/"><img src="docs/assets/codex.png" height="48" alt="Codex" /><br />Codex</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/claude-code/"><img src="docs/assets/claude-code.png" height="48" alt="Claude Code" /><br />Claude Code</a></td>
+    <td align="center" width="20%"><a href="https://github.com/oceanbase/powercontext/tree/master/integrations/minimax#readme"><img src="docs/assets/minimax-code.png" height="48" alt="MiniMax Code" /><br />MiniMax Code</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/dsh/"><img src="docs/assets/deepseek.png" height="48" alt="DeepSeek Harness" /><br />DeepSeek Harness</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/zcode/"><img src="docs/assets/zcode.png" height="48" alt="ZCode" /><br />ZCode</a></td>
+  </tr>
+  <tr>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/kimi-code/"><img src="docs/assets/kimi.png" height="48" alt="Kimi Code" /><br />Kimi Code</a></td>
+    <td align="center" width="20%"><a href="https://github.com/oceanbase/powercontext/tree/master/integrations/hermes#readme"><img src="docs/assets/hermes.png" height="48" alt="Hermes Agent" /><br />Hermes Agent</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/pi/"><img src="docs/assets/pi.png" height="48" alt="Pi Coding Agent" /><br />Pi Coding Agent</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/openclaw/"><img src="docs/assets/openclaw.png" height="48" alt="OpenClaw" /><br />OpenClaw</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/opencode/"><img src="docs/assets/opencode.png" height="48" alt="OpenCode" /><br />OpenCode</a></td>
+  </tr>
+  <tr>
+    <td align="center" width="20%"><a href="https://github.com/oceanbase/powercontext/tree/master/integrations/workbuddy#readme"><img src="docs/assets/workbuddy.svg" height="48" alt="WorkBuddy" /><br />WorkBuddy</a></td>
+    <td align="center" width="20%"><a href="https://github.com/oceanbase/powercontext/tree/master/integrations/bub#readme"><img src="docs/assets/bub.png" height="48" alt="Bub" /><br />Bub</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/pydantic-ai/"><img src="docs/assets/pydantic.png" height="48" alt="Pydantic AI" /><br />Pydantic AI</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/langchain/"><img src="docs/assets/langchain.png" height="48" alt="LangChain" /><br />LangChain</a></td>
+    <td align="center" width="20%"><a href="https://powercontext.oceanbase.io/en/docs/integrations/langgraph/"><img src="docs/assets/langgraph.png" height="48" alt="LangGraph" /><br />LangGraph</a></td>
+  </tr>
+</table>
 
 Codex is officially maintained; other Agent and Python framework integrations are community-maintained. Bub is for evaluation only. See the capability matrix for supported features.
 
