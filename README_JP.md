@@ -5,109 +5,139 @@
   </picture>
 </p>
 
+<h3 align="center">AI Agent のためのオープンソース・コンテキストサービス</h3>
 <p align="center">
-  <a href="#クイックスタート"><b>使い始める</b></a> &nbsp; · &nbsp;
-  <a href="#効果の検証">検証結果</a> &nbsp; · &nbsp;
-  <a href="#さまざまな場面でコンテキストを活かす">活用シーン</a> &nbsp; · &nbsp;
-  <a href="https://powercontext.oceanbase.io/en/docs/">ドキュメント</a> &nbsp; · &nbsp;
+  回り道を減らし、トークンを減らす。<br />
+  <a href="#ユースケース">タスクの引き継ぎ</a> · <a href="#ユースケース">複数 Agent での記憶共有</a> · <a href="#ユースケース">社内ナレッジベース</a> · <a href="#ユースケース">ユーザーごとのプロファイル</a> · <a href="https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/">Dream による自己進化</a> · <a href="#追跡と統制">Scope による分離</a> · <a href="#記憶ルールを-scope-ごとに">Scope ごとの記憶ルール</a> · <a href="#既存のサブスクリプションを使う">既存のサブスクリプションの活用</a>を、ひとつのサービスで。
+</p>
+
+<p align="center">
+  <a href="#powercontext-とは">概要</a> &nbsp;·&nbsp;
+  <a href="#なぜ-powercontext-なのか">特長</a> &nbsp;·&nbsp;
+  <a href="#ユースケース">ユースケース</a> &nbsp;·&nbsp;
+  <a href="#アーキテクチャ">アーキテクチャ</a> &nbsp;·&nbsp;
+  <a href="#クイックスタート"><b>クイックスタート</b></a> &nbsp;·&nbsp;
+  <a href="#エコシステム">エコシステム</a> &nbsp;·&nbsp;
+  <a href="#最新情報">最新情報</a> &nbsp;·&nbsp;
+  <a href="https://powercontext.oceanbase.io/en/docs/">ドキュメント</a> &nbsp;·&nbsp;
+  <a href="#コミュニティ">Feishu</a> &nbsp;·&nbsp;
   <a href="https://discord.com/invite/74cF8vbNEs">Discord</a>
 </p>
 <p align="center">
   <a href="README.md">English</a> · <a href="README_CN.md">中文</a> · <a href="README_JP.md">日本語</a> &nbsp; / &nbsp;
-  <a href="https://pypi.org/project/powercontext/">Python パッケージ</a> · <a href="LICENSE">Apache 2.0</a>
+  <a href="https://pypi.org/project/powercontext/">Python package</a> · <a href="LICENSE">Apache 2.0</a>
 </p>
 
-本文中のドキュメントリンクと図中の表記は英語版です。
+## PowerContext とは
 
-## なぜ PowerContext なのか？
+**PowerContext は、Agent や Harness のコンテキスト管理を支えるサービスです。** 会話、資料、作業記録を、検索・更新でき、出典までたどれる知識に整理し、必要なときに Agent へ届けます。
 
-**的確に、素早く、無駄なく。必要なコンテキストで、Agent の遠回りを減らす。** PowerContext は、関連する知識、ユーザーの好み、タスクの進捗、過去の経験を今のタスクに届けます。検索の繰り返し、何度もの確認、成果につながらない試行を減らし、時間とトークンを作業の前進に使えるよう支援します。
+- **トークンの節約：** 正しいコードを見つけ、必要な箇所だけを読むよう Agent を導き、タスク完了までの往復を減らします。[検証結果 →](#トークンの節約)
+- **複数 Agent の協働：** 複数の Agent、セッション、チームメンバーが同じ Scope の記憶を共有し、引き継ぎで作業を続けます。[ユースケース →](#ユースケース)
+- **自己進化：** Dream が過去の根拠から記憶とプロンプトの改訂を提案し、あなたのレビュー後に反映します。[Dream について →](https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/)
+- **出典をたどれる：** すべての記憶は、根拠となる Source と正確なリビジョンまでたどれます。[詳しく →](#追跡と統制)
+- **Scope ごとのルール：** チーム、プロジェクト、ユーザーごとに記憶ルールを持て、版も残ります。[詳しく →](#記憶ルールを-scope-ごとに)
+- **安全に管理：** Scope ごとにデータと権限を分離し、生成された経験とスキルはレビュー後にのみ想起されます。[詳しく →](#追跡と統制)
 
-- **的確に：今のタスクに必要なコンテキストを届ける。** 関連する知識やコードをタスクに応じて探し、根拠を残し、コードを使う前に更新の有無を確認します。
-- **素早く：調べ直しや往復を減らす。** これまでの進捗を引き継ぎ、確認済みの方法や制約を参照して、背景の把握や試行錯誤にかかる時間を減らせるようにします。
-- **無駄なく：タスク完了までの総コストを抑える。** 1 回ごとのモデル呼び出しを有効に使い、不要な推論やツールとの往復、ユーザーの待ち時間や背景を説明し直す手間を減らせるようにします。
+サービスとして起動して HTTP、MCP、Python、Agent 連携から使うことも、Core を自分のアプリケーションに組み込むこともできます。
 
-## PowerContext とは？
+<!-- 動画の位置：2 回目のセッションで Agent が 1 回目の作業を引き継ぐ様子を、30〜60 秒の実録で。 -->
 
-**PowerContext は、AI Agent 向けのオープンソース・コンテキストサービスです。** 会話、資料、作業記録を、検索・更新でき、出典をたどれる知識に整理します。Agent がユーザーやプロジェクトを理解し、前回の続きから作業できるようにします。
+## なぜ PowerContext なのか
 
-[多彩な Artifact で知識を整理 →](https://powercontext.oceanbase.io/en/docs/workflows/artifacts/) · [Dream で継続的に改善 →](https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/) · [プラグインで柔軟に拡張 →](https://powercontext.oceanbase.io/en/docs/develop/plugins/)
+### トークンの節約
 
-HTTP、MCP、Python、Agent 連携を通じてサービスとして利用するほか、Core をアプリケーションに組み込むこともできます。[製品とワークフローを詳しく見る →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
+**Agent はモデルを呼び出すたびに、積み上がったコンテキストを丸ごと送り直します。** そのため PowerContext は、タスク全体を終えるまでの往復回数と総コストを最適化します。正しいコードを見つけ、必要な箇所だけを読み、独立した操作をまとめ、関連するテストだけを実行するよう導き、探索のやり直しや無駄な試行を減らします。
 
-## 効果の検証
+- **同じ 24 タスク、記憶の生成を含む：** トークンは **32.57% 減少**、推定モデルコストは **15.42% 低下**し、両群は同じ 16 タスクを解決しました。問題解決のみではトークンが 40.30% 減少し、単一タスクでは最大 63.49% 減少しました。
+- **往復の削減：** 同じタスク ID を使った別の実験（OFF と MS の比較）では、メインモデルへのリクエストが 708 回から 539 回へ、**23.87% 減少**しました。この実験は構成が異なるため、上の数値と合算はできません。
+- **記憶の生成もキャッシュを再利用：** 記憶の生成にはトークンがかかり、上の 32.57% にも含まれています。ゲートウェイモードでは、問題解決リクエストのコンテキストのプレフィックスを再利用でき（Codex のサブスクリプションでも同様）、キャッシュ項目が記録された記憶生成の呼び出しでは、入力の 97% がキャッシュにヒットしました。
 
-**トークンを減らし、モデルコストも抑える。** SWE-bench Pro の同じ 24 タスクで、PowerContext は記憶の生成を含めてトークン数を **32.57%**、推定モデルコストを **15.42%** 削減しました。両群が解決したのは**同じ 16 タスク**です。
-
-**問題解決のみではトークン数が 40.30% 減少し、記憶の生成に使った分を含めても 32.57% 減少しました。** 保存した記憶は後のセッションで再利用できます。このベンチマークが測ったのは今回の実行であり、後の再利用による効果は測定していません。
-
-**単一タスクで最大 63.49% のトークン削減、51.98% の推定モデルコスト削減。** タスク 456 は両群とも解決し、記憶の生成を含むトークン数は 230 万から 84 万に減少しました。
-
-[24 タスクの検証結果、集計方法、実行設定を見る →](docs/benchmarks/token-savings/README.md)
-
-### コーディング：探索のやり直しと不要な往復を減らす
-
-**1 回ごとの推論を有効に使い、タスク完了までの往復を減らす。** 関連するコード、明確な作業要件、過去の経験は、Agent が次に何をすべきかを見つける手がかりになります。タスク全体にかかる時間とトークンに着目し、探索のやり直し、背景の読み直し、成果につながらない試行を減らすことを目指しています。
-
-このベンチマークでは**ゲートウェイモード**を使い、コード検索、作業指針、プロジェクトの記憶を同時に有効にしています。
+このベンチマークは**ゲートウェイモード**で、コード検索、作業ガイダンス、プロジェクトの記憶を同時に有効にしています。
 
 <img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph：関連するコードを検索し、更新の有無を確認。Steering：対象を絞った読み込み、操作の一括実行、関連するテスト。Memory：判断を保存し、後のセッションで予算内に収まる範囲で想起。" />
 
-**記憶を抽出し、キャッシュも再利用する。** 上記の 32.57% には記憶の生成に使ったトークンも含まれています。ゲートウェイモードでは、プレフィックスキャッシュを使った記憶抽出を有効にできます。条件を満たす場合に問題解決リクエストのコンテキストプレフィックスを再利用し、キャッシュにヒットした入力のコストを抑えます。今回、キャッシュ項目が記録された記憶生成リクエストでは、入力の 97% がキャッシュにヒットしました。 [記憶抽出のコストと品質を検証した別のレポートを見る（英語） →](https://gist.github.com/jasper-yl/d02bfb7d9b45ca175bf74ad09cfa5ba4#file-00-report-en-md)
+[24 タスクのベンチマーク：結果と集計方法 →](docs/benchmarks/token-savings/README.md) · [メインモデルのリクエスト数 →](docs/benchmarks/token-savings/request-counts_JP.md) · [記憶抽出のコストと品質 →](https://gist.github.com/jasper-yl/d02bfb7d9b45ca175bf74ad09cfa5ba4#file-00-report-en-md)
 
-## さまざまな場面でコンテキストを活かす
+### 記憶ルールを Scope ごとに
 
-<!-- Each card is editable HTML; keep text and links aligned across the three READMEs. -->
-<table width="100%">
-  <tr>
-    <td colspan="2" width="1000" valign="top">
-      <img src="docs/assets/scenarios/rules.svg" width="40" height="40" align="right" alt="" />
-      <p><strong>一人ひとりに、自分だけの記憶ルール</strong></p>
-      <h3>記憶のルールは、自分で</h3>
-      <blockquote><p>「長く使う決定事項と制約だけを残し、一時的なやり取りは会話の中に。」</p></blockquote>
-      <p>個人用 Scope のプロンプトで、覚える内容と整理の仕方を決められます。</p>
-      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/"><b>自分の記憶ルールを作る →</b></a></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/profile.svg" width="32" height="32" align="right" alt="" />
-      <p><sub>Profile</sub></p>
-      <h3>いつものやり方で</h3>
-      <blockquote><p>「設計レビューは Yuque にまとめて。」</p></blockquote>
-      <p>使うツール、書き方、仕事の進め方をプロフィールに残せます。</p>
-      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/">プロフィールを見る →</a></p>
-    </td>
-    <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/topic.svg" width="32" height="32" align="right" alt="" />
-      <p><sub>Topic Memory</sub></p>
-      <h3>プロジェクトの経緯</h3>
-      <p><code>日々の議論</code> → <code>テーマ別の要約</code> → <code>必要な詳細</code></p>
-      <p>まず要約を読み、必要に応じて背景や根拠をたどれます。</p>
-      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/topic-memory/">プロジェクトの知識を残す →</a></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/dream.svg" width="32" height="32" align="right" alt="" />
-      <p><sub>Dream</sub></p>
-      <h3>経験から見直す</h3>
-      <p><code>過去の根拠</code> → <code>修正案</code> → <code>あなたが承認</code></p>
-      <p>過去のやり取りをもとに記憶やプロンプトの修正を提案し、承認後に反映します。</p>
-      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/">Dream を見る →</a></p>
-    </td>
-    <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/handoff.svg" width="32" height="32" align="right" alt="" />
-      <p><sub>Handoff</sub></p>
-      <h3>続きから再開</h3>
-      <p><code>確認済みの進捗</code> → <code>次の手順</code> → <code>新しいセッション</code></p>
-      <p>目標と進捗、次の手順を引き継ぎ、現状を確かめて再開できます。</p>
-      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/">作業を引き継ぐ →</a></p>
-    </td>
-  </tr>
-</table>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-prompt-rules-ja-dark.svg" />
+  <img src="docs/assets/readme-prompt-rules-ja-light.svg" width="100%" alt="ひとつの PowerContext Server で、法務チーム、営業の個人 Scope、研究開発プロジェクトがそれぞれ抽出、プロファイル、統合のプロンプトを設定し、版を残す。出力形式、権限、根拠の範囲、機微情報の保護はサーバーが固定する" />
+</picture>
+
+多くの記憶サービスは、抽出ルールをサービス全体やプロジェクト単位で設定します。PowerContext は記憶の抽出、統合、プロファイル生成、Topic Memory のプロンプトを Scope 単位の Artifact として扱うため、チーム、プロジェクト、さらにはユーザー一人ひとりが自分の記憶ルールを持てます。変更はすべて版として残り、いつでも元に戻せます。Dream も過去の根拠から改訂を提案し、レビュー後に反映されます。
+
+ルールが決めるのは「何をどう残すか」だけです。出力形式、ツールと権限、根拠の範囲、機微情報の保護はサーバーが固定するため、ルールを変えてもシステムは壊れません。アクセス制御を有効にすると、変更には Scope の管理権限が必要です。Dashboard にはまだ編集画面がありませんが、アプリケーションは API を通じてこの機能を自分のユーザーに提供できます。[プロンプトの管理 →](https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/)
+
+### 追跡と統制
+
+- **根拠のある記憶：** それぞれの記憶は、根拠となる Source と正確なリビジョンまでたどれ、Source 内の具体的な位置も示せます。
+- **レビューを経た変更：** 生成された経験とスキルはレビュー後にのみ想起され、Dream の改訂はあなたの承認後に反映されます。古くなった記憶は履歴を残したまま無効化できます。
+- **明確な境界：** Scope ごとにデータとアクセス権を分離します。運用テレメトリにはプロンプト、本文、モデルの応答は含まれません。
+
+[候補のレビュー →](https://powercontext.oceanbase.io/en/docs/workflows/review-candidates/) · [Scope とアクセス制御 →](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
+
+## ユースケース
+
+PowerContext は、コーディング Agent、パーソナルアシスタント、オフィス Agent に接続でき、チームや企業が作るアプリケーションにも組み込めます。
+
+<!-- Cards are generated by docs/assets/render_scenarios.py; keep the three READMEs aligned. -->
+**コーディング Agent**
+
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-handoff-ja-dark.svg" /><img src="docs/assets/scenarios/card-handoff-ja-light.svg" width="49%" alt="別のセッションで、続きから：セッション 1 が検証済みの進捗と次の一歩を残し、セッション 2 がそこから続ける" /></picture></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-shared-ja-dark.svg" /><img src="docs/assets/scenarios/card-shared-ja-light.svg" width="49%" alt="複数の Agent で、ひとつの記憶：Codex、Claude Code、OpenCode が同じ Scope の判断、制約、進捗を共有する" /></picture></a>
+</p>
+
+**パーソナルアシスタントとオフィス Agent**
+
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/en/docs/integrations/openclaw/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-assistant-ja-dark.svg" /><img src="docs/assets/scenarios/card-assistant-ja-light.svg" width="49%" alt="頼んだことを覚えている助手：OpenClaw は長い会話が圧縮される前に要点を記憶に保存し、翌日の新しいチャットでも覚えている" /></picture></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/workflows/experience-and-skill-lifecycle/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-office-ja-dark.svg" /><img src="docs/assets/scenarios/card-office-ja-light.svg" width="49%" alt="業務の手順を、一度で覚える：うまくいった月次レポートの手順がスキルになり、レビュー後に翌月そのまま実行される" /></picture></a>
+</p>
+
+**チームと企業のアプリケーション**
+
+<p align="center">
+  <a href="https://github.com/oceanbase/powercontext/blob/master/docs/en/docs/workflows/knowledge-base.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-knowledge-ja-dark.svg" /><img src="docs/assets/scenarios/card-knowledge-ja-light.svg" width="49%" alt="社内ドキュメントを、Agent が検索：Markdown と画像をナレッジベースにし、検索結果は該当する節を示す" /></picture></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-users-ja-dark.svg" /><img src="docs/assets/scenarios/card-users-ja-light.svg" width="49%" alt="アプリが、ユーザーを一人ずつ覚える：業務ユーザー ID ごとにプロファイルを蓄積し、LangChain などで想起する" /></picture></a>
+</p>
+<p align="center">
+  <a href="https://powercontext.oceanbase.io/en/blog/power-system-agent-memory/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-domain-ja-dark.svg" /><img src="docs/assets/scenarios/card-domain-ja-light.svg" width="49%" alt="業界 Agent が、診断ごとに賢く：診断 Agent が類似障害の経験を再利用し、中断したタスクを再開する" /></picture></a>
+  <a href="https://powercontext.oceanbase.io/en/docs/develop/plugins/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scenarios/card-plugins-ja-dark.svg" /><img src="docs/assets/scenarios/card-plugins-ja-light.svg" width="49%" alt="チケットを、検索できる知識に：プラグインがチケットを Source として取り込み、独自形式のチケット要約を生成する" /></picture></a>
+</p>
+
+[タスクの引き継ぎ](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/) · [Scope と共有](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/) · [OpenClaw](https://powercontext.oceanbase.io/en/docs/integrations/openclaw/) · [Hermes](https://powercontext.oceanbase.io/en/docs/integrations/hermes/) · [経験とスキル](https://powercontext.oceanbase.io/en/docs/workflows/experience-and-skill-lifecycle/) · [ナレッジベースプラグイン](https://github.com/oceanbase/powercontext/blob/master/docs/en/docs/workflows/knowledge-base.md) · [プロファイル](https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/) · [電力診断 Agent の事例](https://powercontext.oceanbase.io/en/blog/power-system-agent-memory/) · [Source と Artifact のプラグイン](https://powercontext.oceanbase.io/en/docs/develop/plugins/)
+
+## アーキテクチャ
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-architecture-ja-dark.svg" />
+  <img src="docs/assets/readme-architecture-ja-light.svg" width="100%" alt="PowerContext のアーキテクチャ：Agent とアプリは Hooks、MCP、SDK、または任意のゲートウェイから PowerContext Server に接続します。Server は Scope ごとに Source を処理して記憶、トピック、プロファイル、経験、スキル、引き継ぎなどの Artifact を作り、次のターンのコンテキストとして想起します。Source と Artifact のプラグインでデータ源と Artifact の種類を拡張できます。処理には生成モデルと埋め込みモデルを使い、データは SQLite、OceanBase、seekDB に保存します。" />
+</picture>
+
+Agent は Hooks、MCP、SDK で Server に接続します。モデルへのリクエストをゲートウェイ経由にすると、ゲートウェイがコンテキストを注入し、作業ガイダンスを提供します。Server は Scope ごとに根拠（Source）を保存し、バックグラウンドで記憶、Topic Memory、プロファイル、経験、スキルなどの Artifact に整理し、次のターンで使うコンテキストとして想起・組み立てます。Source と Artifact のプラグインで、新しいデータ源や Artifact の種類を追加できます。[アーキテクチャと責任範囲 →](https://powercontext.oceanbase.io/en/docs/workflows/architecture/)
 
 ## クイックスタート
+
+### Agent にインストールを任せる
+
+次の文章をコピーして Agent に送ってください（例は Codex）。
+
+```text
+PowerContext をインストールして Codex に接続してください。PowerContext は AI Agent のためのオープンソースのコンテキストサービスです（https://github.com/oceanbase/powercontext）。以下のコマンドとリンクは公式ドキュメントのものです。
+
+1. 公式のインストールスクリプトを実行してください。ネットワーク接続が必要で、私のホームディレクトリに書き込みます。サンドボックスで止められた場合は、先に私の許可を求めてください：
+   curl -fsSL https://powercontext.oceanbase.io/install.sh | bash
+2. クイックスタートを読み、設定、サービスの起動、Scope の作成と紐付け、Codex 連携のインストールまで案内してください：
+   https://powercontext.oceanbase.io/en/llms.mdx/docs/get-started/quickstart/content.md
+   設定ウィザードは対話式です。私の代わりに答えず、powercontext config init --output .env を私自身のターミナルで実行するよう伝えてください。モデルの認証情報などを選ぶ前には私に確認してください。
+3. 最後に、Codex の /hooks で PowerContext のフックを信頼する方法と、記憶が機能しているか確かめる方法を教えてください。
+```
+
+<details>
+<summary><b>自分でインストールする</b></summary>
 
 Python 3.11+、Git、[uv](https://docs.astral.sh/uv/getting-started/installation/) と、接続する Agent の CLI が必要です。以下は macOS と Linux 向けにバージョン **1.5.2** をインストールする手順です。Windows のサポートは実験段階です。[インストールスクリプト](https://powercontext.oceanbase.io/en/docs/get-started/install-and-run/#install-with-the-recommended-script)を使えば、Python と uv も用意できます。
 
@@ -154,7 +184,18 @@ powercontext doctor codex
 
 <sub>この手順はコンテキストサービスを起動するものです。ベンチマークの Gateway、CodeGraph、Steering の設定は自動では再現されません。詳細は検証レポートを参照してください。</sub>
 
-## 今のワークフローに接続する
+</details>
+
+### 既存のサブスクリプションを使う
+
+Codex、Claude Code、GitHub Copilot、Grok、Gemini、Qwen Code、Kimi Code をすでに契約していますか？記憶、経験、プロファイルの生成にそのまま使え、生成モデルの API を別に用意する必要はありません。
+
+- **バックグラウンドでの生成：** Server がサブスクリプションで記憶、経験、プロファイルを生成します。この場合、推論保護は有効にできません。Topic Memory と Dream はまだ対応しておらず、埋め込みモデルは別途設定が必要です。
+- **ゲートウェイ経由の Agent リクエスト：** Agent はサブスクリプションのままモデルへのリクエストをゲートウェイに送り、ゲートウェイがコンテキストを注入して会話を記録します。Codex のサブスクリプションでは、記憶の抽出も Agent セッションのプレフィックスキャッシュを再利用し、使用量は同じサブスクリプションの枠に計上されます。対応範囲はサブスクリプションごとに異なります。
+
+[サブスクリプションでバックグラウンド生成を設定 →](https://powercontext.oceanbase.io/en/development/pydantic-ai-inference/#reuse-existing-subscription-credentials) · [Gateway OAuth サブスクリプション →](https://github.com/oceanbase/powercontext/blob/master/gateway/SUBSCRIPTIONS.md)
+
+## エコシステム
 
 <!-- Add integrations using an original logo asset, a product name, and a documentation link. -->
 <table width="100%">
@@ -187,8 +228,29 @@ Codex 連携は公式メンテナンス、その他の Agent と Python フレ�
 
 **アプリケーションとチーム** — [Python / HTTP / MCP](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) · [Memory と Handoff](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/) · [デプロイとアクセス制御](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
 
----
+## 最新情報
 
-[ドキュメント](https://powercontext.oceanbase.io/en/docs/) · [開発に参加](https://github.com/oceanbase/powercontext/blob/master/CONTRIBUTING.md) · [問題を報告](https://github.com/oceanbase/powercontext/issues) · [Discord](https://discord.com/invite/74cF8vbNEs)
+- **2026-11-16 · [v1.5.2](https://github.com/oceanbase/powercontext/releases/tag/powercontext-v1.5.2)** — 書き込みのバッチ化とクエリの最適化。メンテナーの計測では、v1.5.1 と比べて書き込みスループットが約 190%、クエリスループットが約 171% 向上しました。Dashboard で処理の進捗、失敗の診断、トークン使用量を確認できます。
+- **2026-11-09 · [v1.5.1](https://github.com/oceanbase/powercontext/releases/tag/powercontext-v1.5.1)** — 記憶を Source 内の正確な位置までたどれるようになり、メトリクス、ログ、トレースを扱う監視スタックを任意で追加できます。
+- **2026-11-03 · [v1.5.0](https://github.com/oceanbase/powercontext/releases/tag/powercontext-v1.5.0)** — Source と Artifact のプラグインで、データの取り込みと独自の Artifact を拡張できます。可逆なエンコードで、モデル入力に含まれる重複した根拠を減らします。
+
+[すべてのリリース →](https://github.com/oceanbase/powercontext/releases)
+
+## さらに詳しく
+
+- [基本概念](https://powercontext.oceanbase.io/en/docs/get-started/core-concepts/) · [アーキテクチャと責任範囲](https://powercontext.oceanbase.io/en/docs/workflows/architecture/) · [プラグイン](https://powercontext.oceanbase.io/en/docs/develop/plugins/)
+- [Python / HTTP / MCP インターフェース](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) · [Server のデプロイ](https://powercontext.oceanbase.io/en/docs/operate/deploy-server/)
+- [トークン削減のベンチマーク](docs/benchmarks/token-savings/README.md) · [ブログ](https://powercontext.oceanbase.io/en/blog/)
+
+## コミュニティ
+
+Feishu の PowerContext コミュニティに参加して、活用のヒントや質問を共有し、AI エージェントのコンテキスト管理について交流しましょう。
+Feishu で以下の QR コードをスキャンすると、グループに参加できます。
+
+<p align="center">
+  <img src="docs/assets/powercontext-group-qr.png" alt="PowerContext の Feishu コミュニティに参加するための QR コード" width="280" />
+</p>
+
+[Discord](https://discord.com/invite/74cF8vbNEs) · [Issues](https://github.com/oceanbase/powercontext/issues) · [コントリビューション](https://github.com/oceanbase/powercontext/blob/master/CONTRIBUTING.md)
 
 PowerContext は [PowerMem](https://www.powermem.ai/) の後継プロジェクトであり、[Apache 2.0](LICENSE) ライセンスで公開されています。
