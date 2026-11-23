@@ -31,7 +31,7 @@
 
 **PowerContext は、AI Agent 向けのオープンソース・コンテキストサービスです。** 会話、資料、作業記録を、検索・更新でき、出典をたどれる知識に整理します。Agent がユーザーやプロジェクトを理解し、前回の続きから作業できるようにします。
 
-何を重点的に記憶するか、情報をどう整理するか、プロフィールや経験をどう生成するか。それぞれの処理に使うプロンプトを、自分の Scope でカスタマイズできます。個人のプロフィール、プロジェクトの知識、タスクの引き継ぎと組み合わせることで、蓄積するコンテキストを人や仕事に合わせられます。
+[多彩な Artifact で知識を整理 →](https://powercontext.oceanbase.io/en/docs/workflows/artifacts/) · [Dream で継続的に改善 →](https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/) · [プラグインで柔軟に拡張 →](https://powercontext.oceanbase.io/en/docs/develop/plugins/)
 
 HTTP、MCP、Python、Agent 連携を通じてサービスとして利用するほか、Core をアプリケーションに組み込むこともできます。[製品とワークフローを詳しく見る →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
 
@@ -53,47 +53,59 @@ HTTP、MCP、Python、Agent 連携を通じてサービスとして利用する�
 
 <img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph：関連するコードを検索し、更新の有無を確認。Steering：対象を絞った読み込み、操作の一括実行、関連するテスト。Memory：判断を保存し、後のセッションで予算内に収まる範囲で想起。" />
 
-**記憶を抽出し、キャッシュも再利用する。** 上記の 32.57% には記憶の生成に使ったトークンも含まれています。ゲートウェイモードでは、プレフィックスキャッシュを使った記憶抽出を有効にできます。条件を満たす場合に問題解決リクエストのコンテキストプレフィックスを再利用し、キャッシュにヒットした入力のコストを抑えます。今回、キャッシュ項目が記録された記憶生成リクエストでは、入力の 97% がキャッシュにヒットしました。
-
-### モデルとの往復を減らす
-
-**同じ 24 タスクを使った別のテストでは、主モデルへのリクエスト数が 23.87% 減少しました。** 記憶と作業指針を有効にした構成では、リクエスト総数は **708 回から 539 回**、1 タスクあたりの平均は **29.50 回から 22.46 回**になりました。両群が解決したのは**同じ 15 タスク**です。このテストは、冒頭の図に示したコード検索・作業指針・記憶の組み合わせによる比較とは別に集計しています。[リクエスト数とタスクごとの記録を見る →](docs/benchmarks/token-savings/request-counts_JP.md)
+**記憶を抽出し、キャッシュも再利用する。** 上記の 32.57% には記憶の生成に使ったトークンも含まれています。ゲートウェイモードでは、プレフィックスキャッシュを使った記憶抽出を有効にできます。条件を満たす場合に問題解決リクエストのコンテキストプレフィックスを再利用し、キャッシュにヒットした入力のコストを抑えます。今回、キャッシュ項目が記録された記憶生成リクエストでは、入力の 97% がキャッシュにヒットしました。 [記憶抽出のコストと品質を検証した別のレポートを見る（英語） →](https://gist.github.com/jasper-yl/d02bfb7d9b45ca175bf74ad09cfa5ba4#file-00-report-en-md)
 
 ## さまざまな場面でコンテキストを活かす
 
-### 自分の記憶を、自分のルールで
-
-**記憶のルールは、一人ひとりに合わせられます。** エンジニアなら技術的な判断や障害の原因、プロダクトマネージャーなら要件や設計上のトレードオフ、クリエイターなら表現の好みや作品の設定。個人の Scope でプロンプトをカスタマイズし、記憶の抽出、情報の整理、プロフィールの生成で重視する内容を調整できます。設定は Scope ごとに保存され、バージョンも保持されます。
-
-プロフィールは Agent があなたを理解するために使われ、個人用のプロンプトは役立つ記憶をどう蓄積するかを定めます。使うたびに残る情報を、あなたの仕事や習慣に合わせていけます。
-
-[Prompt：記憶のルールをカスタマイズする →](https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/) · [Profile：一人ひとりのユーザーを理解する →](https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/)
-
-### セッションが変わっても、続きから
-
-**作業が中断しても、最初からやり直す必要はありません。** 調べた原因、確認できたこと、残っている問題、次にやることを残せます。新しいセッションや別の Agent では、まず現在の状態を確かめてから、引き継いだ地点から再開します。
-
-Memory は判断や制約を保持し、Handoff は目標、進捗、次の手順を整理します。数日にまたがるタスク、チームでの作業、複数の Agent 間の引き継ぎに役立ちます。
-
-[Memory と Handoff：進捗を保存し、タスクを引き継ぐ →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
-
-### 長く続くプロジェクトでも、背景の説明を繰り返さない
-
-**プロジェクトの経緯を、Agent も参照できるように。** なぜこの方法を選んだのか、顧客からどんな要望があったのか、研究で何が分かっているのか。資料や議論に分散した情報を、継続して更新できるテーマ別の知識に整理し、必要なときに背景や根拠を探せます。
-
-Topic Memory は同じテーマの進展をまとめ、Memory は具体的な事実を保持し、Source は元の根拠を残します。製品開発、顧客プロジェクト、長期的な研究に役立ちます。
-
-[Topic Memory：プロジェクトの知識を継続して整理する →](https://powercontext.oceanbase.io/en/docs/workflows/topic-memory/) · [Source：元の根拠を確認する →](https://powercontext.oceanbase.io/en/docs/workflows/sources/)
-
-### 一度解いた問題を、次の仕事の手がかりに
-
-**問題を解決した経験を、次の出発点に。** 有効だった方法、適用できる条件、失敗からの教訓、検証手順を残します。似たタスクに取り組むとき、Agent は既存の経験を調べてから、どう進めるかを判断できます。
-
-Experience は状況、方法、結果を蓄積します。繰り返し使える手順は Skill にまとめ、確認してからエクスポートして Agent で使えます。一度取り組んだ仕事の成果を、その後の仕事にも活かせます。
-
-[Experience：再利用できる経験を蓄積する →](https://powercontext.oceanbase.io/en/docs/workflows/experience-and-skill-lifecycle/) · [Skill：確認済みの作業手順をエクスポートする →](https://powercontext.oceanbase.io/en/docs/workflows/create-and-export-skill/)
-
-個人、プロジェクト、チームごとの Scope でコンテキストを管理し、アクセス制御と組み合わせて、誰が読み取りや変更をできるかを決められます。内容のバージョンと出典を保持するため、確認、修正、引き継ぎにも役立ちます。[Scope とアクセス制御を詳しく見る →](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
+<!-- Each card is editable HTML; keep text and links aligned across the three READMEs. -->
+<table width="100%">
+  <tr>
+    <td colspan="2" width="1000" valign="top">
+      <img src="docs/assets/scenarios/rules.svg" width="40" height="40" align="right" alt="" />
+      <p><strong>一人ひとりに、自分だけの記憶ルール</strong></p>
+      <h3>記憶のルールは、自分で</h3>
+      <blockquote><p>「長く使う決定事項と制約だけを残し、一時的なやり取りは会話の中に。」</p></blockquote>
+      <p>個人用 Scope のプロンプトで、覚える内容と整理の仕方を決められます。</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/"><b>自分の記憶ルールを作る →</b></a></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/profile.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Profile</sub></p>
+      <h3>いつものやり方で</h3>
+      <blockquote><p>「設計レビューは Yuque にまとめて。」</p></blockquote>
+      <p>使うツール、書き方、仕事の進め方をプロフィールに残せます。</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/">プロフィールを見る →</a></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/topic.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Topic Memory</sub></p>
+      <h3>プロジェクトの経緯</h3>
+      <p><code>日々の議論</code> → <code>テーマ別の要約</code> → <code>必要な詳細</code></p>
+      <p>まず要約を読み、必要に応じて背景や根拠をたどれます。</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/topic-memory/">プロジェクトの知識を残す →</a></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/dream.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Dream</sub></p>
+      <h3>経験から見直す</h3>
+      <p><code>過去の根拠</code> → <code>修正案</code> → <code>あなたが承認</code></p>
+      <p>過去のやり取りをもとに記憶やプロンプトの修正を提案し、承認後に反映します。</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/">Dream を見る →</a></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/handoff.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Handoff</sub></p>
+      <h3>続きから再開</h3>
+      <p><code>確認済みの進捗</code> → <code>次の手順</code> → <code>新しいセッション</code></p>
+      <p>目標と進捗、次の手順を引き継ぎ、現状を確かめて再開できます。</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/">作業を引き継ぐ →</a></p>
+    </td>
+  </tr>
+</table>
 
 ## クイックスタート
 

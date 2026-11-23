@@ -29,7 +29,7 @@
 
 **PowerContext is an open-source context service for AI agents.** It turns conversations, documents, and work records into knowledge that can be searched, updated, and traced to its sources, helping agents understand the person, know the project, and continue from where work left off.
 
-Each person can customize memory-processing prompts in their own Scope: what to remember, how to organize information, and how to build profiles and capture experience. Alongside personal profiles, project knowledge, and task handoffs, these prompts help accumulated context fit different people and ways of working.
+[Rich artifacts for different kinds of knowledge →](https://powercontext.oceanbase.io/en/docs/workflows/artifacts/) · [Evolve with Dream →](https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/) · [Extend with flexible plugins →](https://powercontext.oceanbase.io/en/docs/develop/plugins/)
 
 Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed Core in your own application. [Explore the product and workflows →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
 
@@ -51,47 +51,59 @@ This benchmark runs in **gateway mode**, with code retrieval, working guidance, 
 
 <img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
 
-**Extract memory. Reuse the cache.** The 32.57% reduction above includes memory-generation tokens. In gateway mode, you can enable prefix-cached memory extraction to reuse context prefixes from solving requests when eligible, lowering input costs on cache hits. In this benchmark, 97% of input to memory-generation calls with recorded cache fields hit the cache.
-
-### Fewer model round trips
-
-**In a separate test on the same 24 tasks, primary-model requests fell by 23.87%.** With memory and working guidance enabled, total requests fell from **708 to 539**, averaging **29.50 to 22.46 requests per task**. Both groups solved the **same 15 tasks**. These results are reported separately from the code retrieval, working guidance, and memory comparison at the top of this page. [See request counts and per-task records →](docs/benchmarks/token-savings/request-counts.md)
+**Extract memory. Reuse the cache.** The 32.57% reduction above includes memory-generation tokens. In gateway mode, you can enable prefix-cached memory extraction to reuse context prefixes from solving requests when eligible, lowering input costs on cache hits. In this benchmark, 97% of input to memory-generation calls with recorded cache fields hit the cache. [Explore the separate memory-extraction cost and quality study →](https://gist.github.com/jasper-yl/d02bfb7d9b45ca175bf74ad09cfa5ba4#file-00-report-en-md)
 
 ## Put context to work
 
-### Your memory, your rules
-
-**Everyone can define what is worth remembering.** Engineers may focus on technical decisions and incident causes; product managers on requirements and tradeoffs; creators on style preferences and story details. Customize prompts in your personal Scope to guide memory extraction, information organization, and profile generation. Each Scope keeps its own configuration and version history.
-
-Profiles help agents understand you. Personal prompts let you shape how the system builds memories that are useful to you, so what you retain from each session better fits your work and habits.
-
-[Prompt: customize memory rules →](https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/) · [Profile: understand each user →](https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/)
-
-### A new session, the same progress
-
-**A pause in work does not have to mean starting over.** Keep track of what you investigated, what you verified, what is still blocked, and what comes next. In a new session or with another agent, check the current state and continue from the handoff.
-
-Memory retains decisions and constraints; Handoff organizes goals, progress, and next steps. Use them for work that spans days, team collaboration, and handoffs between agents.
-
-[Memory and Handoff: save progress and continue the task →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
-
-### Keep the project history close
-
-**Projects have a history. Your agent should know it.** Why was an approach chosen? What did the customer ask for? What has the research established? Turn information scattered across documents and discussions into topic knowledge that stays up to date, with background and evidence available when needed.
-
-Topic Memory brings together progress on a subject, Memory retains specific facts, and Source preserves the original evidence. Use them for product development, customer projects, and long-running research.
-
-[Topic Memory: build ongoing project knowledge →](https://powercontext.oceanbase.io/en/docs/workflows/topic-memory/) · [Source: return to the original evidence →](https://powercontext.oceanbase.io/en/docs/workflows/sources/)
-
-### Solve it once, learn for next time
-
-**Make one task's lessons the starting point for the next.** Retain effective methods, the conditions where they apply, failed approaches, and verification steps. When a similar task comes up, agents can look up past experience before deciding how to act.
-
-Experience captures the situation, approach, and outcome. Repeatable procedures can become Skills, reviewed and exported for agents to use, so completed work continues to pay off.
-
-[Experience: retain reusable lessons →](https://powercontext.oceanbase.io/en/docs/workflows/experience-and-skill-lifecycle/) · [Skill: export reviewed procedures →](https://powercontext.oceanbase.io/en/docs/workflows/create-and-export-skill/)
-
-People, projects, and teams can manage context in their own Scopes, with access controls governing who can read and edit it. Version history and source references support verification, revision, and handoffs. [Explore Scopes and access control →](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
+<!-- Each card is editable HTML; keep text and links aligned across the three READMEs. -->
+<table width="100%">
+  <tr>
+    <td colspan="2" width="1000" valign="top">
+      <img src="docs/assets/scenarios/rules.svg" width="40" height="40" align="right" alt="" />
+      <p><strong>Everyone can define their own memory rules</strong></p>
+      <h3>Your memory, your rules</h3>
+      <blockquote><p>“Keep long-term decisions and constraints. Leave temporary discussion in the conversation.”</p></blockquote>
+      <p>Customize prompts in your personal Scope to decide what to remember and how to organize it.</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/"><b>Set my memory rules →</b></a></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/profile.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Profile</sub></p>
+      <h3>Built around you</h3>
+      <blockquote><p>“Put design reviews in Yuque.”</p></blockquote>
+      <p>Keep your preferred tools, writing style, and working habits in your profile.</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/">Explore profiles →</a></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/topic.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Topic Memory</sub></p>
+      <h3>Keep project context</h3>
+      <p><code>Discussion</code> → <code>Topic summary</code> → <code>Details on demand</code></p>
+      <p>Start with a topic summary, then follow the details and evidence when needed.</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/topic-memory/">Build project knowledge →</a></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/dream.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Dream</sub></p>
+      <h3>Learn from past work</h3>
+      <p><code>Past evidence</code> → <code>Revision proposal</code> → <code>Your approval</code></p>
+      <p>Dream proposes memory and prompt changes for you to review before they take effect.</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/review-dream-revisions/">Explore Dream →</a></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/scenarios/handoff.svg" width="32" height="32" align="right" alt="" />
+      <p><sub>Handoff</sub></p>
+      <h3>Continue next session</h3>
+      <p><code>Verified progress</code> → <code>Next steps</code> → <code>New session</code></p>
+      <p>Keep goals, verified progress, and next steps. Check the current state and carry on.</p>
+      <p><a href="https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/">Continue your work →</a></p>
+    </td>
+  </tr>
+</table>
 
 ## Quick start
 
