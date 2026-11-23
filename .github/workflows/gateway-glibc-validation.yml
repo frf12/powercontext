@@ -1,0 +1,47 @@
+name: Gateway glibc 2.28 validation
+
+on:
+  push:
+    branches: [codex/gateway-glibc-228-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    uses: ./.github/workflows/gateway-distribution.yml
+    with:
+      source_ref: 32b8bb27ada453347324de608588989f7a64b62a
+
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 32b8bb27ada453347324de608588989f7a64b62a
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-env
+        with:
+          python-version: '3.12'
+          sync-args: '--python 3.12 --python-preference only-managed'
+      - run: uv run --frozen prek run -a
+      - run: uv run --frozen pytest tests/test_gateway_distribution.py tests/test_ci_pipeline.py tests/test_workflow_actions.py -q
+
+  catalog:
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 32b8bb27ada453347324de608588989f7a64b62a
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: gateway-dist-*
+          path: dist/gateway/
+          merge-multiple: true
+      - run: >-
+          python3 scripts/gateway_distribution.py catalog --directory dist/gateway
+          --version 0.0.0-dev.32b8bb27ada4 --commit 32b8bb27ada453347324de608588989f7a64b62a
