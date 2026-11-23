@@ -12,7 +12,7 @@
   <a href="https://discord.com/invite/74cF8vbNEs">Discord</a>
 </p>
 <p align="center">
-  <a href="README.md">English</a> · <a href="README_CN.md">中文</a> &nbsp; / &nbsp;
+  <a href="README.md">English</a> · <a href="README_CN.md">中文</a> · <a href="README_JP.md">日本語</a> &nbsp; / &nbsp;
   <a href="https://pypi.org/project/powercontext/">Python package</a> · <a href="LICENSE">Apache 2.0</a>
 </p>
 
@@ -42,40 +42,62 @@ Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed C
 
 **Best task: 63.49% fewer tokens and 51.98% lower estimated model cost.** Both runs passed case 456, with tokens falling from 2.30 million to 0.84 million, including memory generation.
 
-[Explore the full benchmark: task results, methodology, and setup →](docs/benchmarks/token-savings/README.md)
+[Explore the 24-task benchmark: results, methodology, and setup →](docs/benchmarks/token-savings/README.md)
 
-### Coding: fewer rounds beat smaller rounds
+### Coding: fewer detours, less wasted work
 
-**Cutting rounds saves more than compressing them.** Every model call in an agent loop re-sends the accumulated context, so each extra round sends the whole context again. Tool output is only part of that context, so compressing it has a ceiling. Compression can also drop details the model needs, forcing another tool call to fetch the original: no tokens saved, one more round. PowerContext instead helps the agent find the right code and read the right lines from the start, avoiding detours. The benchmark is consistent with this: all of the savings came from re-sent context (−42.67%), while new input per call rose slightly.
+**Optimize the cost of completing the task.** PowerContext brings relevant code and working guidance into the current step, helping the agent avoid repeated searches, redundant reads, and unproductive attempts. The goal is to reduce unnecessary reasoning and tool round trips, so more of the token budget goes toward finishing the work. We measure total task usage; a single request's compression ratio does not tell the whole story.
 
 This benchmark runs in **gateway mode**, with code retrieval, working guidance, and project memory enabled together:
 
 <img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
 
-**Memory costs tokens, so make it cheap.** Saving memories takes extra model calls. That cost is real, and the 32.57% above includes it. In gateway mode, PowerContext extracts memories by reusing the context prefix of solving requests, so most of their input hits the prefix cache and is billed at the cached rate. In this benchmark, 97% of input to memory-generation calls with recorded cache fields hit the cache.
+**Extract memory. Reuse the cache.** The 32.57% reduction above includes memory-generation tokens. In gateway mode, you can enable prefix-cached memory extraction to reuse context prefixes from solving requests when eligible, lowering input costs on cache hits. In this benchmark, 97% of input to memory-generation calls with recorded cache fields hit the cache.
 
 ## Quick start
 
-You need Python 3.11+, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/). This setup pins version 1.5.0 for macOS and Linux.
+You need Python 3.11+, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/), plus the CLI of any Agent you want to connect. This setup pins version **1.5.2** for macOS and Linux; Windows support is experimental. The [installation script](https://powercontext.oceanbase.io/en/docs/get-started/install-and-run/#install-with-the-recommended-script) can also provision Python and uv.
+
+Choose **Basic memory** in the wizard to try explicit saves and recall without a separate Server model API. Automatic extraction requires **Full memory** with Generation and Embedding credentials. SQLite is a simple first storage choice.
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.5.0"
+uv tool install --force "powercontext[cli,server]==1.5.2"
 mkdir -p powercontext-config && cd powercontext-config
 powercontext config init --language en --output .env
 powercontext config validate --env-file .env
-powercontext server run --env-file .env
+powercontext service install --env-file .env
+powercontext service status
 ```
 
-Keep the service running. Follow **`.env.next-steps.md`** to create and bind your Scope. Start with Basic memory; automatic extraction requires Generation and Embedding credentials.
+The service keeps running after you close the terminal. Linux requires an available `systemd --user` manager. The generated `.env` and `.env.next-steps.md` may contain credentials; keep them out of Git.
 
-For Codex, install the matching integration in another terminal:
+Load the generated configuration and check the service:
 
 ```bash
-powercontext setup codex --ref powercontext-v1.5.0
+set -a
+. ./.env
+set +a
+powercontext ready
+powercontext capabilities
+```
+
+Follow **`.env.next-steps.md`** to create and bind your Scope, using the real `scope_id` returned by the creation request. Use the same Server and Scope in your Agent and Dashboard; changing directories does not create project isolation. After editing `.env`, reload it and rerun `powercontext service install --env-file .env` to apply the changes.
+
+For Codex, install the matching integration:
+
+```bash
+powercontext setup codex --env-file .env --ref powercontext-v1.5.2
 powercontext doctor codex
 ```
 
-Start a new session and trust the hooks when prompted. Save a project decision, then recall it in a later session. [Full setup guide →](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
+Before sending the first message in a new Codex session, open **`/hooks`** and trust the PowerContext hooks when prompted. The `UserPromptSubmit` hook must be enabled for automatic prompt capture and recall, even when MCP connects. [First-session checks and recovery →](https://powercontext.oceanbase.io/en/docs/integrations/codex/#first-session-hook-trust)
+
+Verify the workflow you enabled:
+
+- **Basic memory:** explicitly ask the Agent to save a project decision, then start a new session in the same Scope and recall it with a source reference.
+- **Full memory:** confirm that an input appears as a Source, wait for configured processing to produce Topic Memory, then check that a related update is reflected and can be recalled in a new session.
+
+`doctor codex` checks installation and connectivity only. Source capture alone does not create memory; automatic processing also depends on configured schedules and model work. The Agent still uses its own model in Basic memory mode. [Full setup guide →](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 
 <sub>This starts the context service. It does not automatically reproduce the benchmark's Gateway, CodeGraph, or Steering configuration; see the evidence report.</sub>
 
@@ -114,6 +136,6 @@ Codex is officially maintained; other Agent and Python framework integrations ar
 
 ---
 
-[Documentation](https://powercontext.oceanbase.io/en/docs/) · [Contribute](https://github.com/oceanbase/powercontext/blob/main/CONTRIBUTING.md) · [Issues](https://github.com/oceanbase/powercontext/issues) · [Discord](https://discord.com/invite/74cF8vbNEs)
+[Documentation](https://powercontext.oceanbase.io/en/docs/) · [Contribute](https://github.com/oceanbase/powercontext/blob/master/CONTRIBUTING.md) · [Issues](https://github.com/oceanbase/powercontext/issues) · [Discord](https://discord.com/invite/74cF8vbNEs)
 
 PowerContext is the successor to [PowerMem](https://www.powermem.ai/). Released under [Apache 2.0](LICENSE).

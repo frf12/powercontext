@@ -12,7 +12,7 @@
   <a href="https://discord.com/invite/74cF8vbNEs">Discord</a>
 </p>
 <p align="center">
-  <a href="README.md">English</a> · <a href="README_CN.md">中文</a> &nbsp; / &nbsp;
+  <a href="README.md">English</a> · <a href="README_CN.md">中文</a> · <a href="README_JP.md">日本語</a> &nbsp; / &nbsp;
   <a href="https://pypi.org/project/powercontext/">Python package</a> · <a href="LICENSE">Apache 2.0</a>
 </p>
 
@@ -42,40 +42,62 @@
 
 **单题最高省下 63.49% Token、51.98% 估算模型成本。** 第 456 题，两组均通过，Token 从 230 万降到 84 万，已计入记忆生成。
 
-[查看完整评测：逐题结果、统计口径与复现配置 →](docs/benchmarks/token-savings/README_CN.md)
+[查看 24 题评测：逐题结果、统计口径与复现配置 →](docs/benchmarks/token-savings/README_CN.md)
 
-### 编程场景：少走一轮，比压缩一轮更省
+### 编程场景：少走弯路，少花 Token
 
-**省 Token 的关键是减少轮次，而不是压缩单轮内容。** Agent 每调用一次模型，都会把累积的上下文重新发送一遍，多走一轮，就要把整份上下文再发一次。工具输出只是其中一部分，压得再小，能省的也有上限；压缩还可能丢掉模型要用的关键信息，逼它再调用一次工具取回原文，Token 没省下，反而多走一轮。所以 PowerContext 的做法是帮 Agent 一开始就找对代码、读对内容，少走弯路。本次评测的结果与此一致：省下的 Token 全部来自重复发送的上下文（减少 42.67%），每轮新增的输入反而略有增加。
+**省 Token，要看完成任务的总开销。** PowerContext 把相关代码和工作要求带到当前步骤，帮助 Agent 少做重复搜索、重复读取和无效尝试。我们希望减少不必要的推理和工具往返，把 Token 用在推进任务上。衡量效果时，要看完成同一项任务总共用了多少 Token，单次输入的压缩率不能代表整个任务的节省幅度。
 
 本次评测采用**网关模式**，同时开启代码检索、工作指导和项目记忆：
 
 <img src="docs/assets/readme-capabilities-zh.svg" width="100%" alt="代码检索：查找相关代码，检查代码是否已更新。工作指导：明确读取、修改和验证要求。项目记忆：保存项目决定，供后续会话使用。" />
 
-**记忆生成要花 Token，那就让它尽量便宜。** 保存记忆需要额外调用模型，这部分开销真实存在，上面的 32.57% 已经计入。PowerContext 在网关模式下提取记忆时，复用解题请求的上下文前缀，大部分输入直接命中前缀缓存，按缓存价格计费。本次评测中，记录了缓存字段的记忆生成调用，97% 的输入命中了缓存。
+**生成记忆，也复用已有缓存。** 上面的 32.57% 已计入记忆生成开销。PowerContext 在网关模式下可以开启前缀缓存记忆提取，在满足条件时复用解题请求的上下文前缀，降低缓存命中部分的输入成本。本次评测中，记录了缓存字段的记忆生成调用，97% 的输入命中了缓存。
 
 ## 快速开始
 
-需要 Python 3.11+、Git 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)。以下命令安装 1.5.0，适用于 macOS 和 Linux。
+需要 Python 3.11+、Git 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)；接入 Agent 时还需安装对应的 CLI。以下命令安装 **1.5.2**，适用于 macOS 和 Linux；Windows 为实验性支持。需要自动准备 Python 和 uv 时，可使用[安装脚本](https://powercontext.oceanbase.io/zh/docs/get-started/install-and-run/#使用推荐安装脚本)。
+
+首次体验可在向导中选择**基础记忆**，显式保存与召回不需要为 Server 配置模型 API；自动提取需要选择**完整记忆能力**并配置生成模型和 Embedding 凭据。存储可先选 SQLite。
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.5.0"
+uv tool install --force "powercontext[cli,server]==1.5.2"
 mkdir -p powercontext-config && cd powercontext-config
 powercontext config init --language zh --output .env
 powercontext config validate --env-file .env
-powercontext server run --env-file .env
+powercontext service install --env-file .env
+powercontext service status
 ```
 
-保持服务运行，按生成的 **`.env.next-steps.md`** 创建并绑定 Scope。首次使用可选择基础记忆；若要自动提取记忆，还需要配置生成模型和 Embedding 模型的凭据。
+关闭终端后，服务仍会继续运行。Linux 需要可用的 `systemd --user` 管理器。向导生成的 `.env` 和 `.env.next-steps.md` 可能包含凭据，请勿提交到 Git。
 
-接入 Codex 时，在另一个终端安装对应版本的集成：
+加载生成的配置，检查服务状态：
 
 ```bash
-powercontext setup codex --ref powercontext-v1.5.0
+set -a
+. ./.env
+set +a
+powercontext ready
+powercontext capabilities
+```
+
+按 **`.env.next-steps.md`** 创建并绑定 Scope，使用创建请求返回的真实 `scope_id`。Agent 和 Dashboard 要连接同一个 Server 和 Scope；切换工作目录不会自动隔离项目。修改 `.env` 后，重新加载环境文件，并执行 `powercontext service install --env-file .env` 使配置生效。
+
+接入 Codex 时，安装对应版本的集成：
+
+```bash
+powercontext setup codex --env-file .env --ref powercontext-v1.5.2
 powercontext doctor codex
 ```
 
-启动新会话并按提示信任 Hook。可以先保存一条项目决定，再开一个会话，检查能否找回。[完整安装流程 →](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/)
+在新 Codex 会话发送第一条消息前，打开 **`/hooks`** 检查并按提示信任 PowerContext Hook。即使 MCP 已连通，自动采集输入和召回上下文仍需要启用 `UserPromptSubmit` Hook。[首次会话检查与恢复 →](https://powercontext.oceanbase.io/zh/docs/integrations/codex/#首次会话-hook-信任)
+
+按所选模式检查是否生效：
+
+- **基础记忆：** 明确要求 Agent 保存一条项目决定，再用同一 Scope 开启新会话，要求它带来源找回。
+- **完整记忆能力：** 确认输入已进入 Source，等待配置的后台处理生成 Topic Memory，再检查相关更新是否被记录，并能在新会话中找回。
+
+`doctor codex` 只检查安装与连接。采集到 Source 不等于已生成记忆，自动处理还需要调度和模型运行。基础记忆模式下，Agent 仍使用自己的模型。[完整安装流程 →](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/)
 
 <sub>以上命令用于启动服务。要复现测试中的网关、代码检索和工作指导配置，请查看详细报告。</sub>
 
@@ -114,6 +136,6 @@ Codex 为官方维护；其余 Agent 和 Python 框架集成为社区维护；Bu
 
 ---
 
-[文档](https://powercontext.oceanbase.io/zh/docs/) · [参与贡献](https://github.com/oceanbase/powercontext/blob/main/CONTRIBUTING.md) · [报告问题](https://github.com/oceanbase/powercontext/issues) · [Discord](https://discord.com/invite/74cF8vbNEs)
+[文档](https://powercontext.oceanbase.io/zh/docs/) · [参与贡献](https://github.com/oceanbase/powercontext/blob/master/CONTRIBUTING.md) · [报告问题](https://github.com/oceanbase/powercontext/issues) · [Discord](https://discord.com/invite/74cF8vbNEs)
 
 PowerContext 是[PowerMem](https://www.powermem.ai/)的后续项目，采用[Apache 2.0](LICENSE)发布。

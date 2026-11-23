@@ -26,35 +26,13 @@ These are project-run SWE-bench Pro comparisons, not an official leaderboard sub
 | CS | 17,680,166 | 16,224,256 | 1,252,101 | 203,809 | 33.06% | 15/24 |
 | MCS | 15,766,986 | 14,446,080 | 1,131,659 | 189,247 | 40.30% | 16/24 |
 
-The cohort is the frozen intersection of 24 completed tasks used in the Memory comparison, not a random sample or the full 121-task set. It contains both successful and failed solutions. This is not all 28 completed MCS tasks. IDs:
+The cohort is the frozen intersection of 24 completed tasks used in the Memory comparison. It includes successful and failed solutions; it is neither a random sample nor the full SWE-bench Pro dataset. Gateway OFF and MCS solved the same 16 tasks. IDs:
 
 `22, 87, 152, 202, 225, 238, 293, 308, 336, 374, 388, 406, 410, 456, 464, 468, 472, 482, 492, 501, 505, 627, 698, 706`
-
-## All 121 tasks: original settled selections
-
-| Configuration | Total tokens | Cached input | Uncached input | Output | Reduction | Passed |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| gateway_off | 141,869,214 | 135,236,608 | 5,534,586 | 1,098,020 | 0.00% | 83/121 |
-| native_off | 136,121,008 | 129,904,640 | 5,141,899 | 1,074,469 | 4.05% | 81/121 |
-| C | 156,807,398 | 147,259,648 | 8,417,464 | 1,130,286 | -10.53% | 78/121 |
-| S | 91,284,652 | 86,003,456 | 4,331,293 | 949,903 | 35.66% | 81/121 |
-| CS | 90,544,517 | 83,440,640 | 6,132,463 | 971,414 | 36.18% | 82/121 |
-
-Gateway OFF is the reference for every reduction column, including native OFF. CodeGraph alone did not reduce tokens in this run. CS saves slightly more total tokens than S, but consumes more uncached input. Token totals cannot rank billing efficiency without the cache and auxiliary-call accounting.
 
 ## Conditional retry selections — a separate view
 
 Previously selected failures that another group solved were retried, up to three additional attempts. The first successful retry replaces the original record; if none succeeds, the last valid failed retry is selected. Untargeted cases retain their original record. These are selected-run totals, not Pass@1, uniform Pass@3, or the cost of all attempts.
-
-### 121 tasks
-
-| Configuration | Total tokens | Cached input | Uncached input | Output | Reduction | Passed |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| gateway_off | 144,023,044 | 137,392,000 | 5,534,903 | 1,096,141 | 0.00% | 87/121 |
-| S | 90,197,496 | 84,905,216 | 4,345,852 | 946,428 | 37.37% | 87/121 |
-| CS | 90,153,970 | 83,008,768 | 6,179,816 | 965,386 | 37.40% | 87/121 |
-
-Across these three arms, 30 additional attempts were made. Initial selected records plus **all** additional attempts total 100,039,959 tokens for CS, 97,866,140 for S, and 159,303,478 for Gateway OFF. These totals retain replaced records and unsuccessful retries; earlier nonselected Gateway failures still have unknown usage.
 
 ### The same 24 tasks
 
@@ -67,18 +45,22 @@ Across these three arms, 30 additional attempts were made. Initial selected reco
 
 Only S/case 374 and CS/case 406 change in this subset. Gateway OFF and MCS stay unchanged. The top-level README uses the original/frozen view, so it does not mix success-selected retries with the Memory run.
 
+The bundled records contain three additional attempts: two for S/case 374 and one for CS/case 406. Initial selected records plus all these attempts total 20,364,538 tokens for S, 18,188,031 for CS, and 26,410,221 for Gateway OFF. These sums retain replaced records and unsuccessful retries. They cover the attempts bundled here, not unrecorded earlier failures or full system costs.
+
 ## Memory overhead and what was actually reused
 
 The MCS primary total is **15,766,986**. Its 74 recorded memory-generation calls add **2,018,739 input + 23,253 output = 2,041,992 tokens**. Together these two components total **17,808,978**, 32.57% below the OFF primary total. This is a partial component sum, not a complete system-cost comparison.
 
-Additional observed business embedding input: 14,737 tokens for memory recall and 7,679 for memory indexing. Readiness, setup, embedding pricing, and some generation cache fields remain incomplete; full system billing is **unknown**, not zero. Do not add Scope or prefix crosschecks to the Core ledger again.
+Additional observed business embedding input: 14,737 tokens for memory recall and 7,679 for memory indexing. Readiness, setup, embedding pricing, and some generation cache fields remain incomplete; full system billing is **unknown**, not zero. Scope and prefix crosschecks are not additional charges to add to the Core ledger.
+
+No nonempty primary Memory injection was observed in these 24 solves. The runs produced 54 post-task Atomic memories across 21 tasks, and each attempt began with an empty database. These observations do not establish that memory reuse caused the solving-token reduction or helped a later task.
 
 ## Single-task peaks
 
+This table covers solving only. The memory-inclusive peak is case 456, as reported above.
+
 | Scope | Arm | Case | OFF total | Arm total | Reduction | Both passed? |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 121 original tasks | S | 450 | 1,833,811 | 412,215 | 77.52% | Yes |
-| 121 original tasks | CS | 302 | 1,240,658 | 177,343 | 85.71% | Yes |
 | Same 24 tasks | S | 202 | 1,286,399 | 475,243 | 63.06% | Yes |
 | Same 24 tasks | CS | 464 | 505,046 | 156,916 | 68.93% | Yes |
 | Same 24 tasks | MCS | 202 | 1,286,399 | 403,007 | 68.67% | Yes |
@@ -87,7 +69,7 @@ Every peak compares the **same task** in two arms. A peak is not a cohort averag
 
 ## Tested configuration
 
-- Dataset: 121 selected tasks from the 731-task public v2 SWE-bench Pro file; repositories: NodeBB/NodeBB, navidrome/navidrome, tutao/tutanota. The Memory table is a 24-task completed subset.
+- Dataset: this export covers only the 24-task completed intersection listed above, drawn from the 731-task public v2 SWE-bench Pro file. Repositories: NodeBB/NodeBB, navidrome/navidrome, tutao/tutanota. The dataset count and digest in `results.json` identify that source file, not the size of this measured subset.
 - Agent: Codex CLI 0.162.1; model: `gpt-5.6-sol`; reasoning effort: `medium`; same original task prompts. No gold patch or grading input in prompts.
 - C = PowerContext native CodeGraph (not the external colbymchenry/codegraph tool). S = the explicit [steering text](steering.txt), whose trimmed SHA-256 is `47335a057b37c59feb790c71531fb13fee9aa23f63611aaddcac74831b40c22f`. M = Memory enabled.
 - Steering asks for targeted search, bounded reads, batched work, and focused validation. It also allows a compile/import check when tests cannot run; that can affect validation routes. OFF lacks this guidance.
@@ -107,7 +89,7 @@ python3 docs/benchmarks/token-savings/verify.py
 
 The verifier checks task alignment, record arithmetic, conditional selection, and published totals using [results.json](results.json). It makes no API calls, starts no agents, and reruns no graders. Primary usage comes from CLI `turn.completed`: `total = input + output`; cached input is already in input, and reasoning is already in output.
 
-The export contains all 121 original records for the five baseline arms, S/CS/Gateway retry selections and extra attempts, and 24 MCS selections. Outcome digests identify the source records where supplied by the source report. Full prompts, raw traces, credentials, and local file paths are not bundled. Source hashes identify provenance; they do not make unavailable raw traces publicly auditable. Numerical verification is not independent grade reproduction.
+The export contains only these 24 case IDs: original records for five baseline arms and the S/CS/Gateway retry selections and extra attempts in `initial_and_merged_24`, plus the frozen MCS and matching Gateway OFF selections in `mcs_common24`. Outcome digests identify the source records where supplied by the source report. Full prompts, raw traces, credentials, and local file paths are not bundled. Source hashes identify provenance; they do not make unavailable raw traces publicly auditable. Numerical verification is not independent grade reproduction.
 
 
 ## Configuration and result interpretation
@@ -116,8 +98,8 @@ In the detailed results, **C = CodeGraph, S = Steering, M = Memory**. Combined l
 
 - On the same 24 tasks: S saves 27.12% (15/24 solved), CS 33.06% (15/24), MCS 40.30% (16/24); Gateway OFF solves 16/24. This is a completed-task intersection, not a random sample.
 - MCS adds 2,041,992 post-task memory-generation tokens. Including them gives a 32.57% reduction, before other auxiliary work. No nonempty Memory injection was observed during solving; the savings do not establish cross-task memory benefits.
-- Across 121 tasks, CodeGraph alone uses 10.53% more tokens. CS solves one fewer task than OFF. Implementation and validation routes vary; these runs do not guarantee savings on every task or equal quality.
-- Conditional retry selections, all-attempt costs, cached and uncached tokens are separate in the evidence report. They are not mixed into the headline. MCS did not finish all 121 tasks.
+- In this 24-task original selection, S and CS each solve one fewer task than OFF. Implementation and validation routes vary; these runs do not guarantee savings on every task or establish equivalent quality.
+- Conditional retry selections, recorded attempt totals, cached input, and uncached input are reported separately. They are not mixed into the headline; incomplete or invalid runs outside this completed intersection are not scored here.
 - Tested with Codex CLI 0.162.1, GPT-5.6 Sol medium, a frozen development build and fresh databases per attempt. S is explicit guidance, not an installation default. OFF is an earlier frozen batch.
 
 [Methodology](README.md) · [Data](results.json) · [Offline verifier](verify.py)
@@ -132,13 +114,15 @@ Same 24 tasks, solving only, split by input type:
 
 | Component | Gateway OFF | MCS | Change |
 | --- | ---: | ---: | ---: |
-| Cached input (re-sent context) | 25,199,744 | 14,446,080 | −10,753,664 (−42.67%) |
-| Uncached input (new content) | 991,779 | 1,131,659 | +139,880 (+14.10%) |
+| Cached input | 25,199,744 | 14,446,080 | −10,753,664 (−42.67%) |
+| Uncached input | 991,779 | 1,131,659 | +139,880 (+14.10%) |
 | Output | 218,698 | 189,247 | −29,451 (−13.47%) |
 | Total | 26,410,221 | 15,766,986 | −10,643,235 (−40.30%) |
 
-The drop in cached input is larger than the net saving: all of the saved tokens came from re-sent context, while new content rose slightly. The 121-task results point the same way. S alone cut cached input by 36.41%; C alone raised cached input by 8.89% and uncached input by 52.09%, so supplying more retrieved content does not by itself lower usage.
+Cached input fell by 10,753,664 tokens and output fell by 29,451, while uncached input rose by 139,880. Together these changes produce the net reduction of 10,643,235 tokens. Cached input is the largest component of the decrease; output also contributes.
 
-This also explains why the estimated cost reduction (23.51%) is smaller than the token reduction (40.30%): the saved tokens are mostly cheaper cached input, while pricier uncached input rose.
+Cached and uncached input are provider-reported cache accounting categories. They do not identify repeated context versus newly added content: repeated text can miss the cache. These totals alone cannot attribute the change to a particular retrieval or memory mechanism.
 
-This export does not include per-task model call counts, so it cannot separate fewer calls from shorter context per call; both show up as less cached input. This run compressed no tool output and did not compare against compression-based approaches.
+At the frozen rates above, solving-only model cost falls by 23.51%, less than the 40.30% token reduction. Most of the token decrease is in lower-priced cached input, while higher-priced uncached input increases. This is a calculation from recorded usage and fixed rates, not an actual bill.
+
+This export does not include model call counts, so it cannot establish fewer calls, compute new input per call, or separate call-count changes from context-length changes. No comparison against compression-based approaches was run; these results do not establish that reducing rounds saves more than compression.
