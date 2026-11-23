@@ -8,6 +8,7 @@
 <p align="center">
   <a href="#快速开始"><b>开始使用</b></a> &nbsp; · &nbsp;
   <a href="#效果证据">效果证据</a> &nbsp; · &nbsp;
+  <a href="#让上下文在更多场景中发挥作用">应用场景</a> &nbsp; · &nbsp;
   <a href="https://powercontext.oceanbase.io/zh/docs/">文档</a> &nbsp; · &nbsp;
   <a href="https://discord.com/invite/74cF8vbNEs">Discord</a>
 </p>
@@ -18,19 +19,17 @@
 
 ## 为什么选 PowerContext？
 
-**让 Agent 少花 Token，把事情做完。** 写代码时，反复搜文件、读整段源码、重复尝试同一条路，都在消耗 Token。PowerContext 帮助 Agent 找到相关代码、遵循项目要求，并记住已经确认的信息。
+**准、快、省。让 Agent 找准上下文，少走弯路。** PowerContext 把相关知识、用户偏好、任务进展和已有经验带到当前任务，帮助 Agent 减少重复搜索、反复确认和无效尝试，把时间和 Token 用在推进工作上。
 
-- **少翻无关代码。** 按任务查找相关代码，使用前检查代码是否已更新。
-- **少走弯路。** 把项目约束和工作要求交给 Agent，例如只读必要片段、合并独立操作、优先跑相关测试。
-- **换个会话，也能接着做。** 保存项目决定、约束和任务进度，下次需要时再取出来。
+- **准：提供当前需要的上下文。** 按任务查找相关知识和代码，保留依据，使用代码前检查是否已更新。
+- **快：少摸索，少往返。** 接着已有进度做，参考已确认的方法和约束，减少重新理解背景与反复试错的时间。
+- **省：减少完成任务的总开销。** 让一次模型调用更有效，减少不必要的推理和工具往返，也少让用户等待、重讲背景。
 
 ## PowerContext 是什么？
 
-**PowerContext 是面向 AI Agent 的开源上下文服务，让工作跨会话、跨 Agent、跨团队延续。** 把决定、约束、证据和进度保存在对话之外，换个会话或接手人，也能从当前状态继续。
+**PowerContext 是面向 AI Agent 的开源上下文服务。** 它把对话、资料和工作记录整理成可检索、可更新、可追溯的知识，让 Agent 了解这个人、掌握这个项目、接着上次的进度工作。
 
-- **记忆与任务交接：** 保存有用信息，交代任务做到哪一步、下一步做什么。
-- **经验与技能：** 把实践中验证过的方法整理为可复用的经验和流程，经审核后再使用。
-- **可追溯的上下文：** 按 Scope 隔离项目，保留内容版本和来源，按当前任务需要检索。
+每个人都可以在自己的 Scope 中定制记忆处理提示词：重点记住什么、如何整理信息、怎样生成画像和经验。配合个人画像、项目知识和任务交接，让积累的上下文更适合不同的人与工作。
 
 可以直接运行服务，通过 HTTP、MCP、Python 或 Agent 集成接入，也可以将 Core 嵌入自己的应用。[了解产品与工作流 →](https://powercontext.oceanbase.io/zh/docs/workflows/memory-and-handoff/)
 
@@ -46,13 +45,53 @@
 
 ### 编程场景：少走弯路，少花 Token
 
-**省 Token，要看完成任务的总开销。** PowerContext 把相关代码和工作要求带到当前步骤，帮助 Agent 少做重复搜索、重复读取和无效尝试。我们希望减少不必要的推理和工具往返，把 Token 用在推进任务上。衡量效果时，要看完成同一项任务总共用了多少 Token，单次输入的压缩率不能代表整个任务的节省幅度。
+**让每次推理更有效，减少完成任务所需的往返。** 相关代码、明确的工作要求和已有经验，能帮助 Agent 更快找到下一步该做什么。我们关注完成整项任务所花的时间和 Token，把重复探索、重读背景和无效尝试作为优化重点。
 
 本次评测采用**网关模式**，同时开启代码检索、工作指导和项目记忆：
 
 <img src="docs/assets/readme-capabilities-zh.svg" width="100%" alt="代码检索：查找相关代码，检查代码是否已更新。工作指导：明确读取、修改和验证要求。项目记忆：保存项目决定，供后续会话使用。" />
 
 **生成记忆，也复用已有缓存。** 上面的 32.57% 已计入记忆生成开销。PowerContext 在网关模式下可以开启前缀缓存记忆提取，在满足条件时复用解题请求的上下文前缀，降低缓存命中部分的输入成本。本次评测中，记录了缓存字段的记忆生成调用，97% 的输入命中了缓存。
+
+### 更少的模型往返
+
+**另一次同 24 题的测试中，主模型请求减少 23.87%。** 开启记忆与工作指导后，请求总数从 **708 次降到 539 次**，平均每题从 **29.50 次降到 22.46 次**；两组解出的都是**同样 15 题**。这次测试与头图的代码检索、工作指导、记忆组合测试分别统计。[查看请求次数与逐题记录 →](docs/benchmarks/token-savings/request-counts_CN.md)
+
+## 让上下文在更多场景中发挥作用
+
+### 你的记忆，你来定义
+
+**每个人，都可以有自己的记忆规则。** 工程师关注技术决策和故障原因，产品经理关注需求与方案取舍，创作者关注表达偏好和作品设定。你可以在个人 Scope 中定制提示词，调整记忆提取、信息整理和画像生成的重点，配置会独立保存并保留版本。
+
+画像帮助 Agent 了解你；个人提示词让你定义系统怎样积累对你有用的记忆。让每一次使用留下的内容，更适合你的工作和习惯。
+
+[Prompt：定制记忆规则 →](https://powercontext.oceanbase.io/zh/docs/workflows/manage-prompts/) · [Profile：了解每个用户 →](https://powercontext.oceanbase.io/zh/docs/workflows/use-profiles/)
+
+### 换个会话，也能接着做
+
+**工作可以中断，进度不必重来。** 排查过哪些原因、已经验证了什么、还有什么阻塞、下一步做什么，都可以留下来。换个会话或交给另一个 Agent，先核对当前状态，再从交接点继续。
+
+Memory 保留决定与约束，Handoff 整理目标、进展和下一步。适合跨天任务、多人协作和多 Agent 交接。
+
+[Memory 与 Handoff：保存进度、接续任务 →](https://powercontext.oceanbase.io/zh/docs/workflows/memory-and-handoff/)
+
+### 项目越做越久，背景不用反复交代
+
+**项目有来龙去脉，Agent 也应该知道。** 当初为什么选这个方案？客户提出过哪些要求？研究已经有哪些结论？把分散在资料和讨论中的信息，整理成持续更新的主题知识，需要时找到背景与依据。
+
+Topic Memory 汇总同一主题的进展，Memory 保留具体事实，Source 留下原始依据。适合产品研发、客户项目和长期研究。
+
+[Topic Memory：持续整理项目知识 →](https://powercontext.oceanbase.io/zh/docs/workflows/topic-memory/) · [Source：回到原始依据 →](https://powercontext.oceanbase.io/zh/docs/workflows/sources/)
+
+### 解决过一次，下一次少走弯路
+
+**把一次解决问题的经验，变成下一次的起点。** 留下有效的方法、适用条件、失败教训和验证步骤。下次遇到类似任务，Agent 可以先查已有经验，再决定如何行动。
+
+Experience 沉淀情境、做法与结果；适合重复使用的流程可以整理为 Skill，确认后导出给 Agent 使用。让做过的工作持续产生价值。
+
+[Experience：积累可复用的经验 →](https://powercontext.oceanbase.io/zh/docs/workflows/experience-and-skill-lifecycle/) · [Skill：导出经过确认的工作方法 →](https://powercontext.oceanbase.io/zh/docs/workflows/create-and-export-skill/)
+
+个人、项目和团队可以使用各自的 Scope 管理上下文，结合访问控制决定谁能读取和修改；内容保留版本与来源，便于核对、修订和交接。[了解 Scope 与访问控制 →](https://powercontext.oceanbase.io/zh/docs/workflows/scopes-and-access/)
 
 ## 快速开始
 

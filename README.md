@@ -8,6 +8,7 @@
 <p align="center">
   <a href="#quick-start"><b>Get started</b></a> &nbsp; · &nbsp;
   <a href="#proof-it-works">See the proof</a> &nbsp; · &nbsp;
+  <a href="#put-context-to-work">Use cases</a> &nbsp; · &nbsp;
   <a href="https://powercontext.oceanbase.io/en/docs/">Documentation</a> &nbsp; · &nbsp;
   <a href="https://discord.com/invite/74cF8vbNEs">Discord</a>
 </p>
@@ -18,19 +19,17 @@
 
 ## Why PowerContext?
 
-**Your agent's tokens should move the task forward.** Less repeated searching, fewer unproductive round trips, and project knowledge that is still useful when the next session starts.
+**The right context. Faster progress. Fewer tokens.** PowerContext brings relevant knowledge, user preferences, task progress, and past experience into the current task, helping agents spend less time searching again, asking the same questions, and repeating unsuccessful attempts.
 
-- **Focus on the task.** Bring relevant code and clear working guidance into the agent's path to a fix.
-- **Keep your agent.** Connect Codex, Claude Code, and other supported hosts, or integrate with your own application.
-- **Keep what you learn.** Retain decisions, constraints, and handoffs across sessions, agents, and teammates.
+- **Relevant context, with evidence.** Find knowledge and code for the task, preserve sources, and check code freshness before use.
+- **Faster progress, fewer round trips.** Pick up from existing progress, using confirmed approaches and constraints to reduce repeated discovery and trial and error.
+- **Less total effort and token use.** Make each model call more useful, reduce unnecessary reasoning and tool round trips, and spend less time waiting or explaining the background again.
 
 ## What is PowerContext?
 
-**PowerContext is an open-source context service for AI agents that keeps work moving across sessions, agents, and teams.** It stores decisions, constraints, evidence, and progress outside a single conversation, so the next session or teammate can pick up from the current state.
+**PowerContext is an open-source context service for AI agents.** It turns conversations, documents, and work records into knowledge that can be searched, updated, and traced to its sources, helping agents understand the person, know the project, and continue from where work left off.
 
-- **Memory and handoffs:** retain useful information, task progress, and next steps.
-- **Experience and skills:** turn proven approaches into reusable lessons and procedures, reviewed before reuse.
-- **Traceable context:** isolate projects in Scopes, preserve revisions and provenance, and retrieve context for the task at hand.
+Each person can customize memory-processing prompts in their own Scope: what to remember, how to organize information, and how to build profiles and capture experience. Alongside personal profiles, project knowledge, and task handoffs, these prompts help accumulated context fit different people and ways of working.
 
 Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed Core in your own application. [Explore the product and workflows →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
 
@@ -46,13 +45,53 @@ Run it as a service through HTTP, MCP, Python, or Agent integrations, or embed C
 
 ### Coding: fewer detours, less wasted work
 
-**Optimize the cost of completing the task.** PowerContext brings relevant code and working guidance into the current step, helping the agent avoid repeated searches, redundant reads, and unproductive attempts. The goal is to reduce unnecessary reasoning and tool round trips, so more of the token budget goes toward finishing the work. We measure total task usage; a single request's compression ratio does not tell the whole story.
+**Make each reasoning step more useful, with fewer round trips to finish the task.** Relevant code, clear working requirements, and past experience help agents find the next useful step. Our focus is the time and tokens needed for the whole task, reducing repeated exploration, rereading, and unproductive attempts.
 
 This benchmark runs in **gateway mode**, with code retrieval, working guidance, and project memory enabled together:
 
 <img src="docs/assets/readme-capabilities-en.svg" width="100%" alt="CodeGraph: relevant code with freshness checks. Steering: targeted reads, batched work and focused tests. Memory: saved decisions and bounded recall for later sessions." />
 
 **Extract memory. Reuse the cache.** The 32.57% reduction above includes memory-generation tokens. In gateway mode, you can enable prefix-cached memory extraction to reuse context prefixes from solving requests when eligible, lowering input costs on cache hits. In this benchmark, 97% of input to memory-generation calls with recorded cache fields hit the cache.
+
+### Fewer model round trips
+
+**In a separate test on the same 24 tasks, primary-model requests fell by 23.87%.** With memory and working guidance enabled, total requests fell from **708 to 539**, averaging **29.50 to 22.46 requests per task**. Both groups solved the **same 15 tasks**. These results are reported separately from the code retrieval, working guidance, and memory comparison at the top of this page. [See request counts and per-task records →](docs/benchmarks/token-savings/request-counts.md)
+
+## Put context to work
+
+### Your memory, your rules
+
+**Everyone can define what is worth remembering.** Engineers may focus on technical decisions and incident causes; product managers on requirements and tradeoffs; creators on style preferences and story details. Customize prompts in your personal Scope to guide memory extraction, information organization, and profile generation. Each Scope keeps its own configuration and version history.
+
+Profiles help agents understand you. Personal prompts let you shape how the system builds memories that are useful to you, so what you retain from each session better fits your work and habits.
+
+[Prompt: customize memory rules →](https://powercontext.oceanbase.io/en/docs/workflows/manage-prompts/) · [Profile: understand each user →](https://powercontext.oceanbase.io/en/docs/workflows/use-profiles/)
+
+### A new session, the same progress
+
+**A pause in work does not have to mean starting over.** Keep track of what you investigated, what you verified, what is still blocked, and what comes next. In a new session or with another agent, check the current state and continue from the handoff.
+
+Memory retains decisions and constraints; Handoff organizes goals, progress, and next steps. Use them for work that spans days, team collaboration, and handoffs between agents.
+
+[Memory and Handoff: save progress and continue the task →](https://powercontext.oceanbase.io/en/docs/workflows/memory-and-handoff/)
+
+### Keep the project history close
+
+**Projects have a history. Your agent should know it.** Why was an approach chosen? What did the customer ask for? What has the research established? Turn information scattered across documents and discussions into topic knowledge that stays up to date, with background and evidence available when needed.
+
+Topic Memory brings together progress on a subject, Memory retains specific facts, and Source preserves the original evidence. Use them for product development, customer projects, and long-running research.
+
+[Topic Memory: build ongoing project knowledge →](https://powercontext.oceanbase.io/en/docs/workflows/topic-memory/) · [Source: return to the original evidence →](https://powercontext.oceanbase.io/en/docs/workflows/sources/)
+
+### Solve it once, learn for next time
+
+**Make one task's lessons the starting point for the next.** Retain effective methods, the conditions where they apply, failed approaches, and verification steps. When a similar task comes up, agents can look up past experience before deciding how to act.
+
+Experience captures the situation, approach, and outcome. Repeatable procedures can become Skills, reviewed and exported for agents to use, so completed work continues to pay off.
+
+[Experience: retain reusable lessons →](https://powercontext.oceanbase.io/en/docs/workflows/experience-and-skill-lifecycle/) · [Skill: export reviewed procedures →](https://powercontext.oceanbase.io/en/docs/workflows/create-and-export-skill/)
+
+People, projects, and teams can manage context in their own Scopes, with access controls governing who can read and edit it. Version history and source references support verification, revision, and handoffs. [Explore Scopes and access control →](https://powercontext.oceanbase.io/en/docs/workflows/scopes-and-access/)
 
 ## Quick start
 

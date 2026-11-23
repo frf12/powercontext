@@ -209,3 +209,54 @@ for metric, expected in [(token_saving, 63.49), (estimated_cost_saving, 51.98)]:
 print("Verified 24-task peaks: case 456, 63.49% tokens and 51.98% estimated cost; both passed.")
 
 print(f"Verified {attempt_count} additional attempts and their recorded totals: {attempt_totals}.")
+
+# This separate OFF/MS run measures requests, not the older OFF/MCS token run.
+request_data = json.loads(Path(__file__).with_name("request-counts-24.json").read_text(encoding="utf-8"))
+assert request_data["schema"] == "powercontext.request-counts.v1"
+assert request_data["source"]["summary_sha256"] == "98333adce1892a283e55fc551c321c6a3411a6e0eefd6cf7158579c17ead504e"
+assert request_data["source"]["generated_at"] == "2026-11-22T21:56:44.214489+00:00"
+request_ids = request_data["case_ids"]
+assert len(request_ids) == len(set(request_ids)) == 24
+# Same task IDs, independently recorded outcomes and request counts.
+assert set(request_ids) == IDS
+request_cells = request_data["cells"]
+assert len(request_cells) == len({r["id"] for r in request_cells}) == 48
+request_pairs = {}
+for record in request_cells:
+    assert set(record) == {
+        "id", "case", "arm", "primary_physical_requests", "primary_completed_responses",
+        "valid_scored", "official_resolved", "outcome_sha256",
+    }
+    case, arm = record["case"], record["arm"]
+    assert case in request_ids and arm in {"OFF", "MS"}
+    assert record["id"] == f"{arm}-{case:04d}-r1"
+    assert record["valid_scored"] is True and isinstance(record["official_resolved"], bool)
+    requests, completed = record["primary_physical_requests"], record["primary_completed_responses"]
+    assert type(requests) is int and type(completed) is int and 0 <= completed <= requests
+    digest = record["outcome_sha256"]
+    assert isinstance(digest, str) and len(digest) == 64 and all(c in "0123456789abcdef" for c in digest)
+    pair = request_pairs.setdefault(case, {})
+    assert arm not in pair
+    pair[arm] = record
+assert all(set(pair) == {"OFF", "MS"} for pair in request_pairs.values())
+request_totals = {}
+for arm, expected_requests, expected_completed in [("OFF", 708, 708), ("MS", 539, 538)]:
+    records = [pair[arm] for pair in request_pairs.values()]
+    request_totals[arm] = sum(r["primary_physical_requests"] for r in records)
+    assert request_totals[arm] == expected_requests
+    assert sum(r["primary_completed_responses"] for r in records) == expected_completed
+    assert sum(r["official_resolved"] for r in records) == 15
+assert {c for c, pair in request_pairs.items() if pair["OFF"]["official_resolved"]} == {
+    c for c, pair in request_pairs.items() if pair["MS"]["official_resolved"]
+}
+assert [(r["id"], r["primary_physical_requests"] - r["primary_completed_responses"])
+        for r in request_cells if r["primary_physical_requests"] != r["primary_completed_responses"]] == [("MS-0388-r1", 1)]
+assert isclose(request_totals["OFF"] / 24, 29.5)
+assert isclose(request_totals["MS"] / 24, 22.458333333333332)
+request_reduction = 100 * (1 - request_totals["MS"] / request_totals["OFF"])
+assert round(request_reduction, 2) == 23.87
+print(
+    f"Verified separate OFF/MS run: 24 pairs, 708 -> 539 primary requests ({request_reduction:.2f}% fewer), "
+    "708/538 completed responses; the same 15 tasks solved, all 48 records valid. "
+    "Bundled arithmetic only; no model calls or regrading."
+)
