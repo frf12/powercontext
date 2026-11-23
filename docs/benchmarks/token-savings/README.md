@@ -47,14 +47,6 @@ Only S/case 374 and CS/case 406 change in this subset. Gateway OFF and MCS stay 
 
 The bundled records contain three additional attempts: two for S/case 374 and one for CS/case 406. Initial selected records plus all these attempts total 20,364,538 tokens for S, 18,188,031 for CS, and 26,410,221 for Gateway OFF. These sums retain replaced records and unsuccessful retries. They cover the attempts bundled here, not unrecorded earlier failures or full system costs.
 
-## Memory overhead and what was actually reused
-
-The MCS primary total is **15,766,986**. Its 74 recorded memory-generation calls add **2,018,739 input + 23,253 output = 2,041,992 tokens**. Together these two components total **17,808,978**, 32.57% below the OFF primary total. This is a partial component sum, not a complete system-cost comparison.
-
-Additional observed business embedding input: 14,737 tokens for memory recall and 7,679 for memory indexing. Readiness, setup, embedding pricing, and some generation cache fields remain incomplete; full system billing is **unknown**, not zero. Scope and prefix crosschecks are not additional charges to add to the Core ledger.
-
-No nonempty primary Memory injection was observed in these 24 solves. The runs produced 54 post-task Atomic memories across 21 tasks, and each attempt began with an empty database. These observations do not establish that memory reuse caused the solving-token reduction or helped a later task.
-
 ## Single-task peaks
 
 This table covers solving only. The memory-inclusive peak is case 456, as reported above.
@@ -125,4 +117,4 @@ Cached and uncached input are provider-reported cache accounting categories. The
 
 At the frozen rates above, solving-only model cost falls by 23.51%, less than the 40.30% token reduction. Most of the token decrease is in lower-priced cached input, while higher-priced uncached input increases. This is a calculation from recorded usage and fixed rates, not an actual bill.
 
-This export does not include model call counts, so it cannot establish fewer calls, compute new input per call, or separate call-count changes from context-length changes. No comparison against compression-based approaches was run; these results do not establish that reducing rounds saves more than compression.
+The per-response records are incomplete. We therefore do not report a reduction in inference rounds or claim that fewer rounds were the main source of savings.
