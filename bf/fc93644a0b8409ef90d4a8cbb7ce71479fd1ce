@@ -1,0 +1,20 @@
+tests/test_operational_metrics.py
+  s_2ef0feea0a110d::t_89b1ea931dc69e 274-279,329,344
+  s_2ef0feea0a110d::t_5af76efc481311 328,330,343,345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bffc93644a0b8409ef90d4a8cbb7ce71479fd1ce",
+  "prompts": {},
+  "sessions": {
+    "s_2ef0feea0a110d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1a9cf-a4e7-7f63-9c51-1284f7c332e8",
+        "model": "gpt-6.2-astra"
+      },
+      "human_author": "frf12 <rongfeng.frf@antgroup.com>"
+    }
+  }
+}
